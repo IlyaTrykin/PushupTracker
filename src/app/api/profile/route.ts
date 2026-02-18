@@ -1,0 +1,177 @@
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { requireUser, AuthError, invalidateSession } from '@/lib/auth';
+
+function jsonError(message: string, status = 400) {
+  return NextResponse.json({ error: message }, { status });
+}
+
+function normalizeGender(v: unknown): string | null {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s) return null;
+  if (['male', 'm', 'man', 'м', 'муж', 'мужской'].includes(s)) return 'male';
+  if (['female', 'f', 'woman', 'ж', 'жен', 'женский'].includes(s)) return 'female';
+  if (['other', 'другое'].includes(s)) return 'other';
+  return null;
+}
+
+function parseBirthDate(v: unknown): Date | null {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+export async function GET(request: Request) {
+  try {
+    const me = await requireUser(request);
+
+    const u = await prisma.user.findUnique({
+      where: { id: me.id },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        isAdmin: true,
+        createdAt: true,
+        updatedAt: true,
+        gender: true,
+        birthDate: true,
+        avatarPath: true,
+        deletedAt: true,
+      },
+    });
+
+    if (!u || u.deletedAt) return jsonError('UNAUTHORIZED', 401);
+    return NextResponse.json(u);
+  } catch (e: any) {
+    if (e instanceof AuthError) return jsonError(e.message, e.status);
+    return jsonError('INTERNAL_ERROR', 500);
+  }
+}
+
+// Update profile fields: { username?, gender?, birthDate? }
+export async function PATCH(request: Request) {
+  try {
+    const me = await requireUser(request);
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonError('Некорректный JSON');
+
+    const nextUsername = body.username !== undefined ? String(body.username || '').trim() : undefined;
+    const nextGender = body.gender !== undefined ? normalizeGender(body.gender) : undefined;
+    const nextBirthDate = body.birthDate !== undefined ? parseBirthDate(body.birthDate) : undefined;
+
+    const current = await prisma.user.findUnique({
+      where: { id: me.id },
+      select: {
+        id: true,
+        username: true,
+        gender: true,
+        birthDate: true,
+        avatarPath: true,
+        deletedAt: true,
+      },
+    });
+
+    if (!current || current.deletedAt) return jsonError('UNAUTHORIZED', 401);
+
+    const data: any = {};
+    const changes: any = {};
+
+    if (nextUsername !== undefined) {
+      if (!nextUsername) return jsonError('Имя обязательно');
+      if (nextUsername.length > 32) return jsonError('Имя слишком длинное (макс. 32)');
+      if (!/^[a-zA-Z0-9._-]+$/.test(nextUsername)) return jsonError('Имя может содержать только латиницу, цифры и символы ._-');
+
+      if (nextUsername !== current.username) {
+        const exists = await prisma.user.findUnique({ where: { username: nextUsername } }).catch(() => null);
+        if (exists) return jsonError('Имя уже занято', 409);
+        data.username = nextUsername;
+        changes.username = { from: current.username, to: nextUsername };
+      }
+    }
+
+    if (nextGender !== undefined) {
+      const cur = current.gender ?? null;
+      if (nextGender !== cur) {
+        data.gender = nextGender;
+        changes.gender = { from: cur, to: nextGender };
+      }
+    }
+
+    if (nextBirthDate !== undefined) {
+      const cur = current.birthDate ? current.birthDate.toISOString().slice(0, 10) : null;
+      const nxt = nextBirthDate ? nextBirthDate.toISOString().slice(0, 10) : null;
+      if (cur != nxt) {
+        data.birthDate = nextBirthDate;
+        changes.birthDate = { from: cur, to: nxt };
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ ok: true });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.update({
+        where: { id: me.id },
+        data,
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          isAdmin: true,
+          createdAt: true,
+          updatedAt: true,
+          gender: true,
+          birthDate: true,
+          avatarPath: true,
+        },
+      });
+      await tx.userProfileHistory.create({
+        data: {
+          userId: me.id,
+          changedById: me.id,
+          changes,
+        },
+      });
+      return u;
+    });
+
+    return NextResponse.json({ ok: true, user: updated });
+  } catch (e: any) {
+    if (e instanceof AuthError) return jsonError(e.message, e.status);
+    if (String(e?.code || '') === 'P2002') return jsonError('Имя уже занято', 409);
+    return jsonError('INTERNAL_ERROR', 500);
+  }
+}
+
+// Soft-delete own profile (can be restored by admin within 1 year)
+export async function DELETE(request: Request) {
+  try {
+    const me = await requireUser(request);
+
+    const now = new Date();
+    await prisma.$transaction(async (tx) => {
+      const u = await tx.user.findUnique({ where: { id: me.id }, select: { deletedAt: true } });
+      if (!u || u.deletedAt) return;
+      await tx.user.update({ where: { id: me.id }, data: { deletedAt: now, deletedById: me.id } });
+      await tx.userProfileHistory.create({
+        data: { userId: me.id, changedById: me.id, changes: { deletedAt: { from: null, to: now.toISOString() } } },
+      });
+    });
+
+    // log out everywhere
+    await prisma.session.deleteMany({ where: { userId: me.id } }).catch(() => {});
+    await invalidateSession(request).catch(() => {});
+
+    const res = NextResponse.json({ ok: true });
+    res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 0 });
+    return res;
+  } catch (e: any) {
+    if (e instanceof AuthError) return jsonError(e.message, e.status);
+    return jsonError('INTERNAL_ERROR', 500);
+  }
+}

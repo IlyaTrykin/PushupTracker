@@ -1,0 +1,134 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                      String                 @id @default(uuid())
+  email                   String                 @unique
+  username                String                 @unique
+  passwordHash            String
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  gender                  String?
+  birthDate               DateTime?
+  avatarPath              String?
+  deletedAt               DateTime?
+  deletedById             String?
+  deletedBy               User?                  @relation("UserDeletedBy", fields: [deletedById], references: [id])
+  deletedUsers            User[]                 @relation("UserDeletedBy")
+
+  workouts                Workout[]
+  friendships             Friendship[]           @relation("UserFriendships")
+  friendsWith             Friendship[]           @relation("FriendFriendships")
+  sessions                Session[]
+  challengesCreated       Challenge[]            @relation("UserCreatedChallenges")
+  challengeParticipations ChallengeParticipant[]
+  Notification            Notification[]
+  isAdmin                 Boolean                @default(false)
+
+  profileHistory          UserProfileHistory[]   @relation("UserProfileHistoryUser")
+  profileChangesMade      UserProfileHistory[]   @relation("UserProfileChangedBy")
+}
+
+
+model Workout {
+  id           String   @id @default(uuid())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String
+  date         DateTime
+  time         DateTime @default(now())
+  exerciseType String
+  reps         Int
+
+  @@index([userId, exerciseType, time])
+  @@index([userId, time])
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  user      User     @relation("UserFriendships", fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  friend    User     @relation("FriendFriendships", fields: [friendId], references: [id], onDelete: Cascade)
+  friendId  String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, friendId])
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId, expiresAt])
+}
+
+model Challenge {
+  id String @id @default(uuid())
+
+  creatorId String
+  creator   User   @relation("UserCreatedChallenges", fields: [creatorId], references: [id])
+
+  name         String
+  exerciseType String
+  mode         String   @default("most") // most | target | daily_min | sets_min
+  targetReps   Int?
+  startDate    DateTime
+  endDate      DateTime
+
+  createdAt DateTime @default(now())
+
+  participants ChallengeParticipant[]
+}
+
+model ChallengeParticipant {
+  id String @id @default(uuid())
+
+  challengeId String
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  userId String
+  status String @default("pending") // pending | accepted
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, userId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String // challenge_invite | challenge_accept | challenge_decline
+  title     String
+  body      String?
+  link      String? // например /challenges/<id>
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+}
+
+
+model UserProfileHistory {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation("UserProfileHistoryUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  changedById String?
+  changedBy   User?    @relation("UserProfileChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  changedAt   DateTime @default(now())
+  changes     Json
+
+  @@index([userId, changedAt])
+}

@@ -1,0 +1,31 @@
+node_modules
+.next
+.DS_Store
+__MACOSX
+.env
+.env.*
+!.env.example
+*.tar.gz
+*.sql
+*.dump
+*.bak
+*.broken
+*.log
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# backups / bundles / archives
+*.bak*
+*.tgz
+*.tar.gz
+*.sha256
+
+# node/next artifacts
+node_modules/
+.next/
+.cache/
+logs/
+tmp/

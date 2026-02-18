@@ -1,0 +1,14 @@
+tracker.trykin.online {
+  encode gzip
+  reverse_proxy web:3000
+}
+
+http://localhost {
+  encode gzip
+  reverse_proxy web:3000
+}
+
+http://127.0.0.1 {
+  encode gzip
+  reverse_proxy web:3000
+}

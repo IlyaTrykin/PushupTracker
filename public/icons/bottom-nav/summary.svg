@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Axes -->
+  <path d="M4 19V5"/>
+  <path d="M4 19h16"/>
+  <!-- Bars -->
+  <path d="M8 19v-6"/>
+  <path d="M12 19v-9"/>
+  <path d="M16 19v-4"/>
+  <!-- Trend line -->
+  <path d="M8 10l4-3 4 2 3-5"/>
+</svg>
