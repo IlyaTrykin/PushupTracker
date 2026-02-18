@@ -1,0 +1,28 @@
+# Node/Next build artifacts
+node_modules
+.next
+npm-debug.log
+yarn.lock
+pnpm-lock.yaml
+
+# Env secrets (do not ship in image build context)
+.env
+.env.*
+!.env.example
+
+# OS / IDE noise
+.DS_Store
+__MACOSX
+.vscode
+.idea
+
+# Backups / dumps
+*.bak
+*.broken
+*.tar.gz
+*.sql
+*.dump
+*.gz
+
+# Misc
+*.log

@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+    - pushup_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+  web:
+    build: .
+    env_file:
+    - .env.runtime
+    - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+    - 127.0.0.1:3000:3000
+    volumes:
+    - pushup_uploads_data:/app/public/uploads
+    restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+  caddy:
+    image: caddy:2
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+    - 80:80
+    - 443:443
+    volumes:
+    - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    - caddy_data:/data
+    - caddy_config:/config
+    restart: unless-stopped
+volumes:
+  pushup_db_data: null
+  pushup_uploads_data: null
+  caddy_data: null
+  caddy_config: null
