@@ -1,0 +1,2 @@
+ALTER TABLE "TrainingSession"
+ADD COLUMN "isFinalTest" BOOLEAN NOT NULL DEFAULT false;

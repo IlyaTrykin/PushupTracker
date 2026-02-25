@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import PushNotificationsToggle from '@/components/PushNotificationsToggle';
 
 type Profile = {
   id: string;
@@ -10,6 +11,7 @@ type Profile = {
   updatedAt: string;
   gender: string | null;
   birthDate: string | null;
+  weightKg: number | null;
   avatarPath: string | null;
 };
 
@@ -68,9 +70,14 @@ export default function ProfilePage() {
   const [username, setUsername] = useState('');
   const [gender, setGender] = useState<string>('');
   const [birthDate, setBirthDate] = useState('');
+  const [weightKg, setWeightKg] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
   const avatarUrl = useMemo(() => {
     const p = profile?.avatarPath || '';
@@ -91,6 +98,7 @@ export default function ProfilePage() {
         setUsername((data as Profile).username || '');
         setGender(((data as Profile).gender as any) || '');
         setBirthDate(toDateInputValue((data as Profile).birthDate));
+        setWeightKg((data as Profile).weightKg != null ? String((data as Profile).weightKg) : '');
       }
     } catch {
       setError('Не удалось связаться с сервером');
@@ -114,6 +122,7 @@ export default function ProfilePage() {
           username,
           gender: gender || null,
           birthDate: birthDate || null,
+          weightKg: weightKg ? Number(weightKg) : null,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -168,6 +177,46 @@ export default function ProfilePage() {
       }
     } catch {
       setError('Не удалось связаться с сервером');
+    }
+  }
+
+  async function changePassword() {
+    setError('');
+    if (!currentPassword) {
+      setError('Введите текущий пароль');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setError('Новый пароль должен быть не меньше 6 символов');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setError('Подтверждение пароля не совпадает');
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const res = await fetch('/api/profile/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Не удалось изменить пароль');
+      } else {
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmNewPassword('');
+      }
+    } catch {
+      setError('Не удалось связаться с сервером');
+    } finally {
+      setChangingPassword(false);
     }
   }
 
@@ -274,6 +323,18 @@ export default function ProfilePage() {
           />
         </div>
 
+        <div style={{ display: 'grid', gap: 6 }}>
+          <div style={{ fontWeight: 800 }}>Вес (кг)</div>
+          <input
+            type="number"
+            min={30}
+            max={250}
+            value={weightKg}
+            onChange={(e) => setWeightKg(e.target.value)}
+            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+          />
+        </div>
+
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
           <button
             onClick={save}
@@ -291,6 +352,57 @@ export default function ProfilePage() {
           >
             {saving ? 'Сохранение…' : 'Сохранить'}
           </button>
+        </div>
+
+        <div style={{ marginTop: 20, borderTop: '1px solid #e5e7eb', paddingTop: 16, display: 'grid', gap: 8 }}>
+          <div style={{ fontWeight: 900, fontSize: 16 }}>Смена пароля</div>
+          <input
+            type="password"
+            placeholder="Текущий пароль"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+          />
+          <input
+            type="password"
+            placeholder="Новый пароль"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+          />
+          <input
+            type="password"
+            placeholder="Подтвердите новый пароль"
+            value={confirmNewPassword}
+            onChange={(e) => setConfirmNewPassword(e.target.value)}
+            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+          />
+          <div>
+            <button
+              onClick={changePassword}
+              disabled={changingPassword}
+              style={{
+                padding: '10px 14px',
+                borderRadius: 10,
+                border: '1px solid #1d4ed8',
+                background: '#fff',
+                color: '#1d4ed8',
+                fontWeight: 900,
+                cursor: changingPassword ? 'not-allowed' : 'pointer',
+                opacity: changingPassword ? 0.6 : 1,
+              }}
+            >
+              {changingPassword ? 'Изменение…' : 'Сменить пароль'}
+            </button>
+        </div>
+
+        <div style={{ marginTop: 20, borderTop: '1px solid #e5e7eb', paddingTop: 16, display: 'grid', gap: 8 }}>
+          <div style={{ fontWeight: 900, fontSize: 16 }}>Push уведомления</div>
+          <div style={{ fontSize: 13, color: '#4b5563' }}>
+            События: запрос в друзья, приглашение в челлендж, смена позиции в активном челлендже.
+          </div>
+          <PushNotificationsToggle />
+        </div>
 
           <button
             onClick={deleteProfile}

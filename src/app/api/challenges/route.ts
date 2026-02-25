@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
+import { isChannelEnabledForUser } from '@/lib/notification-preferences';
+import { sendChallengeInviteEmail } from '@/lib/notification-email';
+import { sendWebPushToUsers } from '@/lib/web-push';
 
 
 function jsonError(message: string, status: number, details?: string) {
@@ -118,7 +121,7 @@ const participantsUsernames: string[] = Array.isArray(body.participantsUsernames
 
     const users = await prisma.user.findMany({
       where: { username: { in: allUsernames } },
-      select: { id: true, username: true },
+      select: { id: true, username: true, email: true },
     });
 
     if (users.length !== allUsernames.length) {
@@ -161,6 +164,31 @@ const participantsUsernames: string[] = Array.isArray(body.participantsUsernames
             link: `/challenges/${created.id}`,
           })),
         });
+
+        await sendWebPushToUsers(
+          pendingUsers.map((u) => u.id),
+          {
+            title: 'Приглашение в челлендж',
+            body: `${creatorName} пригласил вас в челлендж: ${name}`,
+            link: `/challenges?invite=${created.id}`,
+            tag: `challenge-invite-${created.id}`,
+          },
+          'challenge_invite',
+        ).catch((e) => console.error('CHALLENGE INVITE PUSH ERROR:', e));
+
+        for (const u of pendingUsers) {
+          if (!u.email) continue;
+          const emailEnabled = await isChannelEnabledForUser(u.id, 'challenge_invite', 'email');
+          if (!emailEnabled) continue;
+          await sendChallengeInviteEmail({
+            to: u.email,
+            invitedUsername: u.username,
+            creatorUsername: creatorName,
+            challengeId: created.id,
+            challengeName: name,
+            request,
+          }).catch((e) => console.error('CHALLENGE INVITE EMAIL ERROR:', e));
+        }
       }
     } catch (e) {
       console.error('NOTIFY INVITE ERROR:', e);

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SERVER="root@45.89.228.79"
-REMOTE_DIR="/opt/pushup-tracker"
+SERVER="${SERVER:-root@192.168.1.2}"
+REMOTE_DIR="${REMOTE_DIR:-/opt/pushup-tracker}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/pushup_tracker_ed25519}"
 
 echo "[1/4] Sync project -> ${SERVER}:${REMOTE_DIR}"
@@ -13,7 +13,8 @@ rsync -avz --delete \
   --exclude 'node_modules' \
   --exclude '.next' \
   --exclude '*.dump' \
-  --exclude '*.sql' \
+  --exclude '*.sql.gz' \
+  --exclude 'backups' \
   --exclude 'Backups' \
   --exclude '.DS_Store' \
   --exclude '.env' \
