@@ -44,6 +44,9 @@ export default function LoginPage() {
             onChange={e => setPassword(e.target.value)}
           />
         </div>
+        <div style={{ marginTop: 8 }}>
+          <Link href="/forgot-password">Забыли пароль?</Link>
+        </div>
         <button type="submit">Войти</button>
         <div style={{ marginTop: 12 }}>
           <button type="button" onClick={() => router.push("/register")}>Регистрация</button>

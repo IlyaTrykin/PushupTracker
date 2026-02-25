@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin as requireAdminUser, AuthError } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
+import { buildPasswordResetUrl, createPasswordResetToken, sendPasswordResetEmail } from '@/lib/password-reset';
 
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -77,6 +78,26 @@ export async function PATCH(request: Request) {
 
   const id = String(body.id || '').trim();
   if (!id) return jsonError('id обязателен');
+
+  if (body.sendResetLink === true) {
+    const target = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, username: true, deletedAt: true },
+    });
+
+    if (!target || target.deletedAt) return jsonError('Пользователь не найден', 404);
+
+    const { token, expiresAt } = await createPasswordResetToken(target.id);
+    const resetUrl = buildPasswordResetUrl(token, request);
+    await sendPasswordResetEmail({
+      to: target.email,
+      username: target.username,
+      resetUrl,
+      expiresAt,
+    });
+
+    return NextResponse.json({ ok: true });
+  }
 
   // Restore soft-deleted profile (allowed within 1 year)
   if (body.restore === true) {

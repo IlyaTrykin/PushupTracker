@@ -204,7 +204,7 @@ if (cancelled) return;
     <div className="app-page" style={{ maxWidth: 980 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <h1 style={{ margin: 0 }}>Сводка</h1>
-        <Link href="/dashboard" style={{ textDecoration: 'none' }}>← На дашборд</Link>
+        <Link href="/dashboard" style={{ textDecoration: 'none' }}>← На тренировку</Link>
       </div>
 
       {error && <p style={{ color: 'red', marginTop: 10 }}>{error}</p>}

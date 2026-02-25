@@ -11,7 +11,14 @@ type UserRow = {
   deletedAt?: string | null;
 };
 
-type RowState = UserRow & { dirty?: boolean; saving?: boolean };
+type RowState = UserRow & { dirty?: boolean; saving?: boolean; sendingReset?: boolean };
+
+function fmtDate(v?: string | null): string {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('ru-RU');
+}
 
 export default function AdminUsersClient() {
   const [rows, setRows] = useState<RowState[]>([]);
@@ -23,10 +30,7 @@ export default function AdminUsersClient() {
   const [newPassword, setNewPassword] = useState('');
   const [newIsAdmin, setNewIsAdmin] = useState(false);
 
-  const sorted = useMemo(
-    () => [...rows].sort((a, b) => a.email.localeCompare(b.email)),
-    [rows]
-  );
+  const sorted = useMemo(() => [...rows].sort((a, b) => a.email.localeCompare(b.email, 'ru')), [rows]);
 
   async function load() {
     setLoading(true);
@@ -37,7 +41,7 @@ export default function AdminUsersClient() {
       setError(data.error || 'Ошибка загрузки');
       setRows([]);
     } else {
-      setRows((data.users || []).map((u: UserRow) => ({ ...u, dirty: false, saving: false })));
+      setRows((data.users || []).map((u: UserRow) => ({ ...u, dirty: false, saving: false, sendingReset: false })));
     }
     setLoading(false);
   }
@@ -47,9 +51,7 @@ export default function AdminUsersClient() {
   }, []);
 
   function updateRow(id: string, patch: Partial<UserRow>) {
-    setRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...patch, dirty: true } : r))
-    );
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch, dirty: true } : r)));
   }
 
   async function createUser() {
@@ -69,6 +71,7 @@ export default function AdminUsersClient() {
       setError(data.error || 'Ошибка создания');
       return;
     }
+
     setNewEmail('');
     setNewUsername('');
     setNewPassword('');
@@ -102,6 +105,7 @@ export default function AdminUsersClient() {
   }
 
   async function deleteRow(id: string) {
+    if (!window.confirm('Удалить пользователя?')) return;
     setError('');
     const res = await fetch('/api/admin/users', {
       method: 'DELETE',
@@ -131,144 +135,325 @@ export default function AdminUsersClient() {
     await load();
   }
 
-  if (loading) return <div className="p-4">Загрузка...</div>;
+  async function sendReset(r: RowState) {
+    setError('');
+    setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, sendingReset: true } : x)));
+
+    const res = await fetch('/api/admin/users', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: r.id, sendResetLink: true }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error || 'Не удалось отправить письмо');
+      setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, sendingReset: false } : x)));
+      return;
+    }
+
+    setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, sendingReset: false } : x)));
+    window.alert(`Ссылка для сброса пароля отправлена на ${r.email}`);
+  }
+
+  if (loading) return <div style={{ padding: 16 }}>Загрузка...</div>;
 
   return (
-    <div className="p-4 space-y-6">
-      <div className="flex items-end justify-between gap-4">
+    <div className="admin-users-wrap">
+      <div className="admin-users-head">
         <div>
-          <h1 className="text-xl font-bold">Админка: пользователи</h1>
-          <div className="text-sm text-gray-600">Управление учётными записями</div>
+          <h1>Админка: пользователи</h1>
+          <p>Управление профилями, правами доступа и паролями.</p>
         </div>
-        <button className="border px-3 py-2 rounded" onClick={load}>
-          Обновить
-        </button>
+        <button className="btn btn-secondary" onClick={load}>Обновить</button>
       </div>
 
-      {error && <div className="text-red-600">{error}</div>}
+      {error ? <div className="error-box">{error}</div> : null}
 
-      <div className="border rounded p-3 space-y-3">
-        <div className="font-semibold">Создать пользователя</div>
-        <div className="grid gap-2 max-w-2xl">
-          <div className="grid md:grid-cols-2 gap-2">
-            <input className="border p-2 rounded" placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
-            <input className="border p-2 rounded" placeholder="Username (можно пусто)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
-          </div>
-          <div className="grid md:grid-cols-2 gap-2">
-            <input className="border p-2 rounded" placeholder="Пароль (>=6)" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-            <label className="flex items-center gap-2 border rounded p-2">
-              <input type="checkbox" checked={newIsAdmin} onChange={(e) => setNewIsAdmin(e.target.checked)} />
-              Администратор
-            </label>
-          </div>
-          <div>
-            <button className="border px-3 py-2 rounded" onClick={createUser}>
-              Создать
-            </button>
-          </div>
+      <section className="panel">
+        <h2>Создать пользователя</h2>
+        <div className="create-grid">
+          <input placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+          <input placeholder="Username (опционально)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
+          <input placeholder="Пароль (>=6)" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+          <label className="checkbox-line">
+            <input type="checkbox" checked={newIsAdmin} onChange={(e) => setNewIsAdmin(e.target.checked)} />
+            Администратор
+          </label>
         </div>
-      </div>
+        <div>
+          <button className="btn" onClick={createUser}>Создать</button>
+        </div>
+      </section>
 
-      <div className="border rounded overflow-hidden">
-        <div className="px-3 py-2 font-semibold border-b">Пользователи</div>
+      <section className="panel">
+        <h2>Пользователи</h2>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr className="text-left">
-                <th className="p-2 border-b">Email</th>
-                <th className="p-2 border-b">Username</th>
-                <th className="p-2 border-b">Админ</th>
-                <th className="p-2 border-b">Статус</th>
-                <th className="p-2 border-b">Действия</th>
+        <div className="desktop-table-wrap">
+          <table className="users-table">
+            <thead>
+              <tr>
+                <th>Имя пользователя</th>
+                <th>Дата создания</th>
+                <th>Email</th>
+                <th>Админ</th>
+                <th>Сброс пароля</th>
+                <th>Действия</th>
               </tr>
             </thead>
-
             <tbody>
               {sorted.map((r) => (
-                <tr key={r.id} className="align-top">
-                  <td className="p-2 border-b">
-                    <div className="text-xs text-gray-500 font-mono mb-1">{r.id}</div>
-                    <input
-                      className="border p-2 rounded w-80 max-w-full"
-                      value={r.email}
-                      onChange={(e) => updateRow(r.id, { email: e.target.value })}
-                    />
+                <tr key={r.id}>
+                  <td>
+                    <input value={r.username} onChange={(e) => updateRow(r.id, { username: e.target.value })} />
+                    <div className="muted">ID: {r.id}</div>
                   </td>
-
-                  <td className="p-2 border-b">
-                    <input
-                      className="border p-2 rounded w-56 max-w-full"
-                      value={r.username}
-                      onChange={(e) => updateRow(r.id, { username: e.target.value })}
-                    />
+                  <td>{fmtDate(r.createdAt)}</td>
+                  <td>
+                    <input value={r.email} onChange={(e) => updateRow(r.id, { email: e.target.value })} />
                   </td>
-
-                  <td className="p-2 border-b">
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={r.isAdmin}
-                        onChange={(e) => updateRow(r.id, { isAdmin: e.target.checked })}
-                      />
-                      <span>{r.isAdmin ? 'Да' : 'Нет'}</span>
+                  <td>
+                    <label className="checkbox-line">
+                      <input type="checkbox" checked={r.isAdmin} onChange={(e) => updateRow(r.id, { isAdmin: e.target.checked })} />
+                      {r.isAdmin ? 'Да' : 'Нет'}
                     </label>
                   </td>
-
-                  <td className="p-2 border-b">
-                    {r.deletedAt ? (
-                      <div>
-                        <div className="text-red-600 font-semibold">Удалён</div>
-                        <div className="text-xs text-gray-500">{new Date(r.deletedAt).toLocaleString()}</div>
-                      </div>
-                    ) : (
-                      <div className="text-green-700 font-semibold">Активен</div>
-                    )}
+                  <td>
+                    <button className="btn btn-secondary" disabled={!!r.sendingReset || !!r.deletedAt} onClick={() => sendReset(r)}>
+                      {r.sendingReset ? 'Отправка...' : 'Сбросить пароль'}
+                    </button>
                   </td>
-
-                  <td className="p-2 border-b">
-                    <div className="flex gap-2">
-                      <button
-                        className="border px-3 py-2 rounded disabled:opacity-50"
-                        disabled={!r.dirty || r.saving}
-                        onClick={() => saveRow(r)}
-                      >
-                        {r.saving ? 'Сохранение…' : 'Сохранить'}
+                  <td>
+                    <div className="actions-cell">
+                      <button className="btn" disabled={!r.dirty || !!r.saving} onClick={() => saveRow(r)}>
+                        {r.saving ? 'Сохранение...' : 'Сохранить'}
                       </button>
-
                       {r.deletedAt ? (
-                        <button className="border px-3 py-2 rounded" onClick={() => restoreRow(r.id)}>
-                          Восстановить
-                        </button>
+                        <button className="btn btn-secondary" onClick={() => restoreRow(r.id)}>Восстановить</button>
                       ) : (
-                        <button className="border px-3 py-2 rounded text-red-600" onClick={() => deleteRow(r.id)}>
-                          Удалить
-                        </button>
+                        <button className="btn btn-danger" onClick={() => deleteRow(r.id)}>Удалить</button>
                       )}
                     </div>
-
-                    {r.dirty ? (
-                      <div className="text-xs text-gray-500 mt-1">Есть несохранённые изменения</div>
-                    ) : null}
+                    <div className="muted">{r.deletedAt ? `Удален: ${fmtDate(r.deletedAt)}` : 'Активен'}</div>
                   </td>
                 </tr>
               ))}
 
-              {sorted.length === 0 && (
+              {!sorted.length ? (
                 <tr>
-                  <td className="p-3 text-gray-600" colSpan={5}>
-                    Пользователей нет.
-                  </td>
+                  <td colSpan={6} className="empty-row">Пользователей нет.</td>
                 </tr>
-              )}
+              ) : null}
             </tbody>
           </table>
         </div>
-      </div>
 
-      <div className="text-sm text-gray-600">
-        URL: <span className="font-mono">/admin/users</span>
-      </div>
+        <div className="mobile-cards">
+          {sorted.map((r) => (
+            <article className="user-card" key={`m-${r.id}`}>
+              <label>
+                Имя пользователя
+                <input value={r.username} onChange={(e) => updateRow(r.id, { username: e.target.value })} />
+              </label>
+
+              <div className="info-line"><span>Дата создания:</span><strong>{fmtDate(r.createdAt)}</strong></div>
+
+              <label>
+                Email
+                <input value={r.email} onChange={(e) => updateRow(r.id, { email: e.target.value })} />
+              </label>
+
+              <label className="checkbox-line">
+                <input type="checkbox" checked={r.isAdmin} onChange={(e) => updateRow(r.id, { isAdmin: e.target.checked })} />
+                Администратор
+              </label>
+
+              <div className="card-actions">
+                <button className="btn btn-secondary" disabled={!!r.sendingReset || !!r.deletedAt} onClick={() => sendReset(r)}>
+                  {r.sendingReset ? 'Отправка...' : 'Сбросить пароль'}
+                </button>
+                <button className="btn" disabled={!r.dirty || !!r.saving} onClick={() => saveRow(r)}>
+                  {r.saving ? 'Сохранение...' : 'Сохранить'}
+                </button>
+                {r.deletedAt ? (
+                  <button className="btn btn-secondary" onClick={() => restoreRow(r.id)}>Восстановить</button>
+                ) : (
+                  <button className="btn btn-danger" onClick={() => deleteRow(r.id)}>Удалить</button>
+                )}
+              </div>
+
+              <div className="muted">{r.deletedAt ? `Удален: ${fmtDate(r.deletedAt)}` : 'Активен'}</div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <style jsx>{`
+        .admin-users-wrap {
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 16px;
+          display: grid;
+          gap: 16px;
+        }
+        .admin-users-head {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        h1 {
+          margin: 0;
+          font-size: 24px;
+        }
+        h2 {
+          margin: 0;
+          font-size: 18px;
+        }
+        p {
+          margin: 6px 0 0;
+          color: #4b5563;
+        }
+        .panel {
+          border: 1px solid #d1d5db;
+          border-radius: 14px;
+          padding: 14px;
+          display: grid;
+          gap: 12px;
+          background: #fff;
+        }
+        .error-box {
+          border: 1px solid #fecaca;
+          background: #fef2f2;
+          color: #991b1b;
+          border-radius: 10px;
+          padding: 10px;
+        }
+        .create-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        input {
+          width: 100%;
+          border: 1px solid #d1d5db;
+          border-radius: 10px;
+          padding: 9px 10px;
+        }
+        .btn {
+          border: 1px solid #2563eb;
+          background: #2563eb;
+          color: #fff;
+          border-radius: 10px;
+          padding: 8px 12px;
+          cursor: pointer;
+          font-weight: 700;
+        }
+        .btn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+        .btn-secondary {
+          border-color: #d1d5db;
+          background: #fff;
+          color: #111827;
+        }
+        .btn-danger {
+          border-color: #ef4444;
+          background: #fff;
+          color: #b91c1c;
+        }
+        .desktop-table-wrap {
+          overflow: auto;
+          border: 1px solid #e5e7eb;
+          border-radius: 10px;
+        }
+        .users-table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 980px;
+        }
+        th, td {
+          border-bottom: 1px solid #e5e7eb;
+          padding: 10px;
+          text-align: left;
+          vertical-align: top;
+        }
+        th {
+          background: #f9fafb;
+          font-size: 13px;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+        td {
+          font-size: 14px;
+        }
+        .actions-cell {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .muted {
+          font-size: 12px;
+          color: #6b7280;
+          margin-top: 6px;
+          word-break: break-all;
+        }
+        .checkbox-line {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .empty-row {
+          text-align: center;
+          color: #6b7280;
+          padding: 20px;
+        }
+        .mobile-cards {
+          display: none;
+          gap: 10px;
+        }
+        .user-card {
+          border: 1px solid #e5e7eb;
+          border-radius: 12px;
+          padding: 10px;
+          display: grid;
+          gap: 8px;
+        }
+        .user-card label {
+          display: grid;
+          gap: 5px;
+          font-size: 13px;
+          font-weight: 700;
+        }
+        .info-line {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          font-size: 13px;
+          color: #4b5563;
+        }
+        .card-actions {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        @media (max-width: 1024px) {
+          .create-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        @media (max-width: 900px) {
+          .desktop-table-wrap {
+            display: none;
+          }
+          .mobile-cards {
+            display: grid;
+          }
+        }
+      `}</style>
     </div>
   );
 }

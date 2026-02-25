@@ -11,6 +11,7 @@ __MACOSX
 *.bak
 *.broken
 *.log
+!prisma/migrations/**/migration.sql
 
 # secrets
 .env

@@ -9,9 +9,12 @@ function jsonError(message: string, status: number, details?: string) {
   return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
 }
 
-function getExerciseTypeFromQuery(request: NextRequest): 'pushups' | 'pullups' {
-  const et = request.nextUrl.searchParams.get('exerciseType')?.trim() || 'pushups';
-  return (ALLOWED_EXERCISES.has(et) ? et : 'pushups') as any;
+function getExerciseTypeFromQuery(request: NextRequest): 'pushups' | 'pullups' | 'crunches' | 'squats' | null {
+  const raw = request.nextUrl.searchParams.get('exerciseType');
+  if (!raw) return null;
+  const et = raw.trim();
+  if (!ALLOWED_EXERCISES.has(et)) return null;
+  return et as any;
 }
 
 export async function GET(request: NextRequest) {
@@ -27,7 +30,7 @@ export async function GET(request: NextRequest) {
     const exerciseType = getExerciseTypeFromQuery(request);
 
     const friendships = await prisma.friendship.findMany({
-      where: { OR: [{ userId }, { friendId: userId }] },
+      where: { status: 'accepted', OR: [{ userId }, { friendId: userId }] },
       select: { userId: true, friendId: true },
     });
 
@@ -45,8 +48,11 @@ export async function GET(request: NextRequest) {
 
     const idToUsername = new Map(users.map((u) => [u.id, u.username]));
 
+    const where: any = { userId: { in: userIds } };
+    if (exerciseType) where.exerciseType = exerciseType;
+
     const workouts = await prisma.workout.findMany({
-      where: { userId: { in: userIds }, exerciseType },
+      where,
       orderBy: [{ date: 'desc' }, { time: 'desc' }],
       select: { id: true, userId: true, reps: true, date: true, time: true, exerciseType: true },
     });

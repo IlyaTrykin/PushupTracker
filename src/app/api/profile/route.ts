@@ -39,6 +39,7 @@ export async function GET(request: Request) {
         updatedAt: true,
         gender: true,
         birthDate: true,
+        weightKg: true,
         avatarPath: true,
         deletedAt: true,
       },
@@ -62,6 +63,11 @@ export async function PATCH(request: Request) {
     const nextUsername = body.username !== undefined ? String(body.username || '').trim() : undefined;
     const nextGender = body.gender !== undefined ? normalizeGender(body.gender) : undefined;
     const nextBirthDate = body.birthDate !== undefined ? parseBirthDate(body.birthDate) : undefined;
+    const nextWeightKg = body.weightKg !== undefined && body.weightKg !== null && String(body.weightKg).trim() !== ''
+      ? Number(body.weightKg)
+      : body.weightKg === null || body.weightKg === ''
+        ? null
+        : undefined;
 
     const current = await prisma.user.findUnique({
       where: { id: me.id },
@@ -70,6 +76,7 @@ export async function PATCH(request: Request) {
         username: true,
         gender: true,
         birthDate: true,
+        weightKg: true,
         avatarPath: true,
         deletedAt: true,
       },
@@ -110,6 +117,17 @@ export async function PATCH(request: Request) {
       }
     }
 
+    if (nextWeightKg !== undefined) {
+      const cur = current.weightKg ?? null;
+      if (nextWeightKg !== null && (!Number.isFinite(nextWeightKg) || nextWeightKg < 30 || nextWeightKg > 250)) {
+        return jsonError('Вес должен быть в диапазоне 30..250 кг');
+      }
+      if (nextWeightKg !== cur) {
+        data.weightKg = nextWeightKg;
+        changes.weightKg = { from: cur, to: nextWeightKg };
+      }
+    }
+
     if (Object.keys(data).length === 0) {
       return NextResponse.json({ ok: true });
     }
@@ -127,6 +145,7 @@ export async function PATCH(request: Request) {
           updatedAt: true,
           gender: true,
           birthDate: true,
+          weightKg: true,
           avatarPath: true,
         },
       });

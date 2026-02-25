@@ -9,6 +9,16 @@ interface Friend {
   email: string | null;
   avatarPath?: string | null;
   since: string;
+  isFollowing?: boolean;
+}
+
+interface PendingRequest {
+  friendshipId: string;
+  userId: string;
+  username: string;
+  email: string | null;
+  avatarPath?: string | null;
+  createdAt: string;
 }
 
 
@@ -43,12 +53,14 @@ function AvatarCircle({ src, size = 28 }: { src?: string | null; size?: number }
 }
 
 
+type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+
 interface Workout {
   id: string;
   reps: number;
   date: string;          // ISO date
   time?: string | null;  // ISO datetime (если есть)
-  exerciseType?: 'pushups' | 'pullups' | 'crunches' | 'squats';
+  exerciseType?: ExerciseType;
 }
 
 type Stats = {
@@ -81,11 +93,54 @@ type SortKey =
   | 'dMonth'
   | 'dWeek';
 
+const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats'];
+
 function normalizeDate(d: Date): string {
   const y = d.getFullYear();
   const m = `${d.getMonth() + 1}`.padStart(2, '0');
   const day = `${d.getDate()}`.padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function monthStart(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function addCalendarMonths(base: Date, delta: number): Date {
+  return new Date(base.getFullYear(), base.getMonth() + delta, 1);
+}
+
+function formatMonthTitle(date: Date): string {
+  return date.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+}
+
+function formatDateWithWeekday(dayKey: string): string {
+  const d = new Date(`${dayKey}T00:00:00`);
+  return d.toLocaleDateString('ru-RU', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function exerciseNumberColor(type: ExerciseType): string {
+  if (type === 'pushups') return '#38bdf8';
+  if (type === 'pullups') return '#ef4444';
+  if (type === 'crunches') return '#22c55e';
+  return '#b8860b';
+}
+
+function exerciseCode(type: ExerciseType): string {
+  if (type === 'pushups') return 'ОТЖ';
+  if (type === 'pullups') return 'ПТГ';
+  if (type === 'crunches') return 'СКР';
+  return 'ПРС';
+}
+
+function toExerciseType(type: string | undefined): ExerciseType {
+  if (type === 'pullups' || type === 'crunches' || type === 'squats') return type;
+  return 'pushups';
 }
 
 function calcStats(workouts: Workout[]): Stats {
@@ -212,9 +267,11 @@ async function fetchJson(url: string) {
 
 export default function FriendsPage() {
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<PendingRequest[]>([]);
+  const [outgoingRequests, setOutgoingRequests] = useState<PendingRequest[]>([]);
   const [me, setMe] = useState<{ id: string; username: string; avatarPath: string | null } | null>(null);
   const [newUsername, setNewUsername] = useState('');
-  const [exerciseType, setExerciseType] = useState<'pushups' | 'pullups' | 'crunches' | 'squats'>('pushups');
+  const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
 
   const EXERCISE_LABELS: Record<string, string> = {
     pushups: 'Отжимания',
@@ -222,13 +279,16 @@ export default function FriendsPage() {
     crunches: 'Скручивания',
     squats: 'Приседания',
   };
-  const exerciseLabel = EXERCISE_LABELS[exerciseType] ?? 'Отжимания';
   // сортировка: null => режим по умолчанию (Ты сверху + друзья по алфавиту)
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [showAddFriendForm, setShowAddFriendForm] = useState(false);
 
   const [selectedFriend, setSelectedFriend] = useState<string>(''); // username
   const selectedFriendObj = useMemo(() => friends.find((f) => f.username === selectedFriend) || null, [friends, selectedFriend]);
+  const [friendCalendarMonth, setFriendCalendarMonth] = useState<Date>(() => monthStart(new Date()));
+  const [friendDetailsOpen, setFriendDetailsOpen] = useState(false);
+  const [friendDetailDay, setFriendDetailDay] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -253,6 +313,16 @@ export default function FriendsPage() {
     return () => window.removeEventListener('exerciseTypeChanged', onChanged as any);
   }, []);
 
+  const handleExerciseTypeChange = (next: ExerciseType) => {
+    setExerciseType(next);
+    try {
+      window.localStorage.setItem('exerciseType', next);
+    } catch {}
+    try {
+      window.dispatchEvent(new CustomEvent('exerciseTypeChanged', { detail: { exerciseType: next } }));
+    } catch {}
+  };
+
   const loadAll = async () => {
     setLoading(true);
     setError(null);
@@ -262,13 +332,17 @@ export default function FriendsPage() {
       const meData = (await fetchJson('/api/me')) as { id: string; username: string; avatarPath: string | null };
       setMe(meData || null);
 
-      const mine = (await fetchJson(`/api/workouts?exerciseType=${exerciseType}`)) as Workout[];
+      const mine = (await fetchJson('/api/workouts')) as Workout[];
       setMyWorkouts(mine || []);
 
       const fr = (await fetchJson('/api/friends')) as Friend[];
       setFriends(fr || []);
 
-      const byUser = (await fetchJson(`/api/friends/workouts?exerciseType=${exerciseType}`)) as Record<string, Workout[]>;
+      const req = (await fetchJson('/api/friends/requests')) as { incoming: PendingRequest[]; outgoing: PendingRequest[] };
+      setIncomingRequests(req?.incoming || []);
+      setOutgoingRequests(req?.outgoing || []);
+
+      const byUser = (await fetchJson('/api/friends/workouts')) as Record<string, Workout[]>;
       setFriendWorkouts((byUser && typeof byUser === 'object') ? byUser : {});
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -280,7 +354,7 @@ export default function FriendsPage() {
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exerciseType]);
+  }, []);
 
   // Авто-выбор друга в выпадающем меню
   useEffect(() => {
@@ -325,8 +399,78 @@ export default function FriendsPage() {
       }
 
       setNewUsername('');
-      setInfo(`Пользователь ${data.username} добавлен в друзья`);
+      setInfo(`Запрос отправлен пользователю ${data.username}`);
       await loadAll();
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
+  const handleRespondRequest = async (friendshipId: string, action: 'accept' | 'decline') => {
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await fetch('/api/friends', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action, friendshipId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const base = data?.error || `Ошибка действия (код ${res.status})`;
+        const details = data?.details || '';
+        throw new Error(details ? `${base}: ${details}` : base);
+      }
+      setInfo(action === 'accept' ? 'Запрос в друзья принят' : 'Запрос отклонён');
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
+  const handleCancelOutgoing = async (friendshipId: string, username: string) => {
+    const ok = window.confirm(`Отменить запрос в друзья пользователю ${username}?`);
+    if (!ok) return;
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await fetch('/api/friends', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ friendshipId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const base = data?.error || `Ошибка отмены (код ${res.status})`;
+        const details = data?.details || '';
+        throw new Error(details ? `${base}: ${details}` : base);
+      }
+      setInfo('Исходящий запрос отменён');
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
+  const handleToggleFollow = async (row: Friend, follow: boolean) => {
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await fetch('/api/friends', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'follow', friendshipId: row.friendshipId, follow }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const base = data?.error || `Ошибка подписки (код ${res.status})`;
+        const details = data?.details || '';
+        throw new Error(details ? `${base}: ${details}` : base);
+      }
+      setFriends((prev) => prev.map((f) => (f.friendshipId === row.friendshipId ? { ...f, isFollowing: follow } : f)));
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -366,15 +510,19 @@ export default function FriendsPage() {
     }
   };
 
-  const myStats = useMemo(() => calcStats(myWorkouts), [myWorkouts]);
+  const myStats = useMemo(() => {
+    const filtered = myWorkouts.filter((w) => toExerciseType(w.exerciseType) === exerciseType);
+    return calcStats(filtered);
+  }, [myWorkouts, exerciseType]);
 
   const friendRows = useMemo(() => {
     return friends.map((f) => {
-      const w = friendWorkouts[f.username] || [];
-      const stats = calcStats(w);
+      const raw = friendWorkouts[f.username] || [];
+      const filtered = raw.filter((w) => toExerciseType(w.exerciseType) === exerciseType);
+      const stats = calcStats(filtered);
       return { friend: f, stats };
     });
-  }, [friends, friendWorkouts]);
+  }, [friends, friendWorkouts, exerciseType]);
 
   const meRow = useMemo(() => {
     return {
@@ -469,17 +617,80 @@ export default function FriendsPage() {
 
   const selectedFriendWorkouts = useMemo(() => {
     if (!selectedFriend) return [] as Workout[];
-    const raw = friendWorkouts[selectedFriend] || [];
-    const filtered = raw.filter((w) => (w.exerciseType ? w.exerciseType === exerciseType : true));
-
-    filtered.sort((a, b) => {
+    const all = [...(friendWorkouts[selectedFriend] || [])];
+    all.sort((a, b) => {
       const at = new Date(a.time || a.date).getTime();
       const bt = new Date(b.time || b.date).getTime();
       return bt - at;
     });
 
-    return filtered;
-  }, [selectedFriend, friendWorkouts, exerciseType]);
+    return all;
+  }, [selectedFriend, friendWorkouts]);
+
+  const selectedFriendDayMap = useMemo(() => {
+    const byDay = new Map<string, { items: Workout[]; totalReps: number; byExercise: Map<ExerciseType, number> }>();
+    selectedFriendWorkouts.forEach((w) => {
+      const dayKey = normalizeDate(new Date(w.time || w.date));
+      const row = byDay.get(dayKey) ?? { items: [], totalReps: 0, byExercise: new Map<ExerciseType, number>() };
+      const type = toExerciseType(w.exerciseType);
+      row.items.push(w);
+      row.totalReps += w.reps || 0;
+      row.byExercise.set(type, (row.byExercise.get(type) ?? 0) + (w.reps || 0));
+      byDay.set(dayKey, row);
+    });
+
+    for (const row of byDay.values()) {
+      row.items.sort((a, b) => new Date(b.time || b.date).getTime() - new Date(a.time || a.date).getTime());
+    }
+
+    return byDay;
+  }, [selectedFriendWorkouts]);
+
+  const friendCalendarCells = useMemo(() => {
+    const year = friendCalendarMonth.getFullYear();
+    const month = friendCalendarMonth.getMonth();
+    const first = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const mondayOffset = (first.getDay() + 6) % 7;
+    const out: Array<{ key: string; day: number } | null> = [];
+
+    for (let i = 0; i < mondayOffset; i += 1) out.push(null);
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const d = new Date(year, month, day);
+      out.push({ key: normalizeDate(d), day });
+    }
+    while (out.length % 7 !== 0) out.push(null);
+    return out;
+  }, [friendCalendarMonth]);
+
+  const hasPendingRequests = incomingRequests.length > 0 || outgoingRequests.length > 0;
+  const todayKey = normalizeDate(new Date());
+  const friendWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const selectedFriendDayData = friendDetailDay ? selectedFriendDayMap.get(friendDetailDay) ?? null : null;
+
+  useEffect(() => {
+    const first = selectedFriendWorkouts[0];
+    if (!first) {
+      setFriendCalendarMonth(monthStart(new Date()));
+      return;
+    }
+    const firstDate = new Date(first.time || first.date);
+    if (!Number.isNaN(firstDate.getTime())) {
+      setFriendCalendarMonth(monthStart(firstDate));
+    }
+  }, [selectedFriendWorkouts]);
+
+  useEffect(() => {
+    setFriendDetailsOpen(false);
+    setFriendDetailDay(null);
+  }, [selectedFriend]);
+
+  useEffect(() => {
+    if (!friendDetailsOpen || !friendDetailDay) return;
+    if (selectedFriendDayMap.has(friendDetailDay)) return;
+    setFriendDetailsOpen(false);
+    setFriendDetailDay(null);
+  }, [selectedFriendDayMap, friendDetailsOpen, friendDetailDay]);
 
   return (
     <div className="app-page">
@@ -489,41 +700,57 @@ export default function FriendsPage() {
         Периоды: текущая календарная неделя (с понедельника), месяц (с 1-го), год (с 1 января).
       </p>
 
-      <section style={card}>
-        <h2 style={{ marginTop: 0 }}>Добавить друга</h2>
-
-        <form onSubmit={handleAddFriend} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label>Ник (username)</label>
-            <input
-              value={newUsername}
-              onChange={(e) => setNewUsername(e.target.value)}
-              style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc', width: 260 }}
-            />
-          </div>
-
-          <button type="submit" style={btnPrimary}>Добавить</button>
-          <button type="button" onClick={loadAll} style={btnSecondary}>Обновить</button>
-        </form>
-
-        {error && <p style={{ color: 'red', marginTop: 12 }}>{error}</p>}
-        {info && <p style={{ color: 'green', marginTop: 12 }}>{info}</p>}
-        {loading && <p style={{ marginTop: 12 }}>Загрузка…</p>}
-      </section>
+      {error ? <p style={{ color: 'red', marginTop: 12 }}>{error}</p> : null}
+      {info ? <p style={{ color: 'green', marginTop: 12 }}>{info}</p> : null}
+      {loading ? <p style={{ marginTop: 12 }}>Загрузка…</p> : null}
 
       <section style={card}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <h2 style={{ marginTop: 0, marginBottom: 0 }}>Сравнение с друзьями</h2>
-          <button type="button" onClick={resetSort} style={btnSecondary}>
-            Сбросить сортировку
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 800, color: '#000' }}>
+              <span>Тип:</span>
+              <select
+                value={exerciseType}
+                onChange={(e) => handleExerciseTypeChange(e.target.value as ExerciseType)}
+                style={{ padding: '8px 10px', borderRadius: 10, border: '1px solid #d1d5db', background: '#fff', color: '#000', fontWeight: 800 }}
+              >
+                <option value="pushups">Отжимания</option>
+                <option value="pullups">Подтягивания</option>
+                <option value="crunches">Скручивания</option>
+                <option value="squats">Приседания</option>
+              </select>
+            </label>
+            <button type="button" onClick={() => setShowAddFriendForm((prev) => !prev)} style={btnSecondary}>
+              {showAddFriendForm ? 'Скрыть форму' : 'Добавить друга'}
+            </button>
+            <button type="button" onClick={resetSort} style={btnSecondary}>
+              Сбросить сортировку
+            </button>
+          </div>
         </div>
+
+        {showAddFriendForm ? (
+          <form onSubmit={handleAddFriend} style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label>Ник (username)</label>
+              <input
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc', width: 260 }}
+              />
+            </div>
+
+            <button type="submit" style={btnPrimary}>Добавить</button>
+            <button type="button" onClick={loadAll} style={btnSecondary}>Обновить</button>
+          </form>
+        ) : null}
 
         {sortedAll.length <= 1 ? (
           <p style={{ marginTop: 12 }}>Пока друзей нет.</p>
         ) : (
           <div className="table-scroll" style={{ marginTop: 12 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1060 }}>
               <thead>
                 <tr style={{ background: '#f3f4f6' }}>
                   <th style={th} className="table-sticky-first table-sticky-first--head">
@@ -552,6 +779,7 @@ export default function FriendsPage() {
                   <th style={th}><button type="button" onClick={() => toggleSort('avgAll')} style={thBtn}>Ср/день всего {sortIndicator('avgAll')}</button></th>
                   <th style={th}><button type="button" onClick={() => toggleSort('streak')} style={thBtn}>Серия {sortIndicator('streak')}</button></th>
 
+                  <th style={th}>Следить</th>
                   <th style={th}>Действия</th>
                 </tr>
               </thead>
@@ -616,6 +844,19 @@ export default function FriendsPage() {
                       <td style={tdNum}>{s.streak}</td>
 
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        {isMe ? '—' : (
+                          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(row.friend.isFollowing)}
+                              onChange={(e) => handleToggleFollow(row.friend as Friend, e.target.checked)}
+                            />
+                            Следить
+                          </label>
+                        )}
+                      </td>
+
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         {isMe ? (
                           '—'
                         ) : (
@@ -637,6 +878,56 @@ export default function FriendsPage() {
         )}
       </section>
 
+      {hasPendingRequests ? (
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>Запросы в друзья</h2>
+          <div style={{ display: 'grid', gap: 12 }}>
+            {incomingRequests.length > 0 ? (
+              <div>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>Входящие ({incomingRequests.length})</div>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {incomingRequests.map((r) => (
+                    <div key={r.friendshipId} style={requestRow}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <AvatarCircle src={r.avatarPath} size={26} />
+                        <div>
+                          <div style={{ fontWeight: 800 }}>{r.username}</div>
+                          <div style={{ fontSize: 12, color: '#6b7280' }}>{new Date(r.createdAt).toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" style={btnPrimary} onClick={() => handleRespondRequest(r.friendshipId, 'accept')}>Принять</button>
+                        <button type="button" style={btnDanger} onClick={() => handleRespondRequest(r.friendshipId, 'decline')}>Отклонить</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {outgoingRequests.length > 0 ? (
+              <div>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>Исходящие ({outgoingRequests.length})</div>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {outgoingRequests.map((r) => (
+                    <div key={r.friendshipId} style={requestRow}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <AvatarCircle src={r.avatarPath} size={26} />
+                        <div>
+                          <div style={{ fontWeight: 800 }}>{r.username}</div>
+                          <div style={{ fontSize: 12, color: '#6b7280' }}>{new Date(r.createdAt).toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <button type="button" style={btnSecondary} onClick={() => handleCancelOutgoing(r.friendshipId, r.username)}>Отменить</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <section style={card}>
         <h2 style={{ marginTop: 0 }}>Тренировки друга</h2>
 
@@ -647,55 +938,157 @@ export default function FriendsPage() {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'end', marginBottom: 12 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label>Выбери друга</label>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <AvatarCircle src={selectedFriendObj?.avatarPath} size={34} />
-<select
-                  value={selectedFriend}
-                  onChange={(e) => setSelectedFriend(e.target.value)}
-                  style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc', width: 220 }}
-                >
-                  {friends
-                    .map((f) => f.username)
-                    .sort((a, b) => a.localeCompare(b, 'ru'))
-                    .map((u) => (
-                      <option key={u} value={u}>{u}</option>
-                    ))}
-                </select>
+                  <select
+                    value={selectedFriend}
+                    onChange={(e) => setSelectedFriend(e.target.value)}
+                    style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc', width: 220 }}
+                  >
+                    {friends
+                      .map((f) => f.username)
+                      .sort((a, b) => a.localeCompare(b, 'ru'))
+                      .map((u) => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                  </select>
                 </div>
               </div>
 
               <div style={{ color: '#000', fontSize: 13, marginBottom: 2 }}>
-                Показаны только записи по упражнению: <b>{exerciseLabel}</b>
+                В календаре показаны все виды тренировок.
               </div>
             </div>
 
-            {selectedFriendWorkouts.length === 0 ? (
+            {selectedFriendDayMap.size === 0 ? (
               <p>Нет записей для выбранного друга по этому упражнению.</p>
             ) : (
-              <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
-                  <thead>
-                    <tr style={{ background: '#f3f4f6' }}>
-                      <th style={th}>Дата</th>
-                      <th style={th}>Время</th>
-                      <th style={{ ...th, textAlign: 'right' }}>Повторения</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedFriendWorkouts.map((w) => (
-                      <tr key={w.id}>
-                        <td style={td}>{new Date(w.date).toLocaleDateString()}</td>
-                        <td style={td}>{formatTimeHHMM(w.time || w.date)}</td>
-                        <td style={tdNum}>{w.reps}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                <div style={calendarNavWrap}>
+                  <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(friendCalendarMonth)}</div>
+                  <div style={calendarNavButtons}>
+                    <button type="button" style={btnSecondary} onClick={() => setFriendCalendarMonth((d) => addCalendarMonths(d, -1))}>
+                      Предыдущий
+                    </button>
+                    <button type="button" style={btnSecondary} onClick={() => setFriendCalendarMonth((d) => addCalendarMonths(d, 1))}>
+                      Следующий
+                    </button>
+                  </div>
+                </div>
+
+                <div style={calendarGrid}>
+                  {friendWeekdays.map((day) => (
+                    <div key={day} style={calendarWeekdayCell}>{day}</div>
+                  ))}
+
+                  {friendCalendarCells.map((cell, idx) => {
+                    if (!cell) return <div key={`empty-${idx}`} style={calendarEmptyCell} />;
+                    const row = selectedFriendDayMap.get(cell.key);
+                    const hasData = Boolean(row && row.items.length);
+                    const isToday = cell.key === todayKey;
+                    const active = friendDetailsOpen && friendDetailDay === cell.key;
+                    const cellDate = new Date(`${cell.key}T00:00:00`);
+                    const dayOfWeek = cellDate.getDay();
+                    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                    const baseBackground = hasData ? '#f8fafc' : '#fff';
+                    const exerciseTotals = EXERCISE_ORDER
+                      .map((type) => ({ type, sum: row?.byExercise.get(type) ?? 0 }))
+                      .filter((x) => x.sum > 0);
+
+                    return (
+                      <button
+                        key={cell.key}
+                        type="button"
+                        onClick={() => {
+                          if (!hasData) return;
+                          setFriendDetailDay(cell.key);
+                          setFriendDetailsOpen(true);
+                        }}
+                        style={{
+                          ...calendarDayCell,
+                          background: isWeekend
+                            ? `linear-gradient(rgba(244, 114, 182, 0.12), rgba(244, 114, 182, 0.12)), ${baseBackground}`
+                            : baseBackground,
+                          borderColor: isToday ? '#16a34a' : active ? '#2563eb' : hasData ? '#d1d5db' : '#f3f4f6',
+                          boxShadow: isToday ? 'inset 0 0 0 1px #16a34a' : 'none',
+                        }}
+                      >
+                        <div style={{ fontWeight: 900, textAlign: 'left', color: '#000' }}>{cell.day}</div>
+                        {hasData ? (
+                          <div style={friendDayValues}>
+                            {exerciseTotals.map(({ type, sum }) => (
+                              <span key={type} style={friendTotalValue}>
+                                <span style={{ ...friendValueDot, background: exerciseNumberColor(type) }} />
+                                <span>{sum}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={legendWrap}>
+                  {EXERCISE_ORDER.map((type) => (
+                    <div key={type} style={legendItem}>
+                      <span style={{ ...legendColor, background: exerciseNumberColor(type) }} />
+                      <span>{EXERCISE_LABELS[type]}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </>
         )}
       </section>
+
+      {friendDetailsOpen ? (
+        <div
+          style={modalBackdrop}
+          onClick={() => {
+            setFriendDetailsOpen(false);
+            setFriendDetailDay(null);
+          }}
+        >
+          <section style={modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={modalTop}>
+              <h2 style={{ margin: 0 }}>Подходы друга за день</h2>
+              <button
+                type="button"
+                style={btnSecondary}
+                onClick={() => {
+                  setFriendDetailsOpen(false);
+                  setFriendDetailDay(null);
+                }}
+              >
+                Закрыть
+              </button>
+            </div>
+
+            {!friendDetailDay || !selectedFriendDayData ? (
+              <div style={{ color: '#6b7280' }}>Нет записей на выбранный день.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div style={{ color: '#111827', fontWeight: 800 }}>
+                  {formatDateWithWeekday(friendDetailDay)} · всего: {selectedFriendDayData.totalReps}
+                </div>
+
+                {selectedFriendDayData.items.map((w) => (
+                  <div key={w.id} style={friendRowCard}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ ...friendValueDot, background: exerciseNumberColor(toExerciseType(w.exerciseType)) }} />
+                      <span style={{ fontSize: 11, fontWeight: 900, color: '#000' }}>{exerciseCode(toExerciseType(w.exerciseType))}</span>
+                    </div>
+                    <div>{formatTimeHHMM(w.time || w.date)}</div>
+                    <div style={{ fontWeight: 900 }}>{w.reps}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -706,6 +1099,153 @@ const card: React.CSSProperties = {
   borderRadius: 10,
   background: '#f9fafb',
   marginBottom: 16,
+};
+
+const requestRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 10,
+  flexWrap: 'wrap',
+  border: '1px solid #e5e7eb',
+  borderRadius: 10,
+  padding: 8,
+  background: '#fff',
+};
+
+const calendarNavWrap: React.CSSProperties = {
+  display: 'grid',
+  gap: 8,
+};
+
+const calendarNavButtons: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: 8,
+};
+
+const calendarGrid: React.CSSProperties = {
+  marginTop: 10,
+  display: 'grid',
+  gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+  gap: 6,
+};
+
+const calendarWeekdayCell: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  color: '#000',
+  textAlign: 'center',
+  padding: '4px 0',
+};
+
+const calendarEmptyCell: React.CSSProperties = {
+  minHeight: 76,
+  border: '1px dashed #f3f4f6',
+  borderRadius: 10,
+  background: '#fff',
+};
+
+const calendarDayCell: React.CSSProperties = {
+  minHeight: 76,
+  border: '1px solid #e5e7eb',
+  borderRadius: 10,
+  padding: 6,
+  display: 'grid',
+  gap: 4,
+  alignContent: 'start',
+  cursor: 'pointer',
+  textAlign: 'left',
+};
+
+const friendTotalValue: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 0,
+  fontSize: 11,
+  lineHeight: 1,
+  fontWeight: 900,
+  color: '#000',
+  whiteSpace: 'nowrap',
+};
+
+const friendDayValues: React.CSSProperties = {
+  display: 'grid',
+  gap: 0,
+  alignContent: 'start',
+};
+
+const friendValueDot: React.CSSProperties = {
+  width: 6,
+  height: 6,
+  borderRadius: 999,
+  flex: '0 0 auto',
+  marginRight: 1,
+};
+
+const legendWrap: React.CSSProperties = {
+  marginTop: 10,
+  display: 'flex',
+  gap: 10,
+  flexWrap: 'wrap',
+  alignItems: 'center',
+};
+
+const legendItem: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  fontSize: 12,
+  fontWeight: 800,
+  color: '#000',
+};
+
+const legendColor: React.CSSProperties = {
+  width: 10,
+  height: 10,
+  borderRadius: 999,
+  flex: '0 0 auto',
+};
+
+const modalBackdrop: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(17, 24, 39, 0.45)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 14,
+  zIndex: 50,
+};
+
+const modalCard: React.CSSProperties = {
+  width: 'min(560px, 100%)',
+  maxHeight: '88vh',
+  overflowY: 'auto',
+  border: '1px solid #e5e7eb',
+  borderRadius: 12,
+  background: '#f9fafb',
+  padding: 14,
+};
+
+const modalTop: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: 8,
+  marginBottom: 10,
+  flexWrap: 'wrap',
+};
+
+const friendRowCard: React.CSSProperties = {
+  border: '1px solid #e5e7eb',
+  borderRadius: 10,
+  background: '#fff',
+  padding: '8px 10px',
+  display: 'grid',
+  gridTemplateColumns: 'auto 1fr auto',
+  gap: 10,
+  alignItems: 'center',
 };
 
 const btnPrimary: React.CSSProperties = {

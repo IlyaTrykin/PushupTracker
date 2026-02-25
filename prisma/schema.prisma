@@ -17,6 +17,7 @@ model User {
   updatedAt               DateTime               @updatedAt
   gender                  String?
   birthDate               DateTime?
+  weightKg                Int?
   avatarPath              String?
   deletedAt               DateTime?
   deletedById             String?
@@ -34,6 +35,15 @@ model User {
 
   profileHistory          UserProfileHistory[]   @relation("UserProfileHistoryUser")
   profileChangesMade      UserProfileHistory[]   @relation("UserProfileChangedBy")
+  passwordResetTokens     PasswordResetToken[]
+  friendFollows           FriendFollow[]         @relation("FriendFollowFollower")
+  followedBy              FriendFollow[]         @relation("FriendFollowFriend")
+  pushSubscriptions       PushSubscription[]
+  pushFriendRequest       Boolean                @default(true)
+  pushChallengeInvite     Boolean                @default(true)
+  pushChallengeRankChange Boolean                @default(true)
+  notificationPreferences NotificationPreference[]
+  trainingPrograms        TrainingProgram[]
 }
 
 
@@ -45,9 +55,12 @@ model Workout {
   time         DateTime @default(now())
   exerciseType String
   reps         Int
+  trainingSessionId String?
+  trainingSession   TrainingSession? @relation(fields: [trainingSessionId], references: [id], onDelete: SetNull)
 
   @@index([userId, exerciseType, time])
   @@index([userId, time])
+  @@index([trainingSessionId])
 }
 
 model Friendship {
@@ -56,9 +69,23 @@ model Friendship {
   userId    String
   friend    User     @relation("FriendFriendships", fields: [friendId], references: [id], onDelete: Cascade)
   friendId  String
+  status    String   @default("accepted") // accepted | pending
   createdAt DateTime @default(now())
 
   @@unique([userId, friendId])
+}
+
+model FriendFollow {
+  id         String   @id @default(cuid())
+  followerId String
+  friendId   String
+  createdAt  DateTime @default(now())
+
+  follower User @relation("FriendFollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  friend   User @relation("FriendFollowFriend", fields: [friendId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, friendId])
+  @@index([friendId])
 }
 
 model Session {
@@ -131,4 +158,112 @@ model UserProfileHistory {
   changes     Json
 
   @@index([userId, changedAt])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt, usedAt])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, isActive])
+}
+
+model NotificationPreference {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventType   String
+  pushEnabled Boolean  @default(true)
+  emailEnabled Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, eventType])
+  @@index([eventType])
+}
+
+model TrainingProgram {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exerciseType     String
+  goalType         String
+  targetReps       Int?
+  durationWeeks    Int
+  frequencyPerWeek Int
+  baselineMaxReps  Int
+  ageYears         Int
+  weightKg         Int
+  sex              String
+  startDate        DateTime @default(now())
+  status           String   @default("active") // active | inactive | needs_retest | completed
+  needsRetest      Boolean  @default(false)
+  lastRecalculatedAt DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  isActive         Boolean  @default(true)
+
+  sessions         TrainingSession[]
+
+  @@index([userId, isActive, createdAt])
+}
+
+model TrainingSession {
+  id           String   @id @default(cuid())
+  programId    String
+  program      TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  weekNumber   Int
+  sessionNumber Int
+  scheduledAt  DateTime
+  isFinalTest  Boolean  @default(false)
+  startedAt    DateTime?
+  completed    Boolean  @default(false)
+  completedAt  DateTime?
+  shiftedCount Int      @default(0)
+  reminderSentAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sets         TrainingSet[]
+  workouts     Workout[]
+
+  @@index([programId, scheduledAt])
+  @@index([programId, completed, scheduledAt])
+}
+
+model TrainingSet {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  setNumber   Int
+  targetReps  Int
+  actualReps  Int?
+  restSeconds Int
+  completedAt DateTime?
+  isKeySet    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([sessionId, setNumber])
+  @@index([sessionId, setNumber])
 }
