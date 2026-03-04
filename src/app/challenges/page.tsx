@@ -94,7 +94,7 @@ export default function ChallengesPage() {
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [showCreate, setShowCreate] = useState(false);
 
-  const [name, setName] = useState('Челлендж месяца');
+  const [name, setName] = useState('Соревнование месяца');
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(endOfMonthISO());
   const [exerciseType, setExerciseType] = useState<'pushups' | 'pullups' | 'crunches' | 'squats'>('pushups');
@@ -131,19 +131,19 @@ export default function ChallengesPage() {
     return (challenges || []).filter(c => c.myStatus === 'pending');
   }, [challenges]);
 
-  const myChallenges = useMemo(() => {
-    const arr = (challenges || []).filter(c => c.myStatus !== 'pending');
-    return arr.sort((a, b) => {
-      const sa = challengeStatus(a.startDate, a.endDate);
-      const sb = challengeStatus(b.startDate, b.endDate);
-      if (sa.active !== sb.active) return sa.active ? -1 : 1;
-      // active or not: sort by startDate desc (fresh first)
-      const da = new Date(a.startDate).getTime();
-      const db = new Date(b.startDate).getTime();
-      if (db != da) return db - da;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
+  const acceptedChallenges = useMemo(() => {
+    return (challenges || []).filter(c => c.myStatus !== 'pending');
   }, [challenges]);
+
+  const activeChallenges = useMemo(() => {
+    const arr = acceptedChallenges.filter((c) => challengeStatus(c.startDate, c.endDate).active);
+    return arr.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime());
+  }, [acceptedChallenges]);
+
+  const historyChallenges = useMemo(() => {
+    const arr = acceptedChallenges.filter((c) => challengeStatus(c.startDate, c.endDate).finished);
+    return arr.sort((a, b) => new Date(b.endDate).getTime() - new Date(a.endDate).getTime());
+  }, [acceptedChallenges]);
 
   const createChallenge = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,7 +165,7 @@ export default function ChallengesPage() {
         }),
       });
 
-      setInfo('Челлендж создан');
+      setInfo('Соревнование создано');
       setSelected({});
       setShowCreate(false);
       await loadAll();
@@ -175,7 +175,7 @@ export default function ChallengesPage() {
   };
 
   const deleteChallenge = async (id: string) => {
-    const ok = window.confirm('Удалить челлендж?');
+    const ok = window.confirm('Удалить соревнование?');
     if (!ok) return;
 
     setError(null);
@@ -219,134 +219,163 @@ export default function ChallengesPage() {
 
   return (
     <div className="app-page" style={{ maxWidth: 900 }}>
-      <h1 style={{ marginBottom: 8 }}>Челленджи</h1>
-      <p style={{ color: '#6b7280', marginTop: 0 }}>
-        Режимы: “кто больше за период” или “цель N повторов”.
-      </p>
+      <h1 style={{ marginBottom: 8 }}>Соревнования</h1>
 
-      <section style={card}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <h2 style={{ marginTop: 0, marginBottom: 0 }}>Челленджи</h2>
-          <button type="button" style={btnPrimary} onClick={() => setShowCreate(v => !v)}>{showCreate ? 'Скрыть' : 'Создать челлендж'}</button>
-        </div>
+      <div style={{ marginBottom: 12 }}>
+        <button type="button" style={btnPrimary} onClick={() => setShowCreate(v => !v)}>
+          {showCreate ? 'Скрыть' : 'Создать соревнование'}
+        </button>
+      </div>
 
-
-        {showCreate ? (
-          <form onSubmit={createChallenge} style={{ display: 'grid', gap: 10, marginTop: 12, maxWidth: '100%' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label>Название</label>
-              <input value={name} onChange={e => setName(e.target.value)} style={input} />
+      {showCreate ? (
+        <section style={card}>
+          <form onSubmit={createChallenge} style={{ display: 'grid', gap: 10, maxWidth: '100%' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label>Название</label>
+                <input value={name} onChange={e => setName(e.target.value)} style={input} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label>Старт</label>
+                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={input} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label>Финиш</label>
+                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={input} />
+              </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label>Старт</label>
-              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={input} />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label>Финиш</label>
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={input} />
-            </div>
-          </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, alignItems: 'end' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, alignItems: 'end' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label>Режим</label>
+                <select value={mode} onChange={e => setMode(e.target.value as any)} style={input}>
+                  <option value="most">Кто больше за период</option>
+                  <option value="target">Цель (N повторов)</option>
+                  <option value="daily_min">Зачтённые дни (мин. X в день)</option>
+                  <option value="sets_min">Зачтённые подходы (reps ≥ X)</option>
+                </select>
+              </div>
+
+              {mode === 'target' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label>Цель (повторы)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={targetReps}
+                    onChange={e => setTargetReps(Number(e.target.value))}
+                    style={input}
+                  />
+                </div>
+              ) : mode === 'daily_min' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label>Минимум повторов в день (X)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={targetReps}
+                    onChange={e => setTargetReps(Number(e.target.value))}
+                    style={input}
+                  />
+                </div>
+              ) : mode === 'sets_min' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label>Минимум повторов для зачёта подхода (X)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={targetReps}
+                    onChange={e => setTargetReps(Number(e.target.value))}
+                    style={input}
+                  />
+                </div>
+              ) : (
+                <div style={{ color: '#6b7280', fontSize: 12 }}>
+                  В этом режиме цель не задаётся — считаем сумму за период.
+                </div>
+              )}
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label>Режим</label>
-              <select value={mode} onChange={e => setMode(e.target.value as any)} style={input}>
-                <option value="most">Кто больше за период</option>
-                <option value="target">Цель (N повторов)</option>
-                <option value="daily_min">Зачтённые дни (мин. X в день)</option>
-                <option value="sets_min">Зачтённые подходы (reps ≥ X)</option>
+              <label>Упражнение</label>
+              <select value={exerciseType} onChange={e => setExerciseType(e.target.value as any)} style={input}>
+                <option value="pushups">Отжимания</option>
+                <option value="pullups">Подтягивания</option>
+                <option value="crunches">Скручивания</option>
+                <option value="squats">Приседания</option>
               </select>
             </div>
 
-            {mode === 'target' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>Цель (повторы)</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={targetReps}
-                  onChange={e => setTargetReps(Number(e.target.value))}
-                  style={input}
-                />
-              </div>
-            ) : mode === 'daily_min' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>Минимум повторов в день (X)</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={targetReps}
-                  onChange={e => setTargetReps(Number(e.target.value))}
-                  style={input}
-                />
-              </div>
-            ) : mode === 'sets_min' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>Минимум повторов для зачёта подхода (X)</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={targetReps}
-                  onChange={e => setTargetReps(Number(e.target.value))}
-                  style={input}
-                />
-              </div>
-            ) : (
-              <div style={{ color: '#6b7280', fontSize: 12 }}>
-                В этом режиме цель не задаётся — считаем сумму за период.
-              </div>
-            )}
-          </div>
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>Участники (друзья)</div>
+              {friends.length === 0 ? (
+                <div style={{ color: '#6b7280' }}>Друзей пока нет.</div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {friends.map(f => (
+                    <label key={f.friendshipId} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!selected[f.username]}
+                        onChange={(e) => setSelected(prev => ({ ...prev, [f.username]: e.target.checked }))}
+                      />
+                      {f.username}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label>Упражнение</label>
-            <select value={exerciseType} onChange={e => setExerciseType(e.target.value as any)} style={input}>
-              <option value="pushups">Отжимания</option>
-              <option value="pullups">Подтягивания</option>
-              <option value="crunches">Скручивания</option>
-              <option value="squats">Приседания</option>
-            </select>
-          </div>
-
-          <div>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>Участники (друзья)</div>
-            {friends.length === 0 ? (
-              <div style={{ color: '#6b7280' }}>Друзей пока нет.</div>
-            ) : (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                {friends.map(f => (
-                  <label key={f.friendshipId} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input
-                      type="checkbox"
-                      checked={!!selected[f.username]}
-                      onChange={(e) => setSelected(prev => ({ ...prev, [f.username]: e.target.checked }))}
-                    />
-                    {f.username}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button type="submit" style={btnPrimary}>Создать</button>
-            <button type="button" onClick={loadAll} style={btnSecondary}>Обновить</button>
-          </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button type="submit" style={btnPrimary}>Создать</button>
+              <button type="button" onClick={loadAll} style={btnSecondary}>Обновить</button>
+            </div>
           </form>
-        ) : null}
+        </section>
+      ) : null}
 
-        {error && <p style={{ color: 'red', marginTop: 12 }}>{error}</p>}
-        {info && <p style={{ color: 'green', marginTop: 12 }}>{info}</p>}
-        {loading && <p style={{ marginTop: 12 }}>Загрузка…</p>}
-      </section>
+      {error && <p style={{ color: 'red', marginTop: 12 }}>{error}</p>}
+      {info && <p style={{ color: 'green', marginTop: 12 }}>{info}</p>}
+      {loading && <p style={{ marginTop: 12 }}>Загрузка…</p>}
 
-      <section style={card}>
-        <h2 style={{ marginTop: 0 }}>Приглашения</h2>
+      {activeChallenges.length > 0 ? (
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>Соревнования</h2>
+          <div style={{ display: 'grid', gap: 10 }}>
+            {activeChallenges.map(c => {
+              const st = challengeStatus(c.startDate, c.endDate);
+              const warn = st.daysLeft < 3 ? badge(`осталось ${st.daysLeft} дн.`, 'amber') : null;
+              return (
+                <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span>{c.name}</span>
+                        {badge('идёт', 'green')}
+                        {warn ? <span style={{ marginLeft: 6 }}>{warn}</span> : null}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: 12 }}>
+                        {new Date(c.startDate).toLocaleDateString()} → {new Date(c.endDate).toLocaleDateString()} · создатель: {c.creator.username}
+                      </div>
+                    </div>
 
-        {invites.length === 0 ? (
-          <p style={{ margin: 0, color: '#6b7280' }}>Приглашений нет.</p>
-        ) : (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <Link href={`/challenges/${c.id}`} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
+                        Открыть
+                      </Link>
+                      <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>Удалить</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {invites.length > 0 ? (
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>Приглашения</h2>
           <div style={{ display: 'grid', gap: 10 }}>
             {invites.map(c => (
               <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
@@ -359,14 +388,6 @@ export default function ChallengesPage() {
                     <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
                       {new Date(c.startDate).toLocaleDateString()} → {new Date(c.endDate).toLocaleDateString()} · создатель: {c.creator.username}
                     </div>
-                    <div style={{ fontSize: 12, marginTop: 6 }}>
-                      Режим: <b>{c.mode === 'most' ? 'кто больше' : `цель ${c.targetReps}`}</b>
-                      {' · '}
-                      Участники: {c.participants.map(p => {
-                        const st = p.status === 'accepted' ? 'accepted' : 'pending';
-                        return `${p.user.username}(${st})`;
-                      }).join(', ')}
-                    </div>
                   </div>
 
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -377,38 +398,27 @@ export default function ChallengesPage() {
               </div>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      ) : null}
 
       <section style={card}>
-        <h2 style={{ marginTop: 0 }}>Мои челленджи</h2>
+        <h2 style={{ marginTop: 0 }}>История</h2>
 
-        {myChallenges.length === 0 ? (
-          <p>Пока нет челленджей.</p>
+        {historyChallenges.length === 0 ? (
+          <p>Пока завершённых соревнований нет.</p>
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
-            {myChallenges.map(c => {
-              const st = challengeStatus(c.startDate, c.endDate);
-              const statusBadge = st.active ? badge('идёт', 'green') : (st.finished ? badge('завершён', 'red') : badge('скоро', 'gray'));
-              const warn = st.active && st.daysLeft < 3 ? badge(`осталось ${st.daysLeft} дн.`, 'amber') : null;
+            {historyChallenges.map(c => {
               return (
                 <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                         <span>{c.name}</span>
-                        {statusBadge} {warn ? <span style={{ marginLeft: 6 }}>{warn}</span> : null}
+                        {badge('завершён', 'red')}
                       </div>
                       <div style={{ color: '#6b7280', fontSize: 12 }}>
                         {new Date(c.startDate).toLocaleDateString()} → {new Date(c.endDate).toLocaleDateString()} · создатель: {c.creator.username}
-                      </div>
-                      <div style={{ fontSize: 12, marginTop: 6 }}>
-                        Режим: <b>{c.mode === 'most' ? 'кто больше' : `цель ${c.targetReps}`}</b>
-                        {' · '}
-                        Участники: {c.participants
-                          .filter(p => p.status === 'accepted')
-                          .map(p => p.user.username)
-                          .join(', ') || '—'}
                       </div>
                     </div>
 

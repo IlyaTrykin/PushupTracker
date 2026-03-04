@@ -16,17 +16,10 @@
   <path d="M21.4 20.6c-.4-2.2-2-3.8-3.8-4.3"/>
 </symbol>
 <symbol id="challenges" viewBox="0 0 24 24">
-  <!-- Trophy -->
-  <path d="M9 5h6v2c0 2.2-1.8 4-4 4s-2-1.8-2-4V5z"/>
-  <path d="M9 6H6c0 2 1.5 4 3 4"/>
-  <path d="M15 6h3c0 2-1.5 4-3 4"/>
-  <path d="M12 11v2"/>
-  <path d="M10 21h4"/>
-  <path d="M9.5 17h5"/>
-  <!-- Podium -->
-  <path d="M5 21v-6h5v6"/>
-  <path d="M10 21v-8h4v8"/>
-  <path d="M14 21v-5h5v5"/>
+  <path d="M3 21h18"/>
+  <path d="M4 14h5v7H4z"/>
+  <path d="M10 10h4v11h-4z"/>
+  <path d="M15 16h5v5h-5z"/>
 </symbol>
 <symbol id="summary" viewBox="0 0 24 24">
   <!-- Axes -->

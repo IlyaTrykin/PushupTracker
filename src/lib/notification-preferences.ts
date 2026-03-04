@@ -5,6 +5,7 @@ export type NotificationEventType =
   | 'challenge_invite'
   | 'challenge_rank_change'
   | 'friend_workout'
+  | 'friend_reaction'
   | 'program_reminder';
 
 export type NotificationChannel = 'push' | 'email';
@@ -23,19 +24,25 @@ export const NOTIFICATION_EVENT_DEFS: Array<{
   },
   {
     eventType: 'challenge_invite',
-    label: 'Приглашение в челлендж',
+    label: 'Приглашение в соревнование',
     defaultPush: true,
     defaultEmail: true,
   },
   {
     eventType: 'challenge_rank_change',
-    label: 'Смена позиции в челлендже',
+    label: 'Смена позиции в соревновании',
     defaultPush: true,
     defaultEmail: false,
   },
   {
     eventType: 'friend_workout',
     label: 'Новая тренировка друга',
+    defaultPush: true,
+    defaultEmail: false,
+  },
+  {
+    eventType: 'friend_reaction',
+    label: 'Реакция друга на тренировку',
     defaultPush: true,
     defaultEmail: false,
   },

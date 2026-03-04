@@ -42,7 +42,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       },
     });
 
-    if (!challenge) return jsonError('Челлендж не найден', 404);
+    if (!challenge) return jsonError('Соревнование не найдено', 404);
 
     const isMember = challenge.creatorId === userId || challenge.participants.some((p) => p.userId === userId);
     if (!isMember) return jsonError('Нет доступа', 403);
@@ -178,7 +178,7 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
       select: { id: true, creatorId: true },
     });
 
-    if (!challenge) return jsonError('Челлендж не найден', 404);
+    if (!challenge) return jsonError('Соревнование не найдено', 404);
     if (challenge.creatorId !== userId) return jsonError('Удалять может только создатель', 403);
 
     await prisma.challengeParticipant.deleteMany({ where: { challengeId: id } });

@@ -71,9 +71,26 @@ export async function sendChallengeInviteEmail(args: {
   const app = getAppBaseUrl(args.request);
   const link = `${app}/challenges?invite=${encodeURIComponent(args.challengeId)}`;
 
-  const subject = 'Приглашение в челлендж';
-  const text = `Здравствуйте, ${args.invitedUsername}.\n\n${args.creatorUsername} пригласил вас в челлендж "${args.challengeName}".\nПринять или отклонить приглашение: ${link}\n`;
-  const html = `<p>Здравствуйте, <b>${esc(args.invitedUsername)}</b>.</p><p><b>${esc(args.creatorUsername)}</b> пригласил вас в челлендж: <b>${esc(args.challengeName)}</b>.</p><p><a href="${esc(link)}">Открыть приглашение и принять/отклонить</a></p>`;
+  const subject = 'Приглашение в соревнование';
+  const text = `Здравствуйте, ${args.invitedUsername}.\n\n${args.creatorUsername} пригласил вас в соревнование "${args.challengeName}".\nПринять или отклонить приглашение: ${link}\n`;
+  const html = `<p>Здравствуйте, <b>${esc(args.invitedUsername)}</b>.</p><p><b>${esc(args.creatorUsername)}</b> пригласил вас в соревнование: <b>${esc(args.challengeName)}</b>.</p><p><a href="${esc(link)}">Открыть приглашение и принять/отклонить</a></p>`;
+
+  return sendMail({ to: args.to, subject, text, html });
+}
+
+export async function sendAdminNewUserRegisteredEmail(args: {
+  to: string;
+  adminUsername: string;
+  newUsername: string;
+  newEmail: string;
+  request?: Request;
+}) {
+  const app = getAppBaseUrl(args.request);
+  const link = `${app}/admin/users`;
+
+  const subject = 'Новая регистрация пользователя';
+  const text = `Здравствуйте, ${args.adminUsername}.\n\nЗарегистрирован новый пользователь:\nИмя: ${args.newUsername}\nEmail: ${args.newEmail}\n\nОткрыть админку: ${link}\n`;
+  const html = `<p>Здравствуйте, <b>${esc(args.adminUsername)}</b>.</p><p>Зарегистрирован новый пользователь:</p><ul><li>Имя: <b>${esc(args.newUsername)}</b></li><li>Email: <b>${esc(args.newEmail)}</b></li></ul><p><a href="${esc(link)}">Открыть админку</a></p>`;
 
   return sendMail({ to: args.to, subject, text, html });
 }

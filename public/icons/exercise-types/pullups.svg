@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="athlete-pullups" x1="12" y1="8" x2="52" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF8A00" />
+      <stop offset="1" stop-color="#FF4D2E" />
+    </linearGradient>
+  </defs>
+  <g stroke="url(#athlete-pullups)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 11H54" />
+    <path d="M22 11V19" />
+    <path d="M42 11V19" />
+    <path d="M22 19L28 21H36L42 19" />
+    <path d="M32 30V42" />
+    <path d="M32 42L25 52" />
+    <path d="M32 42L39 52" />
+  </g>
+  <circle cx="32" cy="26" r="5" fill="url(#athlete-pullups)" />
+</svg>

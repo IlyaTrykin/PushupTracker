@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     const startDate = parseISODateOnly(String(body.startDate || '').trim());
     const endDate = parseISODateOnly(String(body.endDate || '').trim());
 
-    if (!name) return jsonError('Введите название челленджа', 400);
+    if (!name) return jsonError('Введите название соревнования', 400);
     if (!startDate || !endDate) return jsonError('Даты должны быть в формате YYYY-MM-DD', 400);
     if (endDate < startDate) return jsonError('endDate не может быть раньше startDate', 400);
 
@@ -159,8 +159,8 @@ const participantsUsernames: string[] = Array.isArray(body.participantsUsernames
           data: pendingUsers.map((u) => ({
             userId: u.id,
             type: 'challenge_invite',
-            title: 'Приглашение в челлендж',
-            body: `${creatorName} пригласил вас в челлендж: ${name}`,
+            title: 'Приглашение в соревнование',
+            body: `${creatorName} пригласил вас в соревнование: ${name}`,
             link: `/challenges/${created.id}`,
           })),
         });
@@ -168,8 +168,8 @@ const participantsUsernames: string[] = Array.isArray(body.participantsUsernames
         await sendWebPushToUsers(
           pendingUsers.map((u) => u.id),
           {
-            title: 'Приглашение в челлендж',
-            body: `${creatorName} пригласил вас в челлендж: ${name}`,
+            title: 'Приглашение в соревнование',
+            body: `${creatorName} пригласил вас в соревнование: ${name}`,
             link: `/challenges?invite=${created.id}`,
             tag: `challenge-invite-${created.id}`,
           },

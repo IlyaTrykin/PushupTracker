@@ -93,6 +93,23 @@ type CreateForm = {
   sex: 'male' | 'female' | 'other' | 'unknown';
 };
 
+type CreateNumericField =
+  | 'baselineMaxReps'
+  | 'targetReps'
+  | 'frequencyPerWeek'
+  | 'durationWeeks'
+  | 'ageYears'
+  | 'weightKg';
+
+function parseDraftNumber(raw: string | undefined, fallback: number): number {
+  if (raw == null) return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed) return 0;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n);
+}
+
 async function fetchJson(url: string, init?: RequestInit) {
   const res = await fetch(url, { ...init, credentials: 'include', cache: 'no-store' });
   const text = await res.text();
@@ -166,6 +183,49 @@ function addCalendarMonths(d: Date, delta: number) {
 function formatMonthTitle(d: Date) {
   const raw = d.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
   return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function formatSessionDateTime(iso: string) {
+  const d = toDate(iso);
+  if (!d) return '—';
+  return d.toLocaleDateString('ru-RU', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatSessionDate(iso: string) {
+  const d = toDate(iso);
+  if (!d) return '—';
+  return d.toLocaleDateString('ru-RU', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function formatDayTitle(dayKey: string) {
+  const d = toDate(`${dayKey}T00:00:00`);
+  if (!d) return dayKey;
+  return d.toLocaleDateString('ru-RU', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function renderSessionSetPlan(session: TrainingSession) {
+  return session.sets
+    .slice()
+    .sort((a, b) => a.setNumber - b.setNumber)
+    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : String(set.targetReps)))
+    .join('-');
 }
 
 function calendarDayBackground(upcoming: number, completed: number) {
@@ -258,7 +318,9 @@ export default function ProgramPage() {
   const [busy, setBusy] = useState(false);
   const [frequencyManual, setFrequencyManual] = useState(false);
   const [durationManual, setDurationManual] = useState(false);
+  const [formDrafts, setFormDrafts] = useState<Partial<Record<CreateNumericField, string>>>({});
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => monthStart(new Date()));
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
 
   const [form, setForm] = useState<CreateForm>({
     exerciseType: 'pushups',
@@ -298,26 +360,58 @@ export default function ProgramPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const resolvedForm = useMemo(() => ({
+    ...form,
+    baselineMaxReps: parseDraftNumber(formDrafts.baselineMaxReps, form.baselineMaxReps),
+    targetReps: parseDraftNumber(formDrafts.targetReps, form.targetReps),
+    frequencyPerWeek: parseDraftNumber(formDrafts.frequencyPerWeek, form.frequencyPerWeek),
+    durationWeeks: parseDraftNumber(formDrafts.durationWeeks, form.durationWeeks),
+    ageYears: parseDraftNumber(formDrafts.ageYears, form.ageYears),
+    weightKg: parseDraftNumber(formDrafts.weightKg, form.weightKg),
+  }), [form, formDrafts]);
+
+  const numericInputValue = (field: CreateNumericField) => formDrafts[field] ?? String(form[field]);
+
+  const setNumericField = (field: CreateNumericField, raw: string) => {
+    setFormDrafts((prev) => ({ ...prev, [field]: raw }));
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return;
+    const rounded = Math.round(n);
+    setForm((prev) => ({ ...prev, [field]: rounded }));
+  };
+
+  const applyNumericField = (field: CreateNumericField, value: number) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    setFormDrafts((prev) => {
+      if (!(field in prev)) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
   const recommendedFrequency = useMemo(() => {
     return suggestedFrequencyPerWeek({
-      exerciseType: form.exerciseType,
-      baselineMaxReps: form.baselineMaxReps,
-      targetReps: form.targetReps,
-      ageYears: form.ageYears,
-      weightKg: form.weightKg,
+      exerciseType: resolvedForm.exerciseType,
+      baselineMaxReps: resolvedForm.baselineMaxReps,
+      targetReps: resolvedForm.targetReps,
+      ageYears: resolvedForm.ageYears,
+      weightKg: resolvedForm.weightKg,
     });
-  }, [form.exerciseType, form.baselineMaxReps, form.targetReps, form.ageYears, form.weightKg]);
+  }, [resolvedForm.exerciseType, resolvedForm.baselineMaxReps, resolvedForm.targetReps, resolvedForm.ageYears, resolvedForm.weightKg]);
 
   const recommendedDuration = useMemo(() => {
     return suggestedDurationWeeks({
-      exerciseType: form.exerciseType,
-      baselineMaxReps: form.baselineMaxReps,
-      targetReps: form.targetReps,
-      ageYears: form.ageYears,
-      weightKg: form.weightKg,
-      frequencyPerWeek: form.frequencyPerWeek,
+      exerciseType: resolvedForm.exerciseType,
+      baselineMaxReps: resolvedForm.baselineMaxReps,
+      targetReps: resolvedForm.targetReps,
+      ageYears: resolvedForm.ageYears,
+      weightKg: resolvedForm.weightKg,
+      frequencyPerWeek: resolvedForm.frequencyPerWeek,
     });
-  }, [form.exerciseType, form.baselineMaxReps, form.targetReps, form.ageYears, form.weightKg, form.frequencyPerWeek]);
+  }, [resolvedForm.exerciseType, resolvedForm.baselineMaxReps, resolvedForm.targetReps, resolvedForm.ageYears, resolvedForm.weightKg, resolvedForm.frequencyPerWeek]);
 
   useEffect(() => {
     if (frequencyManual) return;
@@ -339,31 +433,37 @@ export default function ProgramPage() {
 
   const canNextStep = useMemo(() => {
     if (step === 1) return Boolean(form.exerciseType);
-    if (step === 2) return Number.isFinite(form.baselineMaxReps) && form.baselineMaxReps > 0;
-    if (step === 3) return Number.isFinite(form.targetReps) && form.targetReps >= form.baselineMaxReps;
+    if (step === 2) return Number.isFinite(resolvedForm.baselineMaxReps) && resolvedForm.baselineMaxReps > 0;
+    if (step === 3) {
+      return (
+        Number.isFinite(resolvedForm.targetReps) &&
+        resolvedForm.targetReps > 0 &&
+        resolvedForm.targetReps >= resolvedForm.baselineMaxReps
+      );
+    }
     if (step === 4) {
       return (
-        form.frequencyPerWeek >= 1 &&
-        form.frequencyPerWeek <= 6 &&
-        form.durationWeeks >= 4 &&
-        form.durationWeeks <= 24 &&
-        form.ageYears >= 12 &&
-        form.ageYears <= 90 &&
-        form.weightKg >= 30 &&
-        form.weightKg <= 250
+        resolvedForm.frequencyPerWeek >= 1 &&
+        resolvedForm.frequencyPerWeek <= 6 &&
+        resolvedForm.durationWeeks >= 4 &&
+        resolvedForm.durationWeeks <= 24 &&
+        resolvedForm.ageYears >= 12 &&
+        resolvedForm.ageYears <= 90 &&
+        resolvedForm.weightKg >= 30 &&
+        resolvedForm.weightKg <= 250
       );
     }
     return false;
-  }, [form, step]);
+  }, [form.exerciseType, resolvedForm, step]);
 
   const beginCreate = () => {
     const nextFreq = recommendedFrequency;
     const nextDuration = suggestedDurationWeeks({
-      exerciseType: form.exerciseType,
-      baselineMaxReps: form.baselineMaxReps,
-      targetReps: form.targetReps,
-      ageYears: form.ageYears,
-      weightKg: form.weightKg,
+      exerciseType: resolvedForm.exerciseType,
+      baselineMaxReps: resolvedForm.baselineMaxReps,
+      targetReps: resolvedForm.targetReps,
+      ageYears: resolvedForm.ageYears,
+      weightKg: resolvedForm.weightKg,
       frequencyPerWeek: nextFreq,
     });
     setShowCreate(true);
@@ -372,12 +472,14 @@ export default function ProgramPage() {
     setError(null);
     setFrequencyManual(false);
     setDurationManual(false);
+    setFormDrafts({});
     setForm((prev) => ({ ...prev, frequencyPerWeek: nextFreq, durationWeeks: nextDuration }));
   };
 
   const cancelCreate = () => {
     setShowCreate(false);
     setStep(1);
+    setFormDrafts({});
   };
 
   const submitCreate = async () => {
@@ -390,17 +492,18 @@ export default function ProgramPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           exerciseType: form.exerciseType,
-          baselineMaxReps: form.baselineMaxReps,
-          targetReps: form.targetReps,
-          frequencyPerWeek: form.frequencyPerWeek,
-          durationWeeks: form.durationWeeks,
-          ageYears: form.ageYears,
-          weightKg: form.weightKg,
+          baselineMaxReps: resolvedForm.baselineMaxReps,
+          targetReps: resolvedForm.targetReps,
+          frequencyPerWeek: resolvedForm.frequencyPerWeek,
+          durationWeeks: resolvedForm.durationWeeks,
+          ageYears: resolvedForm.ageYears,
+          weightKg: resolvedForm.weightKg,
           sex: form.sex,
         }),
       });
 
       setShowCreate(false);
+      setFormDrafts({});
       setInfo('Программа создана');
       await load();
     } catch (e: any) {
@@ -411,7 +514,7 @@ export default function ProgramPage() {
   };
 
   const handleDeactivate = async (programId: string) => {
-    const ok = window.confirm('Отключить эту программу?');
+    const ok = window.confirm('Прервать эту программу?');
     if (!ok) return;
 
     setBusy(true);
@@ -419,7 +522,7 @@ export default function ProgramPage() {
     setInfo(null);
     try {
       await fetchJson(`/api/program/${programId}/deactivate`, { method: 'POST' });
-      setInfo('Программа деактивирована');
+      setInfo('Программа прервана');
       await load();
     } catch (e: any) {
       setError(e?.message || 'Не удалось деактивировать программу');
@@ -429,12 +532,21 @@ export default function ProgramPage() {
   };
 
   const sessionRows = useMemo(() => {
-    const out: Array<TrainingSession & { exerciseType: string }> = [];
+    const out: Array<TrainingSession & { exerciseType: string; programId: string }> = [];
     activePrograms.forEach((program) => {
-      program.sessions.forEach((session) => out.push({ ...session, exerciseType: program.exerciseType }));
+      program.sessions.forEach((session) => out.push({
+        ...session,
+        exerciseType: program.exerciseType,
+        programId: program.id,
+      }));
     });
     return out.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
   }, [activePrograms]);
+
+  const nextSession = useMemo(
+    () => sessionRows.find((x) => !x.completed) ?? null,
+    [sessionRows],
+  );
 
   useEffect(() => {
     const next = sessionRows.find((x) => !x.completed)?.scheduledAt || sessionRows[0]?.scheduledAt;
@@ -447,7 +559,7 @@ export default function ProgramPage() {
   }, [sessionRows]);
 
   const sessionsByDay = useMemo(() => {
-    const map = new Map<string, { upcoming: number; completed: number; sessions: Array<TrainingSession & { exerciseType: string }> }>();
+    const map = new Map<string, { upcoming: number; completed: number; sessions: Array<TrainingSession & { exerciseType: string; programId: string }> }>();
     sessionRows.forEach((session) => {
       const key = dayKeyFromIso(session.scheduledAt);
       if (!key) return;
@@ -480,6 +592,9 @@ export default function ProgramPage() {
 
   const calendarWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
   const todayKey = dayKeyFromIso(new Date().toISOString());
+  const selectedDaySessions = selectedDayKey
+    ? (sessionsByDay.get(selectedDayKey)?.sessions || []).filter((session) => !session.completed)
+    : [];
 
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
@@ -496,57 +611,30 @@ export default function ProgramPage() {
 
       {!loading ? (
         <section style={card}>
-          <h2 style={{ marginTop: 0 }}>Активные программы</h2>
+          <h2 style={{ marginTop: 0 }}>Следующая тренировка</h2>
           {activePrograms.length === 0 ? (
-            <div style={{ color: '#6b7280' }}>Активных программ пока нет.</div>
+            <div style={{ color: '#6b7280' }}>Активных программ нет. Когда будете готовы, начните новую программу.</div>
+          ) : !nextSession ? (
+            <div style={{ color: '#6b7280' }}>Предстоящих тренировок не найдено.</div>
           ) : (
-            <div style={{ display: 'grid', gap: 10 }}>
-              {activePrograms.map((program) => (
-                <div key={program.id} style={programCard}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span
-                          style={{ ...exercisePictogram, background: exerciseColor(program.exerciseType) }}
-                          title={exerciseLabel(program.exerciseType)}
-                        >
-                          {exerciseCode(program.exerciseType)}
-                        </span>
-                        <div style={{ fontWeight: 900, fontSize: 18 }}>
-                          {exerciseLabel(program.exerciseType)}
-                        </div>
-                      </div>
-                      <div style={{ marginTop: 4, color: '#111827' }}>
-                        База: <b>{program.baselineMaxReps}</b> · Цель: <b>{program.targetReps}</b> · Длительность: <b>{program.durationWeeks}</b> нед
-                      </div>
-                      <div style={{ marginTop: 4, color: '#111827' }}>
-                        Темп: <b>{program.frequencyPerWeek}</b>/нед · Прогресс: <b>{program.stats.completionPercent}%</b>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <Link href={`/program/${program.id}`} style={btnLink}>
-                        Открыть программу
-                      </Link>
-                      <button
-                        type="button"
-                        style={btnDanger}
-                        onClick={() => handleDeactivate(program.id)}
-                        disabled={busy}
-                      >
-                        Отключить
-                      </button>
-                    </div>
+            <div style={{ ...programCard, padding: '8px 10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <span
+                      style={{ ...nextExerciseDot, background: exerciseLegendColor(nextSession.exerciseType) }}
+                      title={exerciseLabel(nextSession.exerciseType)}
+                    />
+                    <span style={{ fontWeight: 900 }}>{renderSessionSetPlan(nextSession)}</span>
                   </div>
-                  {program.warnings?.length ? (
-                    <div style={{ marginTop: 8, padding: 10, borderRadius: 10, border: '1px solid #f59e0b', background: '#fffbeb' }}>
-                      <div style={{ fontWeight: 900, marginBottom: 6 }}>Внимание</div>
-                      {program.warnings.map((w, i) => (
-                        <div key={i} style={{ fontSize: 14, marginTop: i ? 4 : 0 }}>{w}</div>
-                      ))}
-                    </div>
-                  ) : null}
+                  <div style={{ fontSize: 13, color: '#374151' }}>
+                    {formatSessionDate(nextSession.scheduledAt)}
+                  </div>
                 </div>
-              ))}
+                <Link href={`/program/session/${nextSession.id}`} style={{ ...btnPrimaryLink, padding: '8px 10px' }}>
+                  Приступить
+                </Link>
+              </div>
             </div>
           )}
         </section>
@@ -585,18 +673,17 @@ export default function ProgramPage() {
                   const baseBackground = calendarDayBackground(cell.upcoming, cell.completed);
                   const presentTypes = new Set((row?.sessions || []).map((s) => s.exerciseType));
                   const exerciseTypes = EXERCISE_ORDER.filter((type) => presentTypes.has(type));
-                  return (
-                    <div
-                      key={cell.key}
-                      style={{
-                        ...calendarDayCell,
-                        background: isWeekend
-                          ? `linear-gradient(rgba(244, 114, 182, 0.12), rgba(244, 114, 182, 0.12)), ${baseBackground}`
-                          : baseBackground,
-                        borderColor: isToday ? '#16a34a' : cell.upcoming || cell.completed ? '#d1d5db' : '#f3f4f6',
-                        boxShadow: isToday ? 'inset 0 0 0 1px #16a34a' : 'none',
-                      }}
-                    >
+                  const hasSessions = Boolean(row?.upcoming);
+                  const dayStyle: React.CSSProperties = {
+                    ...calendarDayCell,
+                    background: isWeekend
+                      ? `linear-gradient(rgba(244, 114, 182, 0.12), rgba(244, 114, 182, 0.12)), ${baseBackground}`
+                      : baseBackground,
+                    borderColor: isToday ? '#16a34a' : cell.upcoming || cell.completed ? '#d1d5db' : '#f3f4f6',
+                    boxShadow: isToday ? 'inset 0 0 0 1px #16a34a' : 'none',
+                  };
+                  const dayContent = (
+                    <>
                       <div style={{ fontWeight: 900, color: '#000' }}>{cell.day}</div>
                       {exerciseTypes.length ? (
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -609,6 +696,29 @@ export default function ProgramPage() {
                           ))}
                         </div>
                       ) : null}
+                    </>
+                  );
+
+                  if (hasSessions) {
+                    return (
+                      <button
+                        type="button"
+                        key={cell.key}
+                        onClick={() => setSelectedDayKey(cell.key)}
+                        style={{ ...calendarDayButton, ...dayStyle }}
+                        title="Открыть тренировки этого дня"
+                      >
+                        {dayContent}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={cell.key}
+                      style={dayStyle}
+                    >
+                      {dayContent}
                     </div>
                   );
                 })}
@@ -622,6 +732,69 @@ export default function ProgramPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {!loading ? (
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>Активные программы</h2>
+          {activePrograms.length === 0 ? (
+            <div style={{ color: '#6b7280' }}>Активных программ пока нет.</div>
+          ) : (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {activePrograms.map((program) => (
+                <div key={program.id} style={programCard}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span
+                          style={{ ...exercisePictogram, background: exerciseColor(program.exerciseType) }}
+                          title={exerciseLabel(program.exerciseType)}
+                        >
+                          {exerciseCode(program.exerciseType)}
+                        </span>
+                        <div style={{ fontWeight: 900, fontSize: 18 }}>
+                          {exerciseLabel(program.exerciseType)}
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 4, color: '#111827' }}>
+                        База: <b>{program.baselineMaxReps}</b> · Цель: <b>{program.targetReps}</b> · Длительность: <b>{program.durationWeeks}</b> нед
+                      </div>
+                      <div style={{ marginTop: 4, color: '#111827' }}>
+                        Темп: <b>{program.frequencyPerWeek}</b>/нед · Прогресс: <b>{program.stats.completionPercent}%</b>
+                      </div>
+                      {program.stats.nextSession ? (
+                        <div style={{ marginTop: 4, color: '#111827' }}>
+                          Ближайшая: <b>{formatSessionDateTime(program.stats.nextSession.scheduledAt)}</b>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <Link href={`/program/${program.id}`} style={btnLink}>
+                        Открыть программу
+                      </Link>
+                      <button
+                        type="button"
+                        style={btnDanger}
+                        onClick={() => handleDeactivate(program.id)}
+                        disabled={busy}
+                      >
+                        Прервать
+                      </button>
+                    </div>
+                  </div>
+                  {program.warnings?.length ? (
+                    <div style={{ marginTop: 8, padding: 10, borderRadius: 10, border: '1px solid #f59e0b', background: '#fffbeb' }}>
+                      <div style={{ fontWeight: 900, marginBottom: 6 }}>Внимание</div>
+                      {program.warnings.map((w, i) => (
+                        <div key={i} style={{ fontSize: 14, marginTop: i ? 4 : 0 }}>{w}</div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </div>
           )}
         </section>
@@ -657,6 +830,56 @@ export default function ProgramPage() {
         </section>
       ) : null}
 
+      {selectedDayKey ? (
+        <div style={modalBackdrop} onClick={() => setSelectedDayKey(null)}>
+          <section style={modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <h2 style={{ marginTop: 0, marginBottom: 0 }}>{formatDayTitle(selectedDayKey)}</h2>
+              <button type="button" style={btnSecondary} onClick={() => setSelectedDayKey(null)}>Закрыть</button>
+            </div>
+            <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+              {selectedDaySessions.length === 0 ? (
+                <div style={{ color: '#6b7280' }}>На эту дату нет запланированных тренировок.</div>
+              ) : null}
+              {selectedDaySessions
+                .slice()
+                .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+                .map((session) => (
+                  <div key={session.id} style={programCard}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span
+                            style={{ ...exercisePictogram, background: exerciseColor(session.exerciseType) }}
+                            title={exerciseLabel(session.exerciseType)}
+                          >
+                            {exerciseCode(session.exerciseType)}
+                          </span>
+                          <span style={{ fontWeight: 900 }}>{exerciseLabel(session.exerciseType)}</span>
+                        </div>
+                        <div style={{ marginTop: 4, color: '#111827' }}>
+                          {formatSessionDateTime(session.scheduledAt)} · тренировка #{session.sessionNumber}
+                          {session.isFinalTest ? ' · финальный тест' : ''}
+                        </div>
+                        <div style={{ marginTop: 4, color: '#111827' }}>
+                          План: <b>{renderSessionSetPlan(session)}</b>
+                        </div>
+                      </div>
+                      {session.completed ? (
+                        <span style={doneBadge}>Выполнено</span>
+                      ) : (
+                        <Link href={`/program/session/${session.id}`} style={btnPrimaryLink}>
+                          Приступить
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {showCreate ? (
         <div style={modalBackdrop} onClick={cancelCreate}>
           <section style={modalCard} onClick={(e) => e.stopPropagation()}>
@@ -686,8 +909,8 @@ export default function ProgramPage() {
                   type="number"
                   min={1}
                   max={500}
-                  value={form.baselineMaxReps}
-                  onChange={(e) => setForm((f) => ({ ...f, baselineMaxReps: Number(e.target.value || 1) }))}
+                  value={numericInputValue('baselineMaxReps')}
+                  onChange={(e) => setNumericField('baselineMaxReps', e.target.value)}
                   style={inputStyle}
                 />
               </div>
@@ -698,10 +921,10 @@ export default function ProgramPage() {
                 <label>3) Целевое значение повторений в одном подходе</label>
                 <input
                   type="number"
-                  min={form.baselineMaxReps}
+                  min={Math.max(1, resolvedForm.baselineMaxReps)}
                   max={1000}
-                  value={form.targetReps}
-                  onChange={(e) => setForm((f) => ({ ...f, targetReps: Number(e.target.value || f.baselineMaxReps) }))}
+                  value={numericInputValue('targetReps')}
+                  onChange={(e) => setNumericField('targetReps', e.target.value)}
                   style={inputStyle}
                 />
               </div>
@@ -718,10 +941,10 @@ export default function ProgramPage() {
                       type="number"
                       min={1}
                       max={6}
-                      value={form.frequencyPerWeek}
+                      value={numericInputValue('frequencyPerWeek')}
                       onChange={(e) => {
                         setFrequencyManual(true);
-                        setForm((f) => ({ ...f, frequencyPerWeek: Number(e.target.value || 1) }));
+                        setNumericField('frequencyPerWeek', e.target.value);
                       }}
                       style={inputStyle}
                     />
@@ -732,7 +955,7 @@ export default function ProgramPage() {
                         style={{ ...btnText, marginTop: 4 }}
                         onClick={() => {
                           setFrequencyManual(false);
-                          setForm((f) => ({ ...f, frequencyPerWeek: recommendedFrequency }));
+                          applyNumericField('frequencyPerWeek', recommendedFrequency);
                         }}
                       >
                         Вернуть рекомендованный темп
@@ -746,10 +969,10 @@ export default function ProgramPage() {
                       type="number"
                       min={4}
                       max={24}
-                      value={form.durationWeeks}
+                      value={numericInputValue('durationWeeks')}
                       onChange={(e) => {
                         setDurationManual(true);
-                        setForm((f) => ({ ...f, durationWeeks: Number(e.target.value || 4) }));
+                        setNumericField('durationWeeks', e.target.value);
                       }}
                       style={inputStyle}
                     />
@@ -760,7 +983,7 @@ export default function ProgramPage() {
                         style={{ ...btnText, marginTop: 4 }}
                         onClick={() => {
                           setDurationManual(false);
-                          setForm((f) => ({ ...f, durationWeeks: recommendedDuration }));
+                          applyNumericField('durationWeeks', recommendedDuration);
                         }}
                       >
                         Вернуть рекомендованную длительность
@@ -776,9 +999,9 @@ export default function ProgramPage() {
                       type="number"
                       min={12}
                       max={90}
-                      value={form.ageYears}
+                      value={numericInputValue('ageYears')}
                       disabled={profileHints.ageYears != null}
-                      onChange={(e) => setForm((f) => ({ ...f, ageYears: Number(e.target.value || 18) }))}
+                      onChange={(e) => setNumericField('ageYears', e.target.value)}
                       style={{ ...inputStyle, opacity: profileHints.ageYears != null ? 0.7 : 1 }}
                     />
                     {profileHints.ageYears != null ? <div style={hint}>Подставлено из профиля</div> : null}
@@ -790,9 +1013,9 @@ export default function ProgramPage() {
                       type="number"
                       min={30}
                       max={250}
-                      value={form.weightKg}
+                      value={numericInputValue('weightKg')}
                       disabled={profileHints.weightKg != null}
-                      onChange={(e) => setForm((f) => ({ ...f, weightKg: Number(e.target.value || 30) }))}
+                      onChange={(e) => setNumericField('weightKg', e.target.value)}
                       style={{ ...inputStyle, opacity: profileHints.weightKg != null ? 0.7 : 1 }}
                     />
                     {profileHints.weightKg != null ? <div style={hint}>Подставлено из профиля</div> : null}
@@ -909,6 +1132,18 @@ const btnLink: React.CSSProperties = {
   alignItems: 'center',
 };
 
+const btnPrimaryLink: React.CSSProperties = {
+  border: 'none',
+  borderRadius: 10,
+  padding: '9px 12px',
+  background: '#2563eb',
+  color: '#fff',
+  fontWeight: 900,
+  textDecoration: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+};
+
 const btnDanger: React.CSSProperties = {
   border: '1px solid #dc2626',
   borderRadius: 10,
@@ -996,6 +1231,11 @@ const calendarDayCell: React.CSSProperties = {
   alignContent: 'start',
 };
 
+const calendarDayButton: React.CSSProperties = {
+  textAlign: 'left',
+  cursor: 'pointer',
+};
+
 const calendarExerciseDot: React.CSSProperties = {
   width: 10,
   height: 10,
@@ -1025,5 +1265,22 @@ const calendarLegendDot: React.CSSProperties = {
   width: 10,
   height: 10,
   borderRadius: 999,
+  flex: '0 0 auto',
+};
+
+const doneBadge: React.CSSProperties = {
+  borderRadius: 999,
+  padding: '5px 10px',
+  background: '#dcfce7',
+  color: '#166534',
+  fontWeight: 900,
+  fontSize: 12,
+};
+
+const nextExerciseDot: React.CSSProperties = {
+  width: 12,
+  height: 12,
+  borderRadius: 999,
+  border: '1px solid rgba(0,0,0,0.2)',
   flex: '0 0 auto',
 };
