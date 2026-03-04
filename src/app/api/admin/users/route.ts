@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   }
 
   const users = await prisma.user.findMany({
-    select: { id: true, email: true, username: true, isAdmin: true, createdAt: true, deletedAt: true },
+    select: { id: true, email: true, username: true, avatarPath: true, isAdmin: true, createdAt: true, deletedAt: true },
     orderBy: { email: 'asc' },
   });
 
@@ -110,7 +110,7 @@ export async function PATCH(request: Request) {
     const user = await prisma.user.update({
       where: { id },
       data: { deletedAt: null, deletedById: null },
-      select: { id: true, email: true, username: true, isAdmin: true, createdAt: true, deletedAt: true },
+      select: { id: true, email: true, username: true, avatarPath: true, isAdmin: true, createdAt: true, deletedAt: true },
     });
     await prisma.userProfileHistory.create({
       data: { userId: id, changedById: adminId, changes: { restored: { at: new Date().toISOString() } } },
@@ -137,7 +137,7 @@ export async function PATCH(request: Request) {
   const user = await prisma.user.update({
     where: { id },
     data,
-    select: { id: true, email: true, username: true, isAdmin: true, createdAt: true, deletedAt: true },
+    select: { id: true, email: true, username: true, avatarPath: true, isAdmin: true, createdAt: true, deletedAt: true },
   });
 
   return NextResponse.json({ user });

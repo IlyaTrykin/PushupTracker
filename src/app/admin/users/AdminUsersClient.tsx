@@ -6,18 +6,55 @@ type UserRow = {
   id: string;
   email: string;
   username: string;
+  avatarPath?: string | null;
   isAdmin: boolean;
   createdAt?: string;
   deletedAt?: string | null;
 };
 
-type RowState = UserRow & { dirty?: boolean; saving?: boolean; sendingReset?: boolean };
+type RowState = UserRow & { dirty?: boolean; saving?: boolean; sendingReset?: boolean; uploadingAvatar?: boolean };
 
 function fmtDate(v?: string | null): string {
   if (!v) return '—';
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleString('ru-RU');
+}
+
+async function resizeToWebp256(file: File): Promise<Blob> {
+  const img = document.createElement('img');
+  img.decoding = 'async';
+  const url = URL.createObjectURL(file);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('LOAD_ERROR'));
+      img.src = url;
+    });
+
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('NO_CTX');
+
+    const sw = img.naturalWidth;
+    const sh = img.naturalHeight;
+    const s = Math.min(sw, sh);
+    const sx = Math.floor((sw - s) / 2);
+    const sy = Math.floor((sh - s) / 2);
+
+    ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
+
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('BLOB_ERROR'))), 'image/webp', 0.82);
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export default function AdminUsersClient() {
@@ -41,7 +78,15 @@ export default function AdminUsersClient() {
       setError(data.error || 'Ошибка загрузки');
       setRows([]);
     } else {
-      setRows((data.users || []).map((u: UserRow) => ({ ...u, dirty: false, saving: false, sendingReset: false })));
+      setRows(
+        (data.users || []).map((u: UserRow) => ({
+          ...u,
+          dirty: false,
+          saving: false,
+          sendingReset: false,
+          uploadingAvatar: false,
+        })),
+      );
     }
     setLoading(false);
   }
@@ -156,6 +201,36 @@ export default function AdminUsersClient() {
     window.alert(`Ссылка для сброса пароля отправлена на ${r.email}`);
   }
 
+  async function uploadAvatar(r: RowState, file: File) {
+    setError('');
+    setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, uploadingAvatar: true } : x)));
+
+    try {
+      const blob = await resizeToWebp256(file);
+      if (blob.size > 300_000) {
+        setError('Аватар получился слишком большим. Выберите более простое изображение.');
+        return;
+      }
+
+      const form = new FormData();
+      form.append('id', r.id);
+      form.append('file', new File([blob], 'avatar.webp', { type: 'image/webp' }));
+
+      const res = await fetch('/api/admin/users/avatar', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Ошибка загрузки аватара');
+        return;
+      }
+
+      await load();
+    } catch {
+      setError('Не удалось обработать изображение');
+    } finally {
+      setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, uploadingAvatar: false } : x)));
+    }
+  }
+
   if (loading) return <div style={{ padding: 16 }}>Загрузка...</div>;
 
   return (
@@ -163,6 +238,7 @@ export default function AdminUsersClient() {
       <div className="admin-users-head">
         <div>
           <p>Управление профилями, правами доступа и паролями.</p>
+          <p className="muted">На узких экранах таблица прокручивается горизонтально.</p>
         </div>
         <button className="btn btn-secondary" onClick={load}>Обновить</button>
       </div>
@@ -172,9 +248,15 @@ export default function AdminUsersClient() {
       <section className="panel">
         <h2>Создать пользователя</h2>
         <div className="create-grid">
-          <input placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
-          <input placeholder="Username (опционально)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
-          <input placeholder="Пароль (>=6)" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+          <input className="text-input" placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+          <input className="text-input" placeholder="Username (опционально)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
+          <input
+            className="text-input"
+            placeholder="Пароль (>=6)"
+            type="password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+          />
           <label className="checkbox-line">
             <input type="checkbox" checked={newIsAdmin} onChange={(e) => setNewIsAdmin(e.target.checked)} />
             Администратор
@@ -188,11 +270,12 @@ export default function AdminUsersClient() {
       <section className="panel">
         <h2>Пользователи</h2>
 
-        <div className="desktop-table-wrap">
+        <div className="users-table-wrap">
           <table className="users-table">
             <thead>
               <tr>
-                <th>Имя пользователя</th>
+                <th>Пользователь</th>
+                <th>Аватар</th>
                 <th>Дата создания</th>
                 <th>Email</th>
                 <th>Админ</th>
@@ -204,12 +287,34 @@ export default function AdminUsersClient() {
               {sorted.map((r) => (
                 <tr key={r.id}>
                   <td>
-                    <input value={r.username} onChange={(e) => updateRow(r.id, { username: e.target.value })} />
+                    <input className="text-input" value={r.username} onChange={(e) => updateRow(r.id, { username: e.target.value })} />
                     <div className="muted">ID: {r.id}</div>
+                  </td>
+                  <td className="avatar-cell">
+                    <div className="avatar-box">
+                      {r.avatarPath ? (
+                        <img className="avatar-preview" src={r.avatarPath} alt={`Аватар ${r.username}`} />
+                      ) : (
+                        <span className="avatar-preview avatar-fallback">{(r.username || 'U').slice(0, 1).toUpperCase()}</span>
+                      )}
+                      <label className={`btn btn-secondary btn-file${r.deletedAt ? ' btn-disabled' : ''}`}>
+                        {r.uploadingAvatar ? 'Загрузка...' : 'Изменить'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={!!r.uploadingAvatar || !!r.deletedAt}
+                          onChange={(e) => {
+                            const f = e.currentTarget.files?.[0];
+                            e.currentTarget.value = '';
+                            if (f) void uploadAvatar(r, f);
+                          }}
+                        />
+                      </label>
+                    </div>
                   </td>
                   <td>{fmtDate(r.createdAt)}</td>
                   <td>
-                    <input value={r.email} onChange={(e) => updateRow(r.id, { email: e.target.value })} />
+                    <input className="text-input" value={r.email} onChange={(e) => updateRow(r.id, { email: e.target.value })} />
                   </td>
                   <td>
                     <label className="checkbox-line">
@@ -240,50 +345,11 @@ export default function AdminUsersClient() {
 
               {!sorted.length ? (
                 <tr>
-                  <td colSpan={6} className="empty-row">Пользователей нет.</td>
+                  <td colSpan={7} className="empty-row">Пользователей нет.</td>
                 </tr>
               ) : null}
             </tbody>
           </table>
-        </div>
-
-        <div className="mobile-cards">
-          {sorted.map((r) => (
-            <article className="user-card" key={`m-${r.id}`}>
-              <label>
-                Имя пользователя
-                <input value={r.username} onChange={(e) => updateRow(r.id, { username: e.target.value })} />
-              </label>
-
-              <div className="info-line"><span>Дата создания:</span><strong>{fmtDate(r.createdAt)}</strong></div>
-
-              <label>
-                Email
-                <input value={r.email} onChange={(e) => updateRow(r.id, { email: e.target.value })} />
-              </label>
-
-              <label className="checkbox-line">
-                <input type="checkbox" checked={r.isAdmin} onChange={(e) => updateRow(r.id, { isAdmin: e.target.checked })} />
-                Администратор
-              </label>
-
-              <div className="card-actions">
-                <button className="btn btn-secondary" disabled={!!r.sendingReset || !!r.deletedAt} onClick={() => sendReset(r)}>
-                  {r.sendingReset ? 'Отправка...' : 'Сбросить пароль'}
-                </button>
-                <button className="btn" disabled={!r.dirty || !!r.saving} onClick={() => saveRow(r)}>
-                  {r.saving ? 'Сохранение...' : 'Сохранить'}
-                </button>
-                {r.deletedAt ? (
-                  <button className="btn btn-secondary" onClick={() => restoreRow(r.id)}>Восстановить</button>
-                ) : (
-                  <button className="btn btn-danger" onClick={() => deleteRow(r.id)}>Удалить</button>
-                )}
-              </div>
-
-              <div className="muted">{r.deletedAt ? `Удален: ${fmtDate(r.deletedAt)}` : 'Активен'}</div>
-            </article>
-          ))}
         </div>
       </section>
 
@@ -302,16 +368,12 @@ export default function AdminUsersClient() {
           gap: 12px;
           flex-wrap: wrap;
         }
-        h1 {
-          margin: 0;
-          font-size: 24px;
-        }
         h2 {
           margin: 0;
           font-size: 18px;
         }
         p {
-          margin: 6px 0 0;
+          margin: 0;
           color: #4b5563;
         }
         .panel {
@@ -334,11 +396,12 @@ export default function AdminUsersClient() {
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 10px;
         }
-        input {
+        .text-input {
           width: 100%;
           border: 1px solid #d1d5db;
           border-radius: 10px;
           padding: 9px 10px;
+          font-size: 14px;
         }
         .btn {
           border: 1px solid #2563eb;
@@ -363,15 +426,15 @@ export default function AdminUsersClient() {
           background: #fff;
           color: #b91c1c;
         }
-        .desktop-table-wrap {
-          overflow: auto;
+        .users-table-wrap {
+          overflow-x: auto;
           border: 1px solid #e5e7eb;
           border-radius: 10px;
         }
         .users-table {
           width: 100%;
           border-collapse: collapse;
-          min-width: 980px;
+          min-width: 1220px;
         }
         th, td {
           border-bottom: 1px solid #e5e7eb;
@@ -387,6 +450,50 @@ export default function AdminUsersClient() {
         }
         td {
           font-size: 14px;
+        }
+        .avatar-cell {
+          min-width: 190px;
+        }
+        .avatar-box {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .avatar-preview {
+          width: 42px;
+          height: 42px;
+          border-radius: 999px;
+          object-fit: cover;
+          border: 1px solid #e5e7eb;
+          flex: 0 0 auto;
+          background: #fff;
+        }
+        .avatar-fallback {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 700;
+          color: #374151;
+          background: #f3f4f6;
+        }
+        .btn-file {
+          position: relative;
+          overflow: hidden;
+        }
+        .btn-file input {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
+          width: 100%;
+          height: 100%;
+          cursor: pointer;
+          border: 0;
+          padding: 0;
+          margin: 0;
+        }
+        .btn-disabled {
+          opacity: 0.55;
+          pointer-events: none;
         }
         .actions-cell {
           display: flex;
@@ -410,46 +517,9 @@ export default function AdminUsersClient() {
           color: #6b7280;
           padding: 20px;
         }
-        .mobile-cards {
-          display: none;
-          gap: 10px;
-        }
-        .user-card {
-          border: 1px solid #e5e7eb;
-          border-radius: 12px;
-          padding: 10px;
-          display: grid;
-          gap: 8px;
-        }
-        .user-card label {
-          display: grid;
-          gap: 5px;
-          font-size: 13px;
-          font-weight: 700;
-        }
-        .info-line {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-          font-size: 13px;
-          color: #4b5563;
-        }
-        .card-actions {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 8px;
-        }
         @media (max-width: 1024px) {
           .create-grid {
             grid-template-columns: 1fr;
-          }
-        }
-        @media (max-width: 900px) {
-          .desktop-table-wrap {
-            display: none;
-          }
-          .mobile-cards {
-            display: grid;
           }
         }
       `}</style>
