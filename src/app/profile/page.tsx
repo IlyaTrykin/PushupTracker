@@ -224,8 +224,6 @@ export default function ProfilePage() {
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: 16 }}>
-      <h1 style={{ fontSize: 20, fontWeight: 900, marginBottom: 12 }}>Профиль</h1>
-
       {error ? (
         <div style={{ background: '#fee2e2', color: '#991b1b', padding: 10, borderRadius: 10, marginBottom: 12 }}>
           {error}

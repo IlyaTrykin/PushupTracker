@@ -30,6 +30,8 @@ type Stats = {
   streak: number;
 };
 
+type StatBreakdown = Record<ExerciseType, number | string>;
+
 type WorkoutReactionPayload = {
   summary: Array<{ emoji: string; count: number }>;
   myEmoji: string | null;
@@ -206,17 +208,32 @@ function computeStats(workouts: Workout[]): Stats {
   };
 }
 
-function Stat({ label, value }: { label: string; value: number | string }) {
+function Stat({ label, value, breakdown }: { label: string; value: number | string; breakdown?: StatBreakdown }) {
   return (
     <div className="app-tile">
       <div className="app-tile__title">{label}</div>
-      <div className="app-tile__value">{value}</div>
+      {!breakdown ? <div className="app-tile__value">{value}</div> : null}
+      {breakdown ? (
+        <div style={statBreakdownWrap}>
+          {EXERCISE_ORDER.map((type) => (
+            <span key={`${label}-${type}`} style={statBreakdownItem}>
+              <img src={exerciseFeedIcon(type)} alt="" aria-hidden="true" style={statBreakdownIcon} />
+              <span style={statBreakdownValue}>{breakdown[type]}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function exerciseLabel(type: string | undefined) {
   return EXERCISE_LABELS[type || ''] || type || 'Упражнение';
+}
+
+function normalizeExerciseType(type: string | undefined): ExerciseType {
+  if (type === 'pullups' || type === 'crunches' || type === 'squats') return type;
+  return 'pushups';
 }
 
 function exerciseFeedIcon(type: string | undefined) {
@@ -340,12 +357,20 @@ export default function DashboardPage() {
     return () => window.clearTimeout(t);
   }, [toastMessage]);
 
-  const filteredWorkouts = useMemo(
-    () => workouts.filter((w) => (w.exerciseType || 'pushups') === exerciseType),
-    [workouts, exerciseType],
-  );
+  const stats = useMemo(() => computeStats(workouts), [workouts]);
+  const statsByExercise = useMemo<Record<ExerciseType, Stats>>(() => ({
+    pushups: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'pushups')),
+    pullups: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'pullups')),
+    crunches: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'crunches')),
+    squats: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'squats')),
+  }), [workouts]);
 
-  const stats = useMemo(() => computeStats(filteredWorkouts), [filteredWorkouts]);
+  const breakdownFromStats = (pick: (s: Stats) => number): StatBreakdown => ({
+    pushups: pick(statsByExercise.pushups),
+    pullups: pick(statsByExercise.pullups),
+    crunches: pick(statsByExercise.crunches),
+    squats: pick(statsByExercise.squats),
+  });
 
   const dayMap = useMemo(() => {
     const map = new Map<string, DayAggregate>();
@@ -353,7 +378,7 @@ export default function DashboardPage() {
       const key = normalizeDate(new Date(w.time || w.date));
       const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalReps: 0 };
       row.items.push(w);
-      const t = w.exerciseType || 'pushups';
+      const t = normalizeExerciseType(w.exerciseType);
       row.byExercise.set(t, (row.byExercise.get(t) ?? 0) + (w.reps || 0));
       row.totalReps += w.reps || 0;
       map.set(key, row);
@@ -500,43 +525,24 @@ export default function DashboardPage() {
     <div className="app-page" style={{ maxWidth: 920 }}>
       {toastMessage ? <div className="app-toast">{toastMessage}</div> : null}
 
-      <h1
-        style={{
-          marginBottom: 10,
-          fontSize: 'clamp(20px, 5.5vw, 30px)',
-          lineHeight: 1.1,
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        <span>Тренировка:</span>
-        <select
-          value={exerciseType}
-          onChange={(e) => handleExerciseTypeChange(e.target.value as ExerciseType)}
-          style={{
-            width: 'min(56vw, 260px)',
-            minWidth: 0,
-            padding: '6px 10px',
-            borderRadius: 10,
-            border: '1px solid #d1d5db',
-            background: '#fff',
-            color: '#000',
-            fontWeight: 800,
-            fontSize: 'clamp(14px, 3.5vw, 18px)',
-            lineHeight: 1.2,
-          }}
-          aria-label="Тип упражнения"
-        >
-          <option value="pushups">Отжимания</option>
-          <option value="pullups">Подтягивания</option>
-          <option value="crunches">Скручивания</option>
-          <option value="squats">Приседания</option>
-        </select>
-      </h1>
+      <div style={exerciseTypePickerWrap} role="tablist" aria-label="Выбор типа упражнения">
+        {EXERCISE_ORDER.map((type) => {
+          const active = exerciseType === type;
+          return (
+            <button
+              key={type}
+              type="button"
+              onClick={() => handleExerciseTypeChange(type)}
+              style={exerciseTypePickerButton(active)}
+              title={exerciseLabel(type)}
+              aria-label={exerciseLabel(type)}
+              aria-pressed={active}
+            >
+              <img src={exerciseFeedIcon(type)} alt="" aria-hidden="true" style={exerciseTypePickerIcon} />
+            </button>
+          );
+        })}
+      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, margin: '12px 0 18px' }}>
         <div
@@ -603,15 +609,15 @@ export default function DashboardPage() {
       {info ? <p style={{ color: 'green', marginTop: 6 }}>{info}</p> : null}
 
       <section className="app-tiles" style={{ marginBottom: 20 }}>
-        <Stat label="Сегодня" value={stats.totalToday} />
-        <Stat label="Всего" value={stats.totalAll} />
-        <Stat label="Текущий год" value={stats.totalYear} />
-        <Stat label="Текущий месяц" value={stats.totalMonth} />
-        <Stat label="Текущая неделя" value={stats.totalWeek} />
-        <Stat label="Среднее/день (месяц)" value={stats.avgPerDayMonth || '-'} />
-        <Stat label="Среднее/день (год)" value={stats.avgPerDayYear || '-'} />
-        <Stat label="Среднее/день (всего)" value={stats.avgPerDayAll || '-'} />
-        <Stat label="Серия дней подряд" value={stats.streak} />
+        <Stat label="Сегодня" value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} />
+        <Stat label="Всего" value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} />
+        <Stat label="Текущий год" value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} />
+        <Stat label="Текущий месяц" value={stats.totalMonth} breakdown={breakdownFromStats((s) => s.totalMonth)} />
+        <Stat label="Текущая неделя" value={stats.totalWeek} breakdown={breakdownFromStats((s) => s.totalWeek)} />
+        <Stat label="Среднее/день (месяц)" value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} />
+        <Stat label="Среднее/день (год)" value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} />
+        <Stat label="Среднее/день (всего)" value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} />
+        <Stat label="Серия дней подряд" value={stats.streak} breakdown={breakdownFromStats((s) => s.streak)} />
       </section>
 
       <section style={card}>
@@ -822,6 +828,68 @@ export default function DashboardPage() {
   );
 }
 
+const exerciseTypePickerWrap: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+  gap: 8,
+  width: 'min(92vw, 520px)',
+  margin: '6px auto 12px',
+};
+
+function exerciseTypePickerButton(active: boolean): React.CSSProperties {
+  return {
+    height: 56,
+    borderRadius: 12,
+    border: `2px solid ${active ? '#2563eb' : '#d1d5db'}`,
+    background: active ? '#eff6ff' : '#fff',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    boxShadow: active ? '0 0 0 1px rgba(37, 99, 235, 0.24)' : 'none',
+  };
+}
+
+const exerciseTypePickerIcon: React.CSSProperties = {
+  width: 40,
+  height: 40,
+  objectFit: 'contain',
+  display: 'block',
+};
+
+const statBreakdownWrap: React.CSSProperties = {
+  marginTop: 2,
+  width: '100%',
+  display: 'grid',
+  gap: 1,
+  alignContent: 'start',
+};
+
+const statBreakdownItem: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 'clamp(2px, 0.25vw, 4px)',
+  minWidth: 0,
+  lineHeight: 1,
+};
+
+const statBreakdownIcon: React.CSSProperties = {
+  width: 'clamp(16px, 1.2vw, 20px)',
+  height: 'clamp(16px, 1.2vw, 20px)',
+  objectFit: 'contain',
+  display: 'block',
+  flex: '0 0 auto',
+};
+
+const statBreakdownValue: React.CSSProperties = {
+  fontSize: 'clamp(11px, 0.9vw, 15px)',
+  fontWeight: 900,
+  color: '#111827',
+  lineHeight: 1,
+  fontVariantNumeric: 'tabular-nums',
+};
+
 const smallInput: React.CSSProperties = {
   padding: '10px 12px',
   borderRadius: 12,
@@ -928,10 +996,10 @@ const calendarEmptyCell: React.CSSProperties = {
 };
 
 const calendarDayCell: React.CSSProperties = {
-  minHeight: 88,
+  minHeight: 'clamp(88px, 11vw, 122px)',
   border: '1px solid #e5e7eb',
   borderRadius: 10,
-  padding: 6,
+  padding: '6px 6px 6px 3px',
   display: 'grid',
   gap: 4,
   alignContent: 'start',
@@ -941,13 +1009,15 @@ const calendarDayCell: React.CSSProperties = {
 
 const exerciseNumbersRow: React.CSSProperties = {
   display: 'grid',
-  gap: 0,
+  gap: 1,
   alignContent: 'start',
+  justifyItems: 'start',
+  marginLeft: -1,
 };
 
 const exerciseNumber: React.CSSProperties = {
   display: 'inline-block',
-  fontSize: 11,
+  fontSize: 'clamp(12px, 0.95vw, 17px)',
   lineHeight: 1,
   fontWeight: 900,
   color: '#000',
@@ -957,17 +1027,17 @@ const exerciseNumber: React.CSSProperties = {
 const exerciseNumberItem: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 2,
+  gap: 'clamp(1px, 0.2vw, 4px)',
   whiteSpace: 'nowrap',
   minWidth: 0,
 };
 
 const exerciseNumberIcon: React.CSSProperties = {
-  width: 12,
-  height: 12,
+  width: 'clamp(14px, 1.2vw, 22px)',
+  height: 'clamp(14px, 1.2vw, 22px)',
   objectFit: 'contain',
   flex: '0 0 auto',
-  marginLeft: -2,
+  marginLeft: -3,
   marginRight: 1,
 };
 
@@ -982,15 +1052,15 @@ const legendWrap: React.CSSProperties = {
 const legendItem: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6,
-  fontSize: 12,
+  gap: 'clamp(6px, 0.4vw, 8px)',
+  fontSize: 'clamp(12px, 0.8vw, 14px)',
   fontWeight: 800,
   color: '#000',
 };
 
 const legendIcon: React.CSSProperties = {
-  width: 16,
-  height: 16,
+  width: 'clamp(16px, 1vw, 20px)',
+  height: 'clamp(16px, 1vw, 20px)',
   objectFit: 'contain',
   flex: '0 0 auto',
 };

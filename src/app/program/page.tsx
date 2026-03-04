@@ -155,6 +155,14 @@ function exerciseLegendColor(exerciseType: string) {
   return '#9ca3af';
 }
 
+function exerciseFeedIcon(exerciseType: string) {
+  const v = '20260304-4';
+  if (exerciseType === 'pullups') return `/icons/exercise-types/feed/pullups.svg?v=${v}`;
+  if (exerciseType === 'crunches') return `/icons/exercise-types/feed/crunches.svg?v=${v}`;
+  if (exerciseType === 'squats') return `/icons/exercise-types/feed/squats.svg?v=${v}`;
+  return `/icons/exercise-types/feed/pushups.svg?v=${v}`;
+}
+
 const EXERCISE_ORDER = ['pushups', 'pullups', 'crunches', 'squats'] as const;
 
 function toDate(iso: string | null | undefined): Date | null {
@@ -598,8 +606,7 @@ export default function ProgramPage() {
 
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <h1 style={{ margin: 0 }}>Программа</h1>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={btnPrimary} onClick={beginCreate}>
           Новая программа тренировок
         </button>
@@ -686,11 +693,13 @@ export default function ProgramPage() {
                     <>
                       <div style={{ fontWeight: 900, color: '#000' }}>{cell.day}</div>
                       {exerciseTypes.length ? (
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: 'clamp(4px, 0.5vw, 8px)', flexWrap: 'wrap', marginLeft: -1 }}>
                           {exerciseTypes.map((exerciseType) => (
-                            <span
+                            <img
                               key={exerciseType}
-                              style={{ ...calendarExerciseDot, background: exerciseLegendColor(exerciseType) }}
+                              src={exerciseFeedIcon(exerciseType)}
+                              alt={exerciseLabel(exerciseType)}
+                              style={calendarExerciseIcon}
                               title={exerciseLabel(exerciseType)}
                             />
                           ))}
@@ -727,7 +736,7 @@ export default function ProgramPage() {
               <div style={calendarLegendWrap}>
                 {EXERCISE_ORDER.map((exerciseType) => (
                   <div key={exerciseType} style={calendarLegendItem}>
-                    <span style={{ ...calendarLegendDot, background: exerciseLegendColor(exerciseType) }} />
+                    <img src={exerciseFeedIcon(exerciseType)} alt={exerciseLabel(exerciseType)} style={calendarLegendIcon} />
                     <span>{exerciseLabel(exerciseType)}</span>
                   </div>
                 ))}
@@ -1222,10 +1231,10 @@ const calendarEmptyCell: React.CSSProperties = {
 };
 
 const calendarDayCell: React.CSSProperties = {
-  minHeight: 90,
+  minHeight: 'clamp(90px, 11vw, 126px)',
   border: '1px solid #e5e7eb',
   borderRadius: 10,
-  padding: 8,
+  padding: '8px 8px 8px 4px',
   display: 'grid',
   gap: 4,
   alignContent: 'start',
@@ -1236,12 +1245,12 @@ const calendarDayButton: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-const calendarExerciseDot: React.CSSProperties = {
-  width: 10,
-  height: 10,
-  borderRadius: 999,
-  border: '1px solid rgba(0,0,0,0.15)',
+const calendarExerciseIcon: React.CSSProperties = {
+  width: 'clamp(14px, 1.25vw, 24px)',
+  height: 'clamp(14px, 1.25vw, 24px)',
+  objectFit: 'contain',
   flex: '0 0 auto',
+  display: 'block',
 };
 
 const calendarLegendWrap: React.CSSProperties = {
@@ -1255,17 +1264,18 @@ const calendarLegendWrap: React.CSSProperties = {
 const calendarLegendItem: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6,
-  fontSize: 12,
+  gap: 'clamp(6px, 0.4vw, 8px)',
+  fontSize: 'clamp(12px, 0.8vw, 14px)',
   fontWeight: 800,
   color: '#000',
 };
 
-const calendarLegendDot: React.CSSProperties = {
-  width: 10,
-  height: 10,
-  borderRadius: 999,
+const calendarLegendIcon: React.CSSProperties = {
+  width: 'clamp(14px, 1.25vw, 24px)',
+  height: 'clamp(14px, 1.25vw, 24px)',
+  objectFit: 'contain',
   flex: '0 0 auto',
+  display: 'block',
 };
 
 const doneBadge: React.CSSProperties = {

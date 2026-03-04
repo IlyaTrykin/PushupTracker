@@ -7,6 +7,25 @@ import React, { useEffect, useMemo, useState } from 'react';
 type Me = { username: string; isAdmin?: boolean; avatarPath?: string | null };
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
 
+function resolvePageTitle(pathname: string | null) {
+  if (!pathname || pathname === '/') return 'Главная';
+  if (pathname.startsWith('/dashboard')) return 'Тренировка';
+  if (pathname.startsWith('/program/session/')) return 'Тренировка по программе';
+  if (pathname.startsWith('/program')) return 'Программа';
+  if (pathname.startsWith('/friends')) return 'Друзья';
+  if (pathname.startsWith('/challenges/')) return 'Соревнование';
+  if (pathname.startsWith('/challenges')) return 'Соревнования';
+  if (pathname.startsWith('/progress')) return 'Сводка';
+  if (pathname.startsWith('/notifications')) return 'Уведомления';
+  if (pathname.startsWith('/profile')) return 'Профиль';
+  if (pathname.startsWith('/admin/users')) return 'Админка';
+  if (pathname.startsWith('/login')) return 'Вход';
+  if (pathname.startsWith('/register')) return 'Регистрация';
+  if (pathname.startsWith('/forgot-password')) return 'Восстановление пароля';
+  if (pathname.startsWith('/reset-password')) return 'Новый пароль';
+  return 'Tracker';
+}
+
 function AvatarCircle({ src, size = 24 }: { src?: string | null; size?: number }) {
   const base: React.CSSProperties = {
     width: size,
@@ -33,6 +52,7 @@ function AvatarCircle({ src, size = 24 }: { src?: string | null; size?: number }
 
 export default function AppNavClient() {
   const pathname = usePathname();
+  const pageTitle = useMemo(() => resolvePageTitle(pathname), [pathname]);
   const [open, setOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
@@ -102,9 +122,9 @@ export default function AppNavClient() {
       <header className="app-header">
         <div className="app-header-row">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <Link href="/dashboard" style={{ fontWeight: 900, color: '#000', textDecoration: 'none' }}>
-              Tracker
-            </Link>
+            <div style={{ fontWeight: 900, color: '#000', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+              {pageTitle}
+            </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' }}>

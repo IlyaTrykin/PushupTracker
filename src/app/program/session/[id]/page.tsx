@@ -319,8 +319,6 @@ export default function ProgramSessionPage() {
 
   return (
     <div className="app-page" style={{ maxWidth: 760 }}>
-      <h1 style={{ marginBottom: 8 }}>Тренировка по программе</h1>
-
       {program && session ? (
         <div style={{ color: '#111827', marginBottom: 12 }}>
           {exerciseLabel(program.exerciseType)} · неделя {session.weekNumber} · тренировка #{session.sessionNumber}

@@ -126,8 +126,7 @@ export default function ProgramDetailPage() {
 
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-        <h1 style={{ margin: 0 }}>Программа: {program ? exerciseLabel(program.exerciseType) : '...'}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
         <Link href="/program" style={btnLink}>← К программам</Link>
       </div>
 
@@ -138,6 +137,7 @@ export default function ProgramDetailPage() {
         <>
           <section style={card}>
             <div style={{ display: 'grid', gap: 4 }}>
+              <div>Упражнение: <b>{exerciseLabel(program.exerciseType)}</b></div>
               <div>Базовый тест: <b>{program.baselineMaxReps}</b> · Цель: <b>{program.targetReps ?? '—'}</b></div>
               <div>Длительность: <b>{program.durationWeeks}</b> нед · Темп: <b>{program.frequencyPerWeek}</b>/нед</div>
               <div>Прогресс: <b>{program.stats.completedSessions}/{program.stats.totalSessions}</b> ({program.stats.completionPercent}%)</div>

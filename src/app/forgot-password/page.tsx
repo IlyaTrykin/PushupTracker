@@ -41,7 +41,6 @@ export default function ForgotPasswordPage() {
 
   return (
     <div style={{ maxWidth: 420, margin: '40px auto', padding: 16 }}>
-      <h1 style={{ marginTop: 0 }}>Восстановление пароля</h1>
       <p style={{ color: '#4b5563' }}>Введите email из профиля, мы отправим ссылку для смены пароля.</p>
 
       <form onSubmit={submit} style={{ display: 'grid', gap: 10 }}>

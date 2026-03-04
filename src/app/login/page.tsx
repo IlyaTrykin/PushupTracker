@@ -30,7 +30,6 @@ export default function LoginPage() {
 
   return (
     <div style={{ maxWidth: 400, margin: '40px auto' }}>
-      <h1>Вход</h1>
       <form onSubmit={handleSubmit}>
         <div>
           <label>Имя пользователя</label>

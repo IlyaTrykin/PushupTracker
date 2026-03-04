@@ -219,8 +219,6 @@ export default function ChallengesPage() {
 
   return (
     <div className="app-page" style={{ maxWidth: 900 }}>
-      <h1 style={{ marginBottom: 8 }}>Соревнования</h1>
-
       <div style={{ marginBottom: 12 }}>
         <button type="button" style={btnPrimary} onClick={() => setShowCreate(v => !v)}>
           {showCreate ? 'Скрыть' : 'Создать соревнование'}

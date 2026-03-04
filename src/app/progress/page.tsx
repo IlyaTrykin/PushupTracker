@@ -812,8 +812,7 @@ export default function ProgressPage() {
 
   return (
     <div className="app-page" style={{ maxWidth: 980, display: 'grid', gap: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <h1 style={{ margin: 0 }}>Сводка</h1>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <Link href="/dashboard" style={{ textDecoration: 'none' }}>← На тренировку</Link>
       </div>
 

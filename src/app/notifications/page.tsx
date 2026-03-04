@@ -85,8 +85,7 @@ export default function NotificationsPage() {
 
   return (
     <div style={{ maxWidth: 900, margin: '40px auto', fontFamily: 'system-ui' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <h1 style={{ margin: 0 }}>Уведомления</h1>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <Link href="/" style={{ textDecoration: 'none' }}>← На главную</Link>
       </div>
 

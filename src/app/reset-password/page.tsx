@@ -59,8 +59,6 @@ export default function ResetPasswordPage() {
 
   return (
     <div style={{ maxWidth: 420, margin: '40px auto', padding: 16 }}>
-      <h1 style={{ marginTop: 0 }}>Новый пароль</h1>
-
       <form onSubmit={submit} style={{ display: 'grid', gap: 10 }}>
         <input
           type="password"
