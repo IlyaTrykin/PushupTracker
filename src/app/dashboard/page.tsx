@@ -30,34 +30,34 @@ type Stats = {
   streak: number;
 };
 
+type WorkoutReactionPayload = {
+  summary: Array<{ emoji: string; count: number }>;
+  myEmoji: string | null;
+  recent: Array<{
+    id: string;
+    userId: string;
+    username: string;
+    avatarPath: string | null;
+    emoji: string;
+    createdAt: string;
+  }>;
+};
+
+type ReactionSummaryItem = {
+  emoji: string;
+  count: number;
+  avatars: WorkoutReactionPayload['recent'];
+  hasMore: boolean;
+};
+
 const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats'];
+const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
 
 const EXERCISE_LABELS: Record<string, string> = {
   pushups: 'Отжимания',
   pullups: 'Подтягивания',
   crunches: 'Скручивания',
   squats: 'Приседания',
-};
-
-const EXERCISE_CODES: Record<string, string> = {
-  pushups: 'ОТЖ',
-  pullups: 'ПТГ',
-  crunches: 'СКР',
-  squats: 'ПРС',
-};
-
-const EXERCISE_COLORS: Record<string, string> = {
-  pushups: '#dbeafe',
-  pullups: '#fee2e2',
-  crunches: '#dcfce7',
-  squats: '#fef3c7',
-};
-
-const EXERCISE_NUMBER_COLORS: Record<string, string> = {
-  pushups: '#38bdf8', // голубой
-  pullups: '#ef4444', // красный
-  crunches: '#22c55e', // зеленый
-  squats: '#b8860b', // темно-желтый
 };
 
 function toIsoTime(date: string, time: string) {
@@ -219,16 +219,37 @@ function exerciseLabel(type: string | undefined) {
   return EXERCISE_LABELS[type || ''] || type || 'Упражнение';
 }
 
-function exerciseCode(type: string | undefined) {
-  return EXERCISE_CODES[type || ''] || String(type || '???').toUpperCase().slice(0, 3);
+function exerciseFeedIcon(type: string | undefined) {
+  const v = '20260304-4';
+  if (type === 'pullups') return `/icons/exercise-types/feed/pullups.svg?v=${v}`;
+  if (type === 'crunches') return `/icons/exercise-types/feed/crunches.svg?v=${v}`;
+  if (type === 'squats') return `/icons/exercise-types/feed/squats.svg?v=${v}`;
+  return `/icons/exercise-types/feed/pushups.svg?v=${v}`;
 }
 
-function exerciseColor(type: string | undefined) {
-  return EXERCISE_COLORS[type || ''] || '#e5e7eb';
+function buildReactionSummaryItem(
+  reaction: WorkoutReactionPayload | undefined,
+  emoji: string,
+): ReactionSummaryItem | null {
+  const count = reaction?.summary?.find((x) => x.emoji === emoji)?.count ?? 0;
+  if (!count) return null;
+
+  const avatars = (reaction?.recent ?? []).filter((x) => x.emoji === emoji).slice(0, 3);
+  return {
+    emoji,
+    count,
+    avatars,
+    hasMore: count > avatars.length,
+  };
 }
 
-function exerciseNumberColor(type: string | undefined) {
-  return EXERCISE_NUMBER_COLORS[type || ''] || '#6b7280';
+function AvatarMini({ src }: { src?: string | null }) {
+  if (!src) return <span style={miniAvatarPlaceholder} aria-hidden="true" />;
+  return (
+    <span style={miniAvatarWrap} aria-hidden="true">
+      <img src={src} alt="" width={14} height={14} style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
+    </span>
+  );
 }
 
 export default function DashboardPage() {
@@ -253,6 +274,7 @@ export default function DashboardPage() {
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => monthStart(new Date()));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailDay, setDetailDay] = useState<string | null>(null);
+  const [workoutReactions, setWorkoutReactions] = useState<Record<string, WorkoutReactionPayload>>({});
 
   useEffect(() => {
     try {
@@ -288,6 +310,20 @@ export default function DashboardPage() {
     try {
       const data = await fetchJsonSafe('/api/workouts');
       setWorkouts(Array.isArray(data) ? data : (data?.items ?? []));
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
+  const loadWorkoutReactions = async (workoutIds: string[]) => {
+    const ids = Array.from(new Set(workoutIds.filter(Boolean)));
+    if (!ids.length) {
+      setWorkoutReactions({});
+      return;
+    }
+    try {
+      const data = await fetchJsonSafe(`/api/workout-reactions?ids=${encodeURIComponent(ids.join(','))}`);
+      setWorkoutReactions(data && typeof data === 'object' ? data : {});
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -449,6 +485,16 @@ export default function DashboardPage() {
   const selectedDayData = detailDay ? dayMap.get(detailDay) ?? null : null;
   const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
   const todayKey = normalizeDate(new Date());
+
+  useEffect(() => {
+    if (!detailsOpen || !selectedDayData?.items?.length) {
+      setWorkoutReactions({});
+      return;
+    }
+    const ids = selectedDayData.items.map((w) => w.id);
+    loadWorkoutReactions(ids);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailsOpen, selectedDayData]);
 
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
@@ -624,7 +670,7 @@ export default function DashboardPage() {
                 <div style={exerciseNumbersRow}>
                   {exerciseTotals.map(({ type, sum }) => (
                     <span key={type} style={exerciseNumberItem}>
-                      <span style={{ ...exerciseNumberDot, background: exerciseNumberColor(type) }} />
+                      <img src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={exerciseNumberIcon} />
                       <span style={exerciseNumber}>{sum}</span>
                     </span>
                   ))}
@@ -637,7 +683,7 @@ export default function DashboardPage() {
         <div style={legendWrap}>
           {EXERCISE_ORDER.map((type) => (
             <div key={type} style={legendItem}>
-              <span style={{ ...legendColor, background: exerciseNumberColor(type) }} />
+              <img src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={legendIcon} />
               <span>{exerciseLabel(type)}</span>
             </div>
           ))}
@@ -675,70 +721,98 @@ export default function DashboardPage() {
                   {formatDateWithWeekday(detailDay)} · всего: {selectedDayData.totalReps}
                 </div>
 
-                {selectedDayData.items.map((w) => (
-                  <div key={w.id} style={rowCard}>
-                    {editingId === w.id ? (
-                      <div style={{ display: 'grid', gap: 8, width: '100%' }}>
-                        <div style={editGrid}>
-                          <div style={{ display: 'grid', gap: 4 }}>
-                            <label>Упражнение</label>
-                            <select
-                              value={editExerciseType}
-                              onChange={(e) => setEditExerciseType(e.target.value as ExerciseType)}
-                              style={editInput}
-                            >
-                              <option value="pushups">Отжимания</option>
-                              <option value="pullups">Подтягивания</option>
-                              <option value="crunches">Скручивания</option>
-                              <option value="squats">Приседания</option>
-                            </select>
+                {selectedDayData.items.map((w) => {
+                  const reaction = workoutReactions[w.id];
+                  return (
+                    <div key={w.id} style={rowCard}>
+                      {editingId === w.id ? (
+                        <div style={{ display: 'grid', gap: 8, width: '100%' }}>
+                          <div style={editGrid}>
+                            <div style={{ display: 'grid', gap: 4 }}>
+                              <label>Упражнение</label>
+                              <select
+                                value={editExerciseType}
+                                onChange={(e) => setEditExerciseType(e.target.value as ExerciseType)}
+                                style={editInput}
+                              >
+                                <option value="pushups">Отжимания</option>
+                                <option value="pullups">Подтягивания</option>
+                                <option value="crunches">Скручивания</option>
+                                <option value="squats">Приседания</option>
+                              </select>
+                            </div>
+
+                            <div style={{ display: 'grid', gap: 4 }}>
+                              <label>Дата</label>
+                              <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} style={editInput} />
+                            </div>
+
+                            <div style={{ display: 'grid', gap: 4 }}>
+                              <label>Время</label>
+                              <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} style={editInput} />
+                            </div>
+
+                            <div style={{ display: 'grid', gap: 4 }}>
+                              <label>Повторы</label>
+                              <input
+                                type="number"
+                                value={editReps}
+                                onChange={(e) => setEditReps(Number(e.target.value))}
+                                style={editInput}
+                              />
+                            </div>
                           </div>
 
-                          <div style={{ display: 'grid', gap: 4 }}>
-                            <label>Дата</label>
-                            <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} style={editInput} />
-                          </div>
-
-                          <div style={{ display: 'grid', gap: 4 }}>
-                            <label>Время</label>
-                            <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} style={editInput} />
-                          </div>
-
-                          <div style={{ display: 'grid', gap: 4 }}>
-                            <label>Повторы</label>
-                            <input
-                              type="number"
-                              value={editReps}
-                              onChange={(e) => setEditReps(Number(e.target.value))}
-                              style={editInput}
-                            />
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <button type="button" onClick={saveEdit} style={btnPrimary}>Сохранить</button>
+                            <button type="button" onClick={cancelEdit} style={btnSecondary}>Отмена</button>
                           </div>
                         </div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 8, width: '100%' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>
+                            <div style={{ display: 'grid', gap: 4 }}>
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <img src={exerciseFeedIcon(w.exerciseType)} alt={exerciseLabel(w.exerciseType)} style={detailsExerciseIcon} />
+                                <span style={{ fontWeight: 800 }}>{exerciseLabel(w.exerciseType)}</span>
+                              </div>
+                              <div>Время: <b>{formatTimeHHMM(w.time || w.date)}</b></div>
+                              <div>Повторы: <b>{w.reps}</b></div>
+                            </div>
 
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                          <button type="button" onClick={saveEdit} style={btnPrimary}>Сохранить</button>
-                          <button type="button" onClick={cancelEdit} style={btnSecondary}>Отмена</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>
-                        <div style={{ display: 'grid', gap: 4 }}>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span style={{ ...exerciseChip, background: exerciseColor(w.exerciseType) }}>{exerciseCode(w.exerciseType)}</span>
-                            <span style={{ fontWeight: 800 }}>{exerciseLabel(w.exerciseType)}</span>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                              <button type="button" onClick={() => startEdit(w)} style={btnSecondary}>Редактировать</button>
+                              <button type="button" onClick={() => deleteWorkout(w.id)} style={btnDanger}>Удалить</button>
+                            </div>
                           </div>
-                          <div>Время: <b>{formatTimeHHMM(w.time || w.date)}</b></div>
-                          <div>Повторы: <b>{w.reps}</b></div>
-                        </div>
 
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                          <button type="button" onClick={() => startEdit(w)} style={btnSecondary}>Редактировать</button>
-                          <button type="button" onClick={() => deleteWorkout(w.id)} style={btnDanger}>Удалить</button>
+                          {reaction?.summary?.length ? (
+                            <div style={reactionSummaryRow}>
+                              {REACTION_OPTIONS.map((emoji) => {
+                                const item = buildReactionSummaryItem(reaction, emoji);
+                                if (!item) return null;
+                                return (
+                                  <span key={`${w.id}-sum-${emoji}`} style={reactionSummaryChip}>
+                                    <span>{emoji}</span>
+                                    <span style={reactionSummaryCount}>{item.count}</span>
+                                    <span style={reactionAvatarsRow}>
+                                      {item.avatars.map((r) => (
+                                        <span key={`${w.id}-sum-av-${emoji}-${r.id}`} style={reactionAvatarWrap} title={r.username}>
+                                          <AvatarMini src={r.avatarPath} />
+                                        </span>
+                                      ))}
+                                      {item.hasMore ? <span style={reactionMoreMark}>+</span> : null}
+                                    </span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                         </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -883,16 +957,17 @@ const exerciseNumber: React.CSSProperties = {
 const exerciseNumberItem: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 0,
+  gap: 2,
   whiteSpace: 'nowrap',
   minWidth: 0,
 };
 
-const exerciseNumberDot: React.CSSProperties = {
-  width: 6,
-  height: 6,
-  borderRadius: 999,
+const exerciseNumberIcon: React.CSSProperties = {
+  width: 12,
+  height: 12,
+  objectFit: 'contain',
   flex: '0 0 auto',
+  marginLeft: -2,
   marginRight: 1,
 };
 
@@ -913,25 +988,88 @@ const legendItem: React.CSSProperties = {
   color: '#000',
 };
 
-const legendColor: React.CSSProperties = {
-  width: 10,
-  height: 10,
-  borderRadius: 999,
+const legendIcon: React.CSSProperties = {
+  width: 16,
+  height: 16,
+  objectFit: 'contain',
   flex: '0 0 auto',
 };
 
-const exerciseChip: React.CSSProperties = {
+const detailsExerciseIcon: React.CSSProperties = {
+  width: 16,
+  height: 16,
+  objectFit: 'contain',
+  display: 'block',
+  flex: '0 0 auto',
+};
+
+const miniAvatarWrap: React.CSSProperties = {
+  width: 14,
+  height: 14,
+  borderRadius: 999,
+  border: '1px solid #d1d5db',
+  overflow: 'hidden',
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  minWidth: 34,
-  height: 22,
+  background: '#fff',
+  flex: '0 0 auto',
+};
+
+const miniAvatarPlaceholder: React.CSSProperties = {
+  ...miniAvatarWrap,
+};
+
+const reactionSummaryRow: React.CSSProperties = {
+  display: 'flex',
+  gap: 6,
+  flexWrap: 'wrap',
+};
+
+const reactionSummaryChip: React.CSSProperties = {
   borderRadius: 999,
   border: '1px solid #d1d5db',
+  background: '#fff',
+  minHeight: 24,
+  padding: '0 8px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  fontSize: 14,
+};
+
+const reactionSummaryCount: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 900,
+  lineHeight: 1,
   color: '#111827',
-  padding: '0 7px',
+};
+
+const reactionAvatarsRow: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 2,
+  marginLeft: 2,
+};
+
+const reactionAvatarWrap: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+};
+
+const reactionMoreMark: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 14,
+  height: 14,
+  borderRadius: 999,
+  border: '1px solid #d1d5db',
+  background: '#fff',
+  fontSize: 11,
+  fontWeight: 900,
+  color: '#475569',
+  lineHeight: 1,
 };
 
 const rowCard: React.CSSProperties = {

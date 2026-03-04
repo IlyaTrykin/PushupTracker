@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type TrainingSet = {
   id: string;
@@ -84,6 +84,9 @@ export default function ProgramSessionPage() {
 
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const lastBeepSecondRef = useRef<number | null>(null);
+  const wakeLockRef = useRef<any>(null);
 
   const currentSet = useMemo(() => {
     if (!session) return null;
@@ -147,6 +150,108 @@ export default function ProgramSessionPage() {
     const t = window.setInterval(() => setRestSeconds((x) => (x > 0 ? x - 1 : 0)), 1000);
     return () => window.clearInterval(t);
   }, [restSeconds, restPaused]);
+
+  const releaseWakeLock = useCallback(async () => {
+    const sentinel = wakeLockRef.current;
+    wakeLockRef.current = null;
+    if (!sentinel) return;
+    try {
+      await sentinel.release();
+    } catch {}
+  }, []);
+
+  const requestWakeLock = useCallback(async () => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    if (document.visibilityState !== 'visible') return;
+    if (wakeLockRef.current) return;
+
+    const wakeLockApi = (navigator as any)?.wakeLock;
+    if (!wakeLockApi?.request) return;
+
+    try {
+      const sentinel = await wakeLockApi.request('screen');
+      wakeLockRef.current = sentinel;
+      sentinel?.addEventListener?.('release', () => {
+        if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
+      });
+    } catch {}
+  }, []);
+
+  const playCountdownBeep = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtor) return;
+
+    if (!audioContextRef.current) audioContextRef.current = new AudioCtor();
+    const ctx = audioContextRef.current;
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = 920;
+
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.14);
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.15);
+  }, []);
+
+  useEffect(() => {
+    if (restPaused || restSeconds <= 0) {
+      lastBeepSecondRef.current = null;
+      return;
+    }
+
+    if (restSeconds <= 5 && lastBeepSecondRef.current !== restSeconds) {
+      lastBeepSecondRef.current = restSeconds;
+      playCountdownBeep();
+    }
+  }, [restSeconds, restPaused, playCountdownBeep]);
+
+  useEffect(() => {
+    const shouldKeepAwake = restSeconds > 0 && !restPaused && !done;
+    if (shouldKeepAwake) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+  }, [restSeconds, restPaused, done, requestWakeLock, releaseWakeLock]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const shouldKeepAwake = restSeconds > 0 && !restPaused && !done;
+      if (!shouldKeepAwake) {
+        releaseWakeLock();
+        return;
+      }
+      if (document.visibilityState === 'visible') {
+        requestWakeLock();
+      } else {
+        releaseWakeLock();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [restSeconds, restPaused, done, requestWakeLock, releaseWakeLock]);
+
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+      }
+      releaseWakeLock();
+    };
+  }, [releaseWakeLock]);
 
   useEffect(() => {
     if (restSeconds !== 0 || !session) return;
@@ -248,39 +353,41 @@ export default function ProgramSessionPage() {
               </div>
               <div style={{ textAlign: 'center' }}>Цель: <b>{currentSet.targetReps}</b> повторений</div>
 
-              <input
-                inputMode="numeric"
-                value={actualRepsInput}
-                onChange={(e) => setActualRepsInput(String(sanitizePositiveInt(e.target.value)))}
-                style={repsInputStyle}
-              />
+              <div style={setInputWrap}>
+                <input
+                  inputMode="numeric"
+                  value={actualRepsInput}
+                  onChange={(e) => setActualRepsInput(String(sanitizePositiveInt(e.target.value)))}
+                  style={repsInputStyle}
+                />
 
-              <div style={controlsGrid}>
-                <button
-                  type="button"
-                  style={minusBtn}
-                  onClick={() => {
-                    const next = Math.max(1, sanitizePositiveInt(actualRepsInput) - 1);
-                    setActualRepsInput(String(next));
-                  }}
-                >
-                  -
-                </button>
-                <button
-                  type="button"
-                  style={plusBtn}
-                  onClick={() => {
-                    const next = Math.min(5000, Math.max(0, sanitizePositiveInt(actualRepsInput)) + 1);
-                    setActualRepsInput(String(next));
-                  }}
-                >
-                  +
+                <div style={controlsGrid}>
+                  <button
+                    type="button"
+                    style={minusBtn}
+                    onClick={() => {
+                      const next = Math.max(1, sanitizePositiveInt(actualRepsInput) - 1);
+                      setActualRepsInput(String(next));
+                    }}
+                  >
+                    -
+                  </button>
+                  <button
+                    type="button"
+                    style={plusBtn}
+                    onClick={() => {
+                      const next = Math.min(5000, Math.max(0, sanitizePositiveInt(actualRepsInput)) + 1);
+                      setActualRepsInput(String(next));
+                    }}
+                  >
+                    +
+                  </button>
+                </div>
+
+                <button type="button" style={{ ...btnPrimary, width: '100%' }} onClick={saveCurrentSet} disabled={saving}>
+                  {saving ? 'Сохранение…' : 'Сделал'}
                 </button>
               </div>
-
-              <button type="button" style={{ ...btnPrimary, width: 'min(75vw, 520px)' }} onClick={saveCurrentSet} disabled={saving}>
-                {saving ? 'Сохранение…' : 'Сделал'}
-              </button>
             </div>
           )}
         </section>
@@ -308,15 +415,25 @@ const card: React.CSSProperties = {
   borderRadius: 12,
   background: '#f9fafb',
   padding: 14,
+  overflow: 'hidden',
+};
+
+const setInputWrap: React.CSSProperties = {
+  width: 'min(100%, 520px)',
+  maxWidth: '100%',
+  display: 'grid',
+  gap: 12,
 };
 
 const repsInputStyle: React.CSSProperties = {
-  width: 'min(92vw, 520px)',
+  width: '100%',
+  maxWidth: '100%',
+  minWidth: 0,
   textAlign: 'center',
   fontWeight: 800,
-  fontSize: 'clamp(84px, 20vw, 180px)',
+  fontSize: 'clamp(54px, 16vw, 140px)',
   lineHeight: 1.05,
-  padding: '12px 14px',
+  padding: '12px 10px',
   borderRadius: 16,
   border: '2px solid #e5e7eb',
   outline: 'none',
@@ -325,20 +442,21 @@ const repsInputStyle: React.CSSProperties = {
 };
 
 const controlsGrid: React.CSSProperties = {
-  width: 'min(75vw, 520px)',
+  width: '100%',
+  maxWidth: '100%',
   display: 'grid',
   gridTemplateColumns: '1fr 1fr',
   gap: 12,
 };
 
 const plusMinusBase: React.CSSProperties = {
-  height: 'clamp(72px, 18vw, 130px)',
+  height: 'clamp(64px, 17vw, 110px)',
   width: '100%',
   borderRadius: 14,
   border: 'none',
   color: '#000',
   fontWeight: 800,
-  fontSize: 'clamp(58px, 12vw, 92px)',
+  fontSize: 'clamp(40px, 10vw, 64px)',
   lineHeight: 1,
   cursor: 'pointer',
 };

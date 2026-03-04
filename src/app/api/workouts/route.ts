@@ -268,13 +268,13 @@ export async function POST(request: Request) {
         notifications.push({
           userId: participantId,
           type: 'challenge_rank_change',
-          title: `Изменилось место в челлендже`,
+          title: `Изменилось место в соревновании`,
           body: `${c.challenge.name}: ${prev} → ${next} (${up ? 'поднялись' : 'опустились'})`,
           link: `/challenges/${c.challengeId}`,
         });
 
         pushMessages.set(`challenge_rank_change:${c.challengeId}:${participantId}`, {
-          title: 'Изменилось место в челлендже',
+          title: 'Изменилось место в соревновании',
           body: `${c.challenge.name}: ${prev} → ${next} (${up ? 'поднялись' : 'опустились'})`,
           link: `/challenges/${c.challengeId}`,
           tag: `challenge-rank-${c.challengeId}`,

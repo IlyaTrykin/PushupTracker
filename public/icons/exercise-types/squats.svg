@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="athlete-squats" x1="12" y1="8" x2="52" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF8A00" />
+      <stop offset="1" stop-color="#FF4D2E" />
+    </linearGradient>
+  </defs>
+  <g stroke="url(#athlete-squats)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 52H54" />
+    <path d="M32 23V32" />
+    <path d="M23 29H41" />
+    <path d="M32 32L22 39" />
+    <path d="M32 32L42 39" />
+    <path d="M22 39V52" />
+    <path d="M42 39V52" />
+  </g>
+  <circle cx="32" cy="18" r="5" fill="url(#athlete-squats)" />
+</svg>

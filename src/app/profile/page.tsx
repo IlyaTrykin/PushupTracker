@@ -399,7 +399,7 @@ export default function ProfilePage() {
         <div style={{ marginTop: 20, borderTop: '1px solid #e5e7eb', paddingTop: 16, display: 'grid', gap: 8 }}>
           <div style={{ fontWeight: 900, fontSize: 16 }}>Push уведомления</div>
           <div style={{ fontSize: 13, color: '#4b5563' }}>
-            События: запрос в друзья, приглашение в челлендж, смена позиции в активном челлендже.
+            События: запрос в друзья, приглашение в соревнование, смена позиции в активном соревновании.
           </div>
           <PushNotificationsToggle />
         </div>

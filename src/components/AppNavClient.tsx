@@ -36,6 +36,7 @@ export default function AppNavClient() {
   const [open, setOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
+  const navIconVersion = '20260225';
 
   const navActive = (href: string) => pathname === href || (href !== '/' && pathname?.startsWith(href));
   const bottomItemClass = (active: boolean) => `bottom-nav__item ${active ? 'bottom-nav__item--active' : ''}`;
@@ -148,7 +149,7 @@ export default function AppNavClient() {
 
       <nav className="bottom-nav" role="navigation" aria-label="Нижнее меню">
         <Link className={bottomItemClass(navActive('/dashboard'))} href="/dashboard" aria-label="Тренировка">
-          <img src="/icons/bottom-nav/training.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
+          <img src={`/icons/bottom-nav/training.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" />
           <span className="bottom-nav__label">Тренировка</span>
         </Link>
 
@@ -162,9 +163,9 @@ export default function AppNavClient() {
           <span className="bottom-nav__label">Друзья</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/challenges'))} href="/challenges" aria-label="Челленджи">
-          <img src="/icons/bottom-nav/challenges.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
-          <span className="bottom-nav__label">Челлендж</span>
+        <Link className={bottomItemClass(navActive('/challenges'))} href="/challenges" aria-label="Соревнования">
+          <img src={`/icons/bottom-nav/challenges.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" />
+          <span className="bottom-nav__label">Соревнования</span>
         </Link>
 
         <Link className={bottomItemClass(navActive('/progress'))} href="/progress" aria-label="Сводка">
@@ -201,6 +202,14 @@ export default function AppNavClient() {
                   Админка
                 </Link>
               ) : null}
+
+              <a
+                className="app-drawer__btn"
+                href="mailto:PushupTrackerApp@gmail.com"
+                onClick={() => setOpen(false)}
+              >
+                Обратная связь: PushupTrackerApp@gmail.com
+              </a>
 
               <div style={{ height: 8 }} />
 

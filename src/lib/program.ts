@@ -90,6 +90,56 @@ function diffDays(a: Date, b: Date): number {
   return Math.floor((startOfDay(a).getTime() - startOfDay(b).getTime()) / MS_DAY);
 }
 
+function maxConsecutiveDaysForFrequency(freq: number): number {
+  if (freq >= 5) return 3;
+  return 2;
+}
+
+function normalizeScheduledTrainingDate(args: {
+  candidate: Date;
+  previousDates: Date[];
+  frequencyPerWeek: number;
+}): Date {
+  const freq = clampInt(args.frequencyPerWeek, 1, 6);
+  const maxConsecutive = maxConsecutiveDaysForFrequency(freq);
+  let day = startOfDay(args.candidate);
+
+  while (true) {
+    const prevDays = args.previousDates.map((d) => startOfDay(d).getTime());
+    const prevDaySet = new Set(prevDays);
+    const dayTs = day.getTime();
+
+    if (prevDaySet.has(dayTs)) {
+      day = addDays(day, 1);
+      continue;
+    }
+
+    const sessionsInLast7Days = prevDays.filter((ts) => {
+      const d = diffDays(day, new Date(ts));
+      return d >= 0 && d < 7;
+    }).length;
+
+    if (sessionsInLast7Days >= freq) {
+      day = addDays(day, 1);
+      continue;
+    }
+
+    let consecutive = 1;
+    let probe = addDays(day, -1);
+    while (prevDaySet.has(probe.getTime())) {
+      consecutive += 1;
+      probe = addDays(probe, -1);
+    }
+
+    if (consecutive > maxConsecutive) {
+      day = addDays(day, 1);
+      continue;
+    }
+
+    return withDefaultTime(day);
+  }
+}
+
 function parseProgramStartDate(input?: string | Date | null): Date {
   if (!input) return withDefaultTime(new Date());
   if (input instanceof Date && !Number.isNaN(input.getTime())) return withDefaultTime(input);
@@ -102,6 +152,14 @@ function parseProgramStartDate(input?: string | Date | null): Date {
 
 function dayKey(d: Date): string {
   return startOfDay(d).toISOString().slice(0, 10);
+}
+
+function exerciseTypeLabel(exerciseType: string): string {
+  if (exerciseType === 'pushups') return 'отжимания';
+  if (exerciseType === 'pullups') return 'подтягивания';
+  if (exerciseType === 'crunches') return 'скручивания';
+  if (exerciseType === 'squats') return 'приседания';
+  return exerciseType;
 }
 
 export function deriveAgeFromBirthDate(birthDate?: Date | null): number | null {
@@ -234,7 +292,16 @@ function computeSetTarget(args: {
   const progress = totalSessions <= 1
     ? 1
     : Math.max(0, Math.min(1, (sessionNumber - 1) / (totalSessions - 1)));
-  const firstKeyTarget = Math.max(1, Math.round(baselineMaxReps * 0.75));
+
+  // Start intensity is adaptive: stronger athletes begin closer to their baseline AMRAP.
+  const goalGap = Math.max(0, targetReps - baselineMaxReps);
+  let startRatio = 0.75;
+  if (baselineMaxReps >= 20) startRatio += 0.1;
+  if (baselineMaxReps >= 35) startRatio += 0.07;
+  if (goalGap >= 40) startRatio -= 0.04;
+  startRatio = Math.max(0.75, Math.min(0.95, startRatio));
+
+  const firstKeyTarget = Math.max(1, Math.round(baselineMaxReps * startRatio));
   const periodized = getPeriodizationMultiplier(weekNumber);
 
   const progressiveKeyTarget = firstKeyTarget + (targetReps - firstKeyTarget) * progress;
@@ -307,9 +374,15 @@ function buildProgramDraft(input: ProgramCreateInput) {
 
   let scheduledCursor = start;
   for (let sessionNumber = 1; sessionNumber <= totalSessions; sessionNumber += 1) {
-    const daysFromStart = Math.max(0, diffDays(startOfDay(scheduledCursor), startDay));
+    const candidate = sessionNumber === 1 ? start : scheduledCursor;
+    const scheduledAt = normalizeScheduledTrainingDate({
+      candidate,
+      previousDates: sessions.map((s) => s.scheduledAt),
+      frequencyPerWeek: clean.frequencyPerWeek,
+    });
+
+    const daysFromStart = Math.max(0, diffDays(startOfDay(scheduledAt), startDay));
     const weekNumber = Math.floor(daysFromStart / 7) + 1;
-    const scheduledAt = withDefaultTime(scheduledCursor);
 
     const sets = GOAL_TEMPLATE.percentages.map((_, idx) => {
       const setNumber = idx + 1;
@@ -339,12 +412,16 @@ function buildProgramDraft(input: ProgramCreateInput) {
       targetReps: clean.targetReps,
       sessionNumber,
     });
-    scheduledCursor = addDays(scheduledCursor, restDays);
+    scheduledCursor = addDays(scheduledAt, restDays);
   }
 
   const testSessionNumber = sessions.length + 1;
   const lastTrainingDate = sessions.length ? sessions[sessions.length - 1].scheduledAt : start;
-  const finalTestDate = withDefaultTime(addDays(lastTrainingDate, 2));
+  const finalTestDate = normalizeScheduledTrainingDate({
+    candidate: addDays(lastTrainingDate, 2),
+    previousDates: sessions.map((s) => s.scheduledAt),
+    frequencyPerWeek: clean.frequencyPerWeek,
+  });
   const testWeekNumber = Math.floor(Math.max(0, diffDays(startOfDay(finalTestDate), startDay)) / 7) + 1;
   sessions.push({
     weekNumber: testWeekNumber,
@@ -610,12 +687,14 @@ export async function syncProgramSchedule(programId: string): Promise<{ shiftedD
     where: { id: programId },
     select: {
       id: true,
+      userId: true,
       isActive: true,
       needsRetest: true,
+      exerciseType: true,
       sessions: {
         where: { completed: false },
         orderBy: { scheduledAt: 'asc' },
-        select: { id: true, scheduledAt: true },
+        select: { id: true, scheduledAt: true, shiftedCount: true },
       },
     },
   });
@@ -627,18 +706,61 @@ export async function syncProgramSchedule(programId: string): Promise<{ shiftedD
   const today = startOfDay(now);
   const earliest = program.sessions[0];
   const earliestDay = startOfDay(earliest.scheduledAt);
+  const overdueDays = Math.max(0, diffDays(today, earliestDay));
+  const carriedMissDays = Math.max(0, earliest.shiftedCount) + overdueDays;
 
-  if (earliestDay.getTime() >= today.getTime()) return { shiftedDays: 0, needsRetest: false };
+  if (carriedMissDays > 14) {
+    const stopLink = `/program?stoppedProgram=${encodeURIComponent(program.id)}`;
+    const stopTitle = 'Программа прервана';
+    const stopBody = `Программа по упражнению "${exerciseTypeLabel(program.exerciseType)}" прервана из-за пропуска более 2 недель. Создайте новую, когда будете готовы.`;
 
-  const overdueDays = diffDays(today, earliestDay);
+    await prisma.$transaction(async (tx) => {
+      await tx.trainingProgram.update({
+        where: { id: program.id },
+        data: {
+          needsRetest: true,
+          isActive: false,
+          status: 'inactive',
+        },
+      });
 
-  if (overdueDays > 14) {
-    await prisma.trainingProgram.update({
-      where: { id: program.id },
-      data: { needsRetest: true, status: 'needs_retest' },
+      const alreadySent = await tx.notification.findFirst({
+        where: {
+          userId: program.userId,
+          type: 'program_stopped',
+          link: stopLink,
+        },
+        select: { id: true },
+      });
+
+      if (!alreadySent) {
+        await tx.notification.create({
+          data: {
+            userId: program.userId,
+            type: 'program_stopped',
+            title: stopTitle,
+            body: stopBody,
+            link: stopLink,
+          },
+        });
+      }
     });
+
+    await sendWebPushToUsers(
+      [program.userId],
+      {
+        title: stopTitle,
+        body: stopBody,
+        link: stopLink,
+        tag: `program-stopped-${program.id}`,
+      },
+      'program_reminder',
+    ).catch(() => {});
+
     return { shiftedDays: 0, needsRetest: true };
   }
+
+  if (earliestDay.getTime() >= today.getTime()) return { shiftedDays: 0, needsRetest: false };
 
   await prisma.$transaction(async (tx) => {
     for (const s of program.sessions) {
@@ -646,13 +768,144 @@ export async function syncProgramSchedule(programId: string): Promise<{ shiftedD
         where: { id: s.id },
         data: {
           scheduledAt: addDays(s.scheduledAt, overdueDays),
-          shiftedCount: { increment: 1 },
+          shiftedCount: { increment: overdueDays },
         },
       });
     }
   });
 
   return { shiftedDays: overdueDays, needsRetest: false };
+}
+
+async function sendProgramMissedSessionNotificationsForUser(userId: string) {
+  const now = new Date();
+  const oneHourMs = 60 * 60 * 1000;
+  const oneDayMs = 24 * oneHourMs;
+
+  const overdueSessions = await prisma.trainingSession.findMany({
+    where: {
+      completed: false,
+      scheduledAt: { lt: now },
+      program: {
+        userId,
+        isActive: true,
+      },
+    },
+    orderBy: [{ programId: 'asc' }, { scheduledAt: 'asc' }],
+    select: {
+      id: true,
+      programId: true,
+      scheduledAt: true,
+      shiftedCount: true,
+      program: {
+        select: {
+          id: true,
+          exerciseType: true,
+        },
+      },
+    },
+  });
+
+  if (!overdueSessions.length) return;
+
+  const firstOverdueByProgram = new Map<string, typeof overdueSessions[number]>();
+  for (const s of overdueSessions) {
+    if (!firstOverdueByProgram.has(s.programId)) firstOverdueByProgram.set(s.programId, s);
+  }
+
+  for (const session of firstOverdueByProgram.values()) {
+    const overdueMs = now.getTime() - session.scheduledAt.getTime();
+    const carriedMissDays = Math.max(0, session.shiftedCount) + Math.max(0, diffDays(now, session.scheduledAt));
+    if (overdueMs < oneHourMs) continue;
+
+    const link = `/program/session/${session.id}`;
+    const exerciseName = exerciseTypeLabel(session.program.exerciseType);
+
+    const sentRows = await prisma.notification.findMany({
+      where: {
+        userId,
+        type: {
+          in: ['program_missed_1h', 'program_missed_24h', 'program_stop_warning'],
+        },
+        link,
+      },
+      select: { type: true },
+    });
+    const sentTypes = new Set(sentRows.map((x) => x.type));
+
+    const notifications: Array<{ type: string; title: string; body: string; link: string }> = [];
+    const pushes: Array<{ title: string; body: string; link: string; tag: string }> = [];
+
+    if (overdueMs >= oneHourMs && !sentTypes.has('program_missed_1h')) {
+      notifications.push({
+        type: 'program_missed_1h',
+        title: 'Пропущена плановая тренировка',
+        body: `Прошёл 1 час после плановой тренировки (${exerciseName}). Вы можете выполнить её сейчас.`,
+        link,
+      });
+      pushes.push({
+        title: 'Пропущена тренировка',
+        body: `1 час после плановой тренировки (${exerciseName}).`,
+        link,
+        tag: `program-missed-1h-${session.id}`,
+      });
+    }
+
+    if (overdueMs >= oneDayMs && !sentTypes.has('program_missed_24h')) {
+      notifications.push({
+        type: 'program_missed_24h',
+        title: 'Тренировка по программе не выполнена',
+        body: `Прошли сутки после плановой тренировки (${exerciseName}).`,
+        link,
+      });
+      pushes.push({
+        title: 'Тренировка не выполнена',
+        body: `Прошли сутки после плановой тренировки (${exerciseName}).`,
+        link,
+        tag: `program-missed-24h-${session.id}`,
+      });
+    }
+
+    if (carriedMissDays >= 7 && carriedMissDays < 14 && !sentTypes.has('program_stop_warning')) {
+      notifications.push({
+        type: 'program_stop_warning',
+        title: 'Программа будет прервана через неделю',
+        body: 'Если пропуск плановой тренировки превысит 2 недели, программа автоматически прервётся.',
+        link,
+      });
+      pushes.push({
+        title: 'Риск прерывания программы',
+        body: 'Ещё неделя пропуска и программа будет автоматически прервана.',
+        link,
+        tag: `program-stop-warning-${session.id}`,
+      });
+    }
+
+    if (notifications.length) {
+      await prisma.notification.createMany({
+        data: notifications.map((n) => ({
+          userId,
+          type: n.type,
+          title: n.title,
+          body: n.body,
+          link: n.link,
+        })),
+      });
+    }
+
+    for (const p of pushes) {
+      await sendWebPushToUsers(
+        [userId],
+        {
+          title: p.title,
+          body: p.body,
+          link: p.link,
+          tag: p.tag,
+        },
+        'program_reminder',
+      ).catch(() => {});
+    }
+  }
 }
 
 async function sendProgramRemindersForUser(userId: string) {
@@ -859,10 +1112,16 @@ export async function recalculateUpcomingSessions(programId: string) {
       let nextSessionNumber = Math.max(...ordered.map((x) => x.sessionNumber)) + 1;
       const startDay = startOfDay(program.startDate);
       const maxBeforeTest = targetReps > 1 ? targetReps - 1 : 1;
+      const generatedDates: Date[] = ordered.map((x) => x.scheduledAt);
 
       for (let i = 1; i <= extraTrainingCount; i += 1) {
         const progress = i / (extraTrainingCount + 1);
-        const daysFromStart = Math.max(0, diffDays(startOfDay(scheduledCursor), startDay));
+        const scheduledAt = normalizeScheduledTrainingDate({
+          candidate: scheduledCursor,
+          previousDates: generatedDates,
+          frequencyPerWeek: program.frequencyPerWeek,
+        });
+        const daysFromStart = Math.max(0, diffDays(startOfDay(scheduledAt), startDay));
         const weekNumber = Math.floor(daysFromStart / 7) + 1;
         const keyTarget = clampInt(Math.round(finalTestActual + gap * progress), 1, maxBeforeTest);
         const periodized = getPeriodizationMultiplier(weekNumber);
@@ -884,7 +1143,7 @@ export async function recalculateUpcomingSessions(programId: string) {
             programId: program.id,
             weekNumber,
             sessionNumber: nextSessionNumber,
-            scheduledAt: withDefaultTime(scheduledCursor),
+            scheduledAt,
             isFinalTest: false,
             sets: {
               create: sets,
@@ -892,6 +1151,7 @@ export async function recalculateUpcomingSessions(programId: string) {
           },
         });
 
+        generatedDates.push(scheduledAt);
         nextSessionNumber += 1;
         const restDays = recommendedRecoveryGapDays({
           frequencyPerWeek: program.frequencyPerWeek,
@@ -900,17 +1160,22 @@ export async function recalculateUpcomingSessions(programId: string) {
           targetReps,
           sessionNumber: nextSessionNumber,
         });
-        scheduledCursor = addDays(scheduledCursor, restDays);
+        scheduledCursor = addDays(scheduledAt, restDays);
       }
 
-      const daysFromStart = Math.max(0, diffDays(startOfDay(scheduledCursor), startDay));
+      const finalTestDate = normalizeScheduledTrainingDate({
+        candidate: scheduledCursor,
+        previousDates: generatedDates,
+        frequencyPerWeek: program.frequencyPerWeek,
+      });
+      const daysFromStart = Math.max(0, diffDays(startOfDay(finalTestDate), startDay));
       const testWeekNumber = Math.floor(daysFromStart / 7) + 1;
       await tx.trainingSession.create({
         data: {
           programId: program.id,
           weekNumber: testWeekNumber,
           sessionNumber: nextSessionNumber,
-          scheduledAt: withDefaultTime(scheduledCursor),
+          scheduledAt: finalTestDate,
           isFinalTest: true,
           sets: {
             create: [{
@@ -1009,15 +1274,17 @@ export async function getProgramOverview(userId: string) {
   });
 
   if (activeRows.length) {
+    await sendProgramMissedSessionNotificationsForUser(userId).catch(() => {});
     for (const row of activeRows) {
-      await syncProgramSchedule(row.id);
+      const sync = await syncProgramSchedule(row.id);
+      if (sync.needsRetest) continue;
       await recalculateUpcomingSessions(row.id).catch(() => {});
     }
     await sendProgramRemindersForUser(userId).catch(() => {});
   }
 
   const activePrograms = (await Promise.all(activeRows.map((x) => getProgramById(userId, x.id))))
-    .filter((x): x is NonNullable<typeof x> => Boolean(x));
+    .filter((x): x is NonNullable<typeof x> => Boolean(x && x.isActive));
 
   const historyRows = await prisma.trainingProgram.findMany({
     where: {
@@ -1098,8 +1365,10 @@ export async function startTrainingSession(
 
   if (!initial) throw new ProgramError('Сессия не найдена', 404);
 
-  await syncProgramSchedule(initial.programId);
-  await recalculateUpcomingSessions(initial.programId).catch(() => {});
+  const sync = await syncProgramSchedule(initial.programId);
+  if (!sync.needsRetest) {
+    await recalculateUpcomingSessions(initial.programId).catch(() => {});
+  }
 
   const session = await prisma.trainingSession.findFirst({
     where: { id: sessionId, program: { userId } },
@@ -1116,7 +1385,16 @@ export async function startTrainingSession(
   });
 
   if (!session) throw new ProgramError('Сессия не найдена', 404);
-  if (!session.program.isActive) throw new ProgramError('Программа не активна', 400);
+  if (!session.program.isActive) {
+    if (session.program.needsRetest) {
+      throw new ProgramError(
+        'Программа была прервана из-за длительного пропуска. Создайте новую программу, когда будете готовы продолжить.',
+        409,
+        'PROGRAM_INTERRUPTED',
+      );
+    }
+    throw new ProgramError('Программа не активна', 400);
+  }
   if (session.program.needsRetest) {
     throw new ProgramError('Пропуск более двух недель. Пройдите повторный тест и перегенерируйте программу.', 409, 'RETEST_REQUIRED');
   }
@@ -1155,28 +1433,56 @@ export async function submitTrainingSet(args: {
     },
     select: {
       id: true,
+      setNumber: true,
+      actualReps: true,
       session: {
         select: {
           completed: true,
-          program: { select: { needsRetest: true, isActive: true } },
+          program: { select: { needsRetest: true, isActive: true, exerciseType: true } },
         },
       },
     },
   });
 
   if (!row) throw new ProgramError('Подход не найден', 404);
-  if (!row.session.program.isActive) throw new ProgramError('Программа не активна', 400);
+  if (!row.session.program.isActive) {
+    if (row.session.program.needsRetest) {
+      throw new ProgramError(
+        'Программа была прервана из-за длительного пропуска. Создайте новую программу, когда будете готовы продолжить.',
+        409,
+        'PROGRAM_INTERRUPTED',
+      );
+    }
+    throw new ProgramError('Программа не активна', 400);
+  }
   if (row.session.program.needsRetest) {
     throw new ProgramError('Пропуск более двух недель. Пройдите повторный тест и перегенерируйте программу.', 409, 'RETEST_REQUIRED');
   }
   if (row.session.completed) throw new ProgramError('Сессия уже завершена', 400);
+  if (row.actualReps != null) throw new ProgramError('Этот подход уже записан', 400);
 
-  await prisma.trainingSet.update({
-    where: { id: row.id },
-    data: {
-      actualReps,
-      completedAt: new Date(),
-    },
+  const now = new Date();
+  const dateMidnight = startOfDay(now);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.trainingSet.update({
+      where: { id: row.id },
+      data: {
+        actualReps,
+        completedAt: now,
+      },
+    });
+
+    await tx.workout.create({
+      data: {
+        userId: args.userId,
+        reps: actualReps,
+        date: dateMidnight,
+        time: new Date(now.getTime() + row.setNumber * 1000),
+        exerciseType: row.session.program.exerciseType,
+        trainingSessionId: args.sessionId,
+      },
+    });
   });
 
   return { ok: true };
@@ -1203,7 +1509,16 @@ export async function completeTrainingSession(userId: string, sessionId: string)
     });
 
     if (!session) throw new ProgramError('Сессия не найдена', 404);
-    if (!session.program.isActive) throw new ProgramError('Программа не активна', 400);
+    if (!session.program.isActive) {
+      if (session.program.needsRetest) {
+        throw new ProgramError(
+          'Программа была прервана из-за длительного пропуска. Создайте новую программу, когда будете готовы продолжить.',
+          409,
+          'PROGRAM_INTERRUPTED',
+        );
+      }
+      throw new ProgramError('Программа не активна', 400);
+    }
     if (session.program.needsRetest) {
       throw new ProgramError('Пропуск более двух недель. Пройдите повторный тест и перегенерируйте программу.', 409, 'RETEST_REQUIRED');
     }
@@ -1217,16 +1532,23 @@ export async function completeTrainingSession(userId: string, sessionId: string)
 
     const dateMidnight = startOfDay(now);
 
-    await tx.workout.createMany({
-      data: session.sets.map((s, idx) => ({
-        userId: session.program.userId,
-        reps: s.actualReps || 0,
-        date: dateMidnight,
-        time: new Date(now.getTime() + idx * 1000),
-        exerciseType: session.program.exerciseType,
-        trainingSessionId: session.id,
-      })),
+    const existingWorkoutCount = await tx.workout.count({
+      where: { trainingSessionId: session.id },
     });
+
+    if (existingWorkoutCount < session.sets.length) {
+      const missingSets = session.sets.slice(existingWorkoutCount);
+      await tx.workout.createMany({
+        data: missingSets.map((s, idx) => ({
+          userId: session.program.userId,
+          reps: s.actualReps || 0,
+          date: dateMidnight,
+          time: new Date(now.getTime() + (existingWorkoutCount + idx) * 1000),
+          exerciseType: session.program.exerciseType,
+          trainingSessionId: session.id,
+        })),
+      });
+    }
 
     await tx.trainingSession.update({
       where: { id: session.id },

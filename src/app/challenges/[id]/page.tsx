@@ -117,7 +117,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
   return (
     <div className="app-page" style={{ maxWidth: 900 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <h1 style={{ margin: 0 }}>Челлендж</h1>
+        <h1 style={{ margin: 0 }}>Соревнование</h1>
         <Link href="/challenges" style={{ textDecoration: 'none' }}>← Назад</Link>
       </div>
 
@@ -308,4 +308,3 @@ const tdTiny: React.CSSProperties = {
   whiteSpace: 'nowrap',
   fontVariantNumeric: 'tabular-nums',
 };
-

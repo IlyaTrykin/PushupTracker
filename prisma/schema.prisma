@@ -38,6 +38,7 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   friendFollows           FriendFollow[]         @relation("FriendFollowFollower")
   followedBy              FriendFollow[]         @relation("FriendFollowFriend")
+  workoutReactions        WorkoutReaction[]
   pushSubscriptions       PushSubscription[]
   pushFriendRequest       Boolean                @default(true)
   pushChallengeInvite     Boolean                @default(true)
@@ -57,10 +58,27 @@ model Workout {
   reps         Int
   trainingSessionId String?
   trainingSession   TrainingSession? @relation(fields: [trainingSessionId], references: [id], onDelete: SetNull)
+  reactions         WorkoutReaction[]
 
   @@index([userId, exerciseType, time])
   @@index([userId, time])
   @@index([trainingSessionId])
+}
+
+model WorkoutReaction {
+  id        String   @id @default(cuid())
+  workoutId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workout Workout @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workoutId, userId])
+  @@index([workoutId, updatedAt])
+  @@index([userId])
 }
 
 model Friendship {
