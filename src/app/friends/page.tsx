@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 interface Friend {
   friendshipId: string;
@@ -102,6 +102,8 @@ type Stats = {
   streak: number;
 };
 
+type StatsByExercise = Record<ExerciseType, Stats>;
+
 type SortDir = 'asc' | 'desc';
 type SortKey =
   | 'username'
@@ -113,15 +115,13 @@ type SortKey =
   | 'avgMonth'
   | 'avgYear'
   | 'avgAll'
-  | 'streak'
-  | 'dToday'
-  | 'dAll'
-  | 'dYear'
-  | 'dMonth'
-  | 'dWeek';
+  | 'streak';
+
+type FeedLimit = 5 | 10 | 30 | 50 | 100;
 
 const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats'];
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
+const FEED_LIMIT_OPTIONS: FeedLimit[] = [5, 10, 30, 50, 100];
 
 function normalizeDate(d: Date): string {
   const y = d.getFullYear();
@@ -273,14 +273,13 @@ function calcStats(workouts: Workout[]): Stats {
   };
 }
 
-function deltaMyMinusFriend(my: number, fr: number) {
-  return my - fr; // + => я впереди, - => друг впереди
-}
-
-function deltaStyle(n: number): React.CSSProperties {
-  if (n > 0) return { color: '#16a34a', fontWeight: 900 };
-  if (n < 0) return { color: '#dc2626', fontWeight: 900 };
-  return { color: '#000', fontWeight: 900 };
+function calcStatsByExercise(workouts: Workout[]): StatsByExercise {
+  return {
+    pushups: calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === 'pushups')),
+    pullups: calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === 'pullups')),
+    crunches: calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === 'crunches')),
+    squats: calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === 'squats')),
+  };
 }
 
 function formatTimeHHMM(iso?: string | null) {
@@ -341,7 +340,6 @@ export default function FriendsPage() {
   const [outgoingRequests, setOutgoingRequests] = useState<PendingRequest[]>([]);
   const [me, setMe] = useState<{ id: string; username: string; avatarPath: string | null } | null>(null);
   const [newUsername, setNewUsername] = useState('');
-  const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
 
   // сортировка: null => режим по умолчанию (Ты сверху + друзья по алфавиту)
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
@@ -363,33 +361,9 @@ export default function FriendsPage() {
   const [reactingWorkoutId, setReactingWorkoutId] = useState<string | null>(null);
   const [modalReactionPickerWorkoutId, setModalReactionPickerWorkoutId] = useState<string | null>(null);
   const [feedReactionPickerWorkoutId, setFeedReactionPickerWorkoutId] = useState<string | null>(null);
-
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem('exerciseType');
-      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats') setExerciseType(saved as any);
-    } catch {}
-
-    const onChanged = (e: any) => {
-      // Поддерживаем оба формата события:
-      // 1) detail: 'pushups'
-      // 2) detail: { exerciseType: 'pushups' }
-      const t = (e?.detail?.exerciseType ?? e?.detail) as any;
-      if (t === 'pushups' || t === 'pullups' || t === 'crunches' || t === 'squats') setExerciseType(t);
-    };
-    window.addEventListener('exerciseTypeChanged', onChanged as any);
-    return () => window.removeEventListener('exerciseTypeChanged', onChanged as any);
-  }, []);
-
-  const handleExerciseTypeChange = (next: ExerciseType) => {
-    setExerciseType(next);
-    try {
-      window.localStorage.setItem('exerciseType', next);
-    } catch {}
-    try {
-      window.dispatchEvent(new CustomEvent('exerciseTypeChanged', { detail: { exerciseType: next } }));
-    } catch {}
-  };
+  const [feedLimit, setFeedLimit] = useState<FeedLimit>(5);
+  const [feedViewportHeight, setFeedViewportHeight] = useState<number | null>(null);
+  const feedListRef = useRef<HTMLDivElement | null>(null);
 
   const loadAll = async () => {
     setLoading(true);
@@ -631,29 +605,28 @@ export default function FriendsPage() {
     }
   };
 
-  const myStats = useMemo(() => {
-    const filtered = myWorkouts.filter((w) => toExerciseType(w.exerciseType) === exerciseType);
-    return calcStats(filtered);
-  }, [myWorkouts, exerciseType]);
+  const myStatsAll = useMemo(() => calcStats(myWorkouts), [myWorkouts]);
+  const myStatsByExercise = useMemo(() => calcStatsByExercise(myWorkouts), [myWorkouts]);
 
   const friendRows = useMemo(() => {
     return friends.map((f) => {
       const raw = friendWorkouts[f.username] || [];
-      const filtered = raw.filter((w) => toExerciseType(w.exerciseType) === exerciseType);
-      const stats = calcStats(filtered);
-      return { friend: f, stats };
+      const statsAll = calcStats(raw);
+      const statsByExercise = calcStatsByExercise(raw);
+      return { friend: f, statsAll, statsByExercise };
     });
-  }, [friends, friendWorkouts, exerciseType]);
+  }, [friends, friendWorkouts]);
 
   const meRow = useMemo(() => {
     return {
       key: '__me__',
       username: 'Ты',
       friendshipId: '__me__',
-      stats: myStats,
+      statsAll: myStatsAll,
+      statsByExercise: myStatsByExercise,
       isMe: true,
     };
-  }, [myStats]);
+  }, [myStatsAll, myStatsByExercise]);
 
   // Режим по умолчанию: Ты сверху + друзья по алфавиту
   const defaultSorted = useMemo(() => {
@@ -677,7 +650,7 @@ export default function FriendsPage() {
     ];
 
     const getVal = (row: any, key: SortKey): string | number => {
-      const s: Stats = row.isMe ? myStats : row.stats;
+      const s: Stats = row.statsAll;
       const uname = row.isMe ? 'Ты' : row.friend.username;
 
       switch (key) {
@@ -691,12 +664,6 @@ export default function FriendsPage() {
         case 'avgYear': return s.avgPerDayYear ?? 0;
         case 'avgAll': return s.avgPerDayAll ?? 0;
         case 'streak': return s.streak ?? 0;
-
-        case 'dToday': return deltaMyMinusFriend(myStats.totalToday, s.totalToday);
-        case 'dAll': return deltaMyMinusFriend(myStats.totalAll, s.totalAll);
-        case 'dYear': return deltaMyMinusFriend(myStats.totalYear, s.totalYear);
-        case 'dMonth': return deltaMyMinusFriend(myStats.totalMonth, s.totalMonth);
-        case 'dWeek': return deltaMyMinusFriend(myStats.totalWeek, s.totalWeek);
       }
     };
 
@@ -713,7 +680,7 @@ export default function FriendsPage() {
     });
 
     return all;
-  }, [defaultSorted, sortKey, sortDir, friendRows, myStats, meRow]);
+  }, [defaultSorted, sortKey, sortDir, friendRows, meRow]);
 
   const sortIndicator = (key: SortKey) => (sortKey === key ? (sortDir === 'asc' ? '▲' : '▼') : '');
 
@@ -798,8 +765,8 @@ export default function FriendsPage() {
       return true;
     });
 
-    return unique.slice(0, 5);
-  }, [myWorkouts, me, friends, friendWorkouts]);
+    return unique.slice(0, feedLimit);
+  }, [myWorkouts, me, friends, friendWorkouts, feedLimit]);
 
   const groupedFeedWorkouts = useMemo(
     () =>
@@ -815,7 +782,6 @@ export default function FriendsPage() {
       }, []),
     [latestFeedWorkouts],
   );
-
   const friendCalendarCells = useMemo(() => {
     const year = friendCalendarMonth.getFullYear();
     const month = friendCalendarMonth.getMonth();
@@ -837,7 +803,7 @@ export default function FriendsPage() {
   const todayKey = normalizeDate(new Date());
   const friendWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
   const selectedFriendDayData = friendDetailDay ? selectedFriendDayMap.get(friendDetailDay) ?? null : null;
-  const accentColor = exerciseNumberColor(exerciseType);
+  const accentColor = exerciseNumberColor('pushups');
   const accentCard = useMemo<React.CSSProperties>(
     () => ({
       ...card,
@@ -902,10 +868,26 @@ export default function FriendsPage() {
     if (!exists) setFeedReactionPickerWorkoutId(null);
   }, [feedReactionPickerWorkoutId, latestFeedWorkouts]);
 
+  useLayoutEffect(() => {
+    const wrap = feedListRef.current;
+    if (!wrap) return;
+    if (feedLimit === 5) {
+      const measured = Math.ceil(wrap.scrollHeight);
+      if (measured > 0 && measured !== feedViewportHeight) {
+        setFeedViewportHeight(measured);
+      }
+      return;
+    }
+    if (!feedViewportHeight) {
+      const targetRow = wrap.querySelector<HTMLElement>('[data-feed-row-index="4"]');
+      if (targetRow) {
+        setFeedViewportHeight(targetRow.offsetTop + targetRow.offsetHeight + 2);
+      }
+    }
+  }, [feedLimit, groupedFeedWorkouts, friendWorkoutReactions, feedReactionPickerWorkoutId, feedViewportHeight]);
+
   return (
     <div className="app-page">
-      <h1 style={{ marginBottom: 10 }}>Друзья</h1>
-
       {error ? <p style={{ color: 'red', marginTop: 12 }}>{error}</p> : null}
       {info ? <p style={{ color: 'green', marginTop: 12 }}>{info}</p> : null}
       {loading ? <p style={{ marginTop: 12 }}>Загрузка…</p> : null}
@@ -922,23 +904,6 @@ export default function FriendsPage() {
           >
             {showAddFriendForm ? '−' : '+'}
           </button>
-          <select
-            value={exerciseType}
-            onChange={(e) => handleExerciseTypeChange(e.target.value as ExerciseType)}
-            style={{
-              padding: '8px 10px',
-              borderRadius: 10,
-              border: `1px solid ${hexToRgba(accentColor, 0.45)}`,
-              background: '#fff',
-              color: '#000',
-              fontWeight: 800,
-            }}
-          >
-            <option value="pushups">Отжимания</option>
-            <option value="pullups">Подтягивания</option>
-            <option value="crunches">Скручивания</option>
-            <option value="squats">Приседания</option>
-          </select>
         </div>
 
         {showAddFriendForm ? (
@@ -961,37 +926,29 @@ export default function FriendsPage() {
           <p style={{ marginTop: 12 }}>Пока друзей нет.</p>
         ) : (
           <div className="table-scroll" style={{ marginTop: 12 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1060 }}>
+            <table style={{ width: 'max-content', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#f3f4f6' }}>
-                  <th style={th} className="table-sticky-first table-sticky-first--head">
+                  <th style={{ ...thCompact, ...stickyNameHead }} className="table-sticky-first table-sticky-first--head">
                     <button type="button" onClick={() => toggleSort('username')} style={thBtn}>
                       Имя {sortIndicator('username')}
                     </button>
                   </th>
 
-                  <th style={th}><button type="button" onClick={() => toggleSort('today')} style={thBtn}>Сегодня {sortIndicator('today')}</button></th>
-                  <th style={th}><button type="button" onClick={() => toggleSort('dToday')} style={thBtn}>Δ {sortIndicator('dToday')}</button></th>
+                  <th style={{ ...thCompact, ...stickyExerciseHead }}>Упр</th>
 
-                  <th style={th}><button type="button" onClick={() => toggleSort('all')} style={thBtn}>Всего {sortIndicator('all')}</button></th>
-                  <th style={th}><button type="button" onClick={() => toggleSort('dAll')} style={thBtn}>Δ {sortIndicator('dAll')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('today')} style={thBtn}>Сегодня {sortIndicator('today')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('all')} style={thBtn}>Всего {sortIndicator('all')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('year')} style={thBtn}>Год {sortIndicator('year')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('month')} style={thBtn}>Месяц {sortIndicator('month')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('week')} style={thBtn}>Неделя {sortIndicator('week')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgMonth')} style={thBtn}>Ср/мес {sortIndicator('avgMonth')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgYear')} style={thBtn}>Ср/год {sortIndicator('avgYear')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgAll')} style={thBtn}>Ср/всего {sortIndicator('avgAll')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('streak')} style={thBtn}>Серия {sortIndicator('streak')}</button></th>
 
-                  <th style={th}><button type="button" onClick={() => toggleSort('year')} style={thBtn}>Год {sortIndicator('year')}</button></th>
-                  <th style={th}><button type="button" onClick={() => toggleSort('dYear')} style={thBtn}>Δ {sortIndicator('dYear')}</button></th>
-
-                  <th style={th}><button type="button" onClick={() => toggleSort('month')} style={thBtn}>Тек. месяц {sortIndicator('month')}</button></th>
-                  <th style={th}><button type="button" onClick={() => toggleSort('dMonth')} style={thBtn}>Δ {sortIndicator('dMonth')}</button></th>
-
-                  <th style={th}><button type="button" onClick={() => toggleSort('week')} style={thBtn}>Тек. неделя {sortIndicator('week')}</button></th>
-                  <th style={th}><button type="button" onClick={() => toggleSort('dWeek')} style={thBtn}>Δ {sortIndicator('dWeek')}</button></th>
-
-                  <th style={th}><button type="button" onClick={() => toggleSort('avgMonth')} style={thBtn}>Ср/день мес {sortIndicator('avgMonth')}</button></th>
-                  <th style={th}><button type="button" onClick={() => toggleSort('avgYear')} style={thBtn}>Ср/день год {sortIndicator('avgYear')}</button></th>
-                  <th style={th}><button type="button" onClick={() => toggleSort('avgAll')} style={thBtn}>Ср/день всего {sortIndicator('avgAll')}</button></th>
-                  <th style={th}><button type="button" onClick={() => toggleSort('streak')} style={thBtn}>Серия {sortIndicator('streak')}</button></th>
-
-                  <th style={th}>Следить</th>
-                  <th style={th}>Действия</th>
+                  <th style={thCompact}>Следить</th>
+                  <th style={thCompact}>Действия</th>
                 </tr>
               </thead>
 
@@ -999,75 +956,86 @@ export default function FriendsPage() {
                 {sortedAll.map((row: any) => {
                   const isMe = !!row.isMe;
 
-                  const s: Stats = isMe ? myStats : row.stats;
+                  const sBy: StatsByExercise = row.statsByExercise;
                   const uname = isMe ? 'Ты' : row.friend.username;
-
-                  const dToday = deltaMyMinusFriend(myStats.totalToday, s.totalToday);
-                  const dAll = deltaMyMinusFriend(myStats.totalAll, s.totalAll);
-                  const dYear = deltaMyMinusFriend(myStats.totalYear, s.totalYear);
-                  const dMonth = deltaMyMinusFriend(myStats.totalMonth, s.totalMonth);
-                  const dWeek = deltaMyMinusFriend(myStats.totalWeek, s.totalWeek);
 
                   return (
                     <tr key={isMe ? '__me__' : row.friend.friendshipId}>
-                      <td style={td} className="table-sticky-first">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <AvatarCircle src={isMe ? me?.avatarPath : row.friend.avatarPath} size={28} />
-                          <div style={{ fontWeight: 900 }}>{uname}</div>
-                        </div>
-                        {!isMe ? (
-                          <div style={{ fontSize: 12, opacity: 0.8 }}>
-                            с {new Date(row.friend.since).toLocaleDateString()}
+                      <td style={{ ...tdCompact, ...stickyNameCell }} className="table-sticky-first">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                          <AvatarCircle src={isMe ? me?.avatarPath : row.friend.avatarPath} size={20} />
+                          <div style={{ fontWeight: 900, fontSize: 12, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {uname}
                           </div>
-                        ) : (
-                          <div style={{ fontSize: 12, opacity: 0.8 }}>—</div>
-                        )}
+                        </div>
                       </td>
 
-                      <td style={tdNum}>{s.totalToday}</td>
-                      <td style={tdNum}>
-                        {isMe ? '—' : <span style={deltaStyle(dToday)}>{dToday}</span>}
+                      <td style={{ ...tdCompact, ...stickyExerciseCell }}>
+                        <div style={exerciseIconStack}>
+                          {EXERCISE_ORDER.map((type) => (
+                            <img key={`${uname}-${type}`} src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={tableExerciseIcon} />
+                          ))}
+                        </div>
                       </td>
 
-                      <td style={tdNum}>{s.totalAll}</td>
-                      <td style={tdNum}>
-                        {isMe ? '—' : <span style={deltaStyle(dAll)}>{dAll}</span>}
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-today-${type}`} style={metricValue}>{sBy[type].totalToday}</span>)}
+                        </div>
+                      </td>
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-all-${type}`} style={metricValue}>{sBy[type].totalAll}</span>)}
+                        </div>
+                      </td>
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-year-${type}`} style={metricValue}>{sBy[type].totalYear}</span>)}
+                        </div>
+                      </td>
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-month-${type}`} style={metricValue}>{sBy[type].totalMonth}</span>)}
+                        </div>
+                      </td>
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-week-${type}`} style={metricValue}>{sBy[type].totalWeek}</span>)}
+                        </div>
+                      </td>
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-avgm-${type}`} style={metricValue}>{sBy[type].avgPerDayMonth || '-'}</span>)}
+                        </div>
+                      </td>
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-avgy-${type}`} style={metricValue}>{sBy[type].avgPerDayYear || '-'}</span>)}
+                        </div>
+                      </td>
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-avga-${type}`} style={metricValue}>{sBy[type].avgPerDayAll || '-'}</span>)}
+                        </div>
+                      </td>
+                      <td style={tdNumCompact}>
+                        <div style={metricStack}>
+                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-streak-${type}`} style={metricValue}>{sBy[type].streak}</span>)}
+                        </div>
                       </td>
 
-                      <td style={tdNum}>{s.totalYear}</td>
-                      <td style={tdNum}>
-                        {isMe ? '—' : <span style={deltaStyle(dYear)}>{dYear}</span>}
-                      </td>
-
-                      <td style={tdNum}>{s.totalMonth}</td>
-                      <td style={tdNum}>
-                        {isMe ? '—' : <span style={deltaStyle(dMonth)}>{dMonth}</span>}
-                      </td>
-
-                      <td style={tdNum}>{s.totalWeek}</td>
-                      <td style={tdNum}>
-                        {isMe ? '—' : <span style={deltaStyle(dWeek)}>{dWeek}</span>}
-                      </td>
-
-                      <td style={tdNum}>{s.avgPerDayMonth || '-'}</td>
-                      <td style={tdNum}>{s.avgPerDayYear || '-'}</td>
-                      <td style={tdNum}>{s.avgPerDayAll || '-'}</td>
-                      <td style={tdNum}>{s.streak}</td>
-
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                      <td style={{ ...tdCompact, whiteSpace: 'nowrap' }}>
                         {isMe ? '—' : (
-                          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
-                            <input
-                              type="checkbox"
-                              checked={Boolean(row.friend.isFollowing)}
-                              onChange={(e) => handleToggleFollow(row.friend as Friend, e.target.checked)}
-                            />
-                            Следить
-                          </label>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(row.friend.isFollowing)}
+                            onChange={(e) => handleToggleFollow(row.friend as Friend, e.target.checked)}
+                            aria-label={`Следить за ${row.friend.username}`}
+                          />
                         )}
                       </td>
 
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                      <td style={{ ...tdCompact, whiteSpace: 'nowrap' }}>
                         {isMe ? (
                           '—'
                         ) : (
@@ -1140,12 +1108,43 @@ export default function FriendsPage() {
       ) : null}
 
       <section style={accentCard}>
-        <h2 style={{ marginTop: 0 }}>Лента тренировок</h2>
+        <div style={feedHeaderRow}>
+          <h2 style={{ marginTop: 0, marginBottom: 0 }}>Лента тренировок</h2>
+          <div role="group" aria-label="Показывать тренировок" style={feedLimitToggleRow}>
+            {FEED_LIMIT_OPTIONS.map((limit) => {
+              const active = feedLimit === limit;
+              return (
+                <button
+                  key={`feed-limit-${limit}`}
+                  type="button"
+                  onClick={() => setFeedLimit(limit)}
+                  style={{
+                    ...feedLimitToggleBtn,
+                    ...(active ? feedLimitToggleBtnActive : {}),
+                  }}
+                  aria-pressed={active}
+                >
+                  {limit}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {latestFeedWorkouts.length === 0 ? (
           <p style={{ margin: 0 }}>Пока нет тренировок в ленте.</p>
         ) : (
-          <div style={{ display: 'grid', gap: 9 }}>
+          <div
+            ref={feedListRef}
+            style={{
+              ...feedListWrap,
+              ...(feedLimit > 5 ? {
+                ...feedListWrapScrollable,
+                height: feedViewportHeight ? `${feedViewportHeight}px` : '300px',
+                maxHeight: feedViewportHeight ? `${feedViewportHeight}px` : '300px',
+              } : {}),
+            }}
+          >
             {groupedFeedWorkouts.map((group) => (
               <section key={`feed-day-${group.dayKey}`} style={{ display: 'grid', gap: 6 }}>
                 <div style={{ fontSize: 12, fontWeight: 900, color: '#334155' }}>
@@ -1164,6 +1163,7 @@ export default function FriendsPage() {
                   return (
                     <article
                       key={`feed-${w.id}`}
+                      data-feed-row-index={latestFeedWorkouts.findIndex((x) => x.id === w.id)}
                       onClick={() => setFeedReactionPickerWorkoutId((prev) => (prev === w.id ? null : w.id))}
                       style={{
                         ...feedRowCard,
@@ -1540,17 +1540,17 @@ const calendarWeekdayCell: React.CSSProperties = {
 };
 
 const calendarEmptyCell: React.CSSProperties = {
-  minHeight: 76,
+  minHeight: 'clamp(82px, 10.5vw, 120px)',
   border: '1px dashed #f3f4f6',
   borderRadius: 10,
   background: '#fff',
 };
 
 const calendarDayCell: React.CSSProperties = {
-  minHeight: 76,
+  minHeight: 'clamp(82px, 10.5vw, 120px)',
   border: '1px solid #e5e7eb',
   borderRadius: 10,
-  padding: 6,
+  padding: '6px 6px 6px 3px',
   display: 'grid',
   gap: 4,
   alignContent: 'start',
@@ -1562,7 +1562,7 @@ const friendTotalValue: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 0,
-  fontSize: 11,
+  fontSize: 'clamp(12px, 0.95vw, 17px)',
   lineHeight: 1,
   fontWeight: 900,
   color: '#000',
@@ -1571,8 +1571,10 @@ const friendTotalValue: React.CSSProperties = {
 
 const friendDayValues: React.CSSProperties = {
   display: 'grid',
-  gap: 0,
+  gap: 1,
   alignContent: 'start',
+  justifyItems: 'start',
+  marginLeft: -1,
 };
 
 const legendWrap: React.CSSProperties = {
@@ -1586,25 +1588,25 @@ const legendWrap: React.CSSProperties = {
 const legendItem: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6,
-  fontSize: 12,
+  gap: 'clamp(6px, 0.4vw, 8px)',
+  fontSize: 'clamp(12px, 0.8vw, 14px)',
   fontWeight: 800,
   color: '#000',
 };
 
 const legendIcon: React.CSSProperties = {
-  width: 16,
-  height: 16,
+  width: 'clamp(16px, 1vw, 20px)',
+  height: 'clamp(16px, 1vw, 20px)',
   objectFit: 'contain',
   flex: '0 0 auto',
 };
 
 const friendTotalIcon: React.CSSProperties = {
-  width: 12,
-  height: 12,
+  width: 'clamp(14px, 1.2vw, 22px)',
+  height: 'clamp(14px, 1.2vw, 22px)',
   objectFit: 'contain',
   flex: '0 0 auto',
-  marginLeft: -2,
+  marginLeft: -3,
   marginRight: 2,
 };
 
@@ -1614,6 +1616,53 @@ const friendWorkoutTypeIcon: React.CSSProperties = {
   objectFit: 'contain',
   display: 'block',
   flex: '0 0 auto',
+};
+
+const feedHeaderRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  flexWrap: 'wrap',
+  marginBottom: 8,
+};
+
+const feedLimitToggleRow: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+};
+
+const feedLimitToggleBtn: React.CSSProperties = {
+  minWidth: 34,
+  height: 30,
+  borderRadius: 8,
+  border: '1px solid #cbd5e1',
+  background: '#fff',
+  color: '#0f172a',
+  fontSize: 13,
+  fontWeight: 900,
+  lineHeight: 1,
+  cursor: 'pointer',
+  padding: '0 8px',
+};
+
+const feedLimitToggleBtnActive: React.CSSProperties = {
+  border: '1px solid #2563eb',
+  background: '#2563eb',
+  color: '#fff',
+};
+
+const feedListWrap: React.CSSProperties = {
+  display: 'grid',
+  gap: 9,
+};
+
+const feedListWrapScrollable: React.CSSProperties = {
+  maxHeight: 'clamp(380px, 58vh, 510px)',
+  overflowY: 'auto',
+  overscrollBehavior: 'contain',
+  paddingRight: 3,
 };
 
 const feedTypeIcon: React.CSSProperties = {
@@ -1895,6 +1944,12 @@ const th: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
+const thCompact: React.CSSProperties = {
+  ...th,
+  padding: '6px 4px',
+  fontSize: 11,
+};
+
 const thBtn: React.CSSProperties = {
   border: 'none',
   background: 'transparent',
@@ -1914,9 +1969,79 @@ const td: React.CSSProperties = {
   color: '#000',
 };
 
-const tdNum: React.CSSProperties = {
+const tdCompact: React.CSSProperties = {
   ...td,
-  textAlign: 'right',
+  padding: '5px 4px',
+};
+
+const tdNumCompact: React.CSSProperties = {
+  ...tdCompact,
+  textAlign: 'left',
   fontVariantNumeric: 'tabular-nums',
   color: '#000',
+};
+
+const STICKY_NAME_COL_W = 'clamp(82px, 19vw, 124px)';
+const STICKY_EXERCISE_COL_W = 'clamp(22px, 6vw, 30px)';
+
+const stickyNameCell: React.CSSProperties = {
+  position: 'sticky',
+  left: 0,
+  zIndex: 2,
+  background: '#fff',
+  minWidth: STICKY_NAME_COL_W,
+  width: STICKY_NAME_COL_W,
+  maxWidth: STICKY_NAME_COL_W,
+};
+
+const stickyNameHead: React.CSSProperties = {
+  ...stickyNameCell,
+  zIndex: 4,
+  background: '#f3f4f6',
+};
+
+const stickyExerciseCell: React.CSSProperties = {
+  position: 'sticky',
+  left: STICKY_NAME_COL_W,
+  zIndex: 2,
+  background: '#fff',
+  minWidth: STICKY_EXERCISE_COL_W,
+  width: STICKY_EXERCISE_COL_W,
+  maxWidth: STICKY_EXERCISE_COL_W,
+  textAlign: 'center',
+};
+
+const stickyExerciseHead: React.CSSProperties = {
+  ...stickyExerciseCell,
+  zIndex: 4,
+  background: '#f3f4f6',
+};
+
+const exerciseIconStack: React.CSSProperties = {
+  display: 'grid',
+  gap: 1,
+  justifyItems: 'center',
+  alignContent: 'start',
+};
+
+const tableExerciseIcon: React.CSSProperties = {
+  width: 11,
+  height: 11,
+  objectFit: 'contain',
+  display: 'block',
+};
+
+const metricStack: React.CSSProperties = {
+  display: 'grid',
+  gap: 1,
+  justifyItems: 'start',
+  alignContent: 'start',
+};
+
+const metricValue: React.CSSProperties = {
+  fontSize: 11,
+  lineHeight: 1,
+  fontWeight: 800,
+  color: '#000',
+  whiteSpace: 'nowrap',
 };

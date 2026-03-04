@@ -116,8 +116,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="app-page" style={{ maxWidth: 900 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <h1 style={{ margin: 0 }}>Соревнование</h1>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <Link href="/challenges" style={{ textDecoration: 'none' }}>← Назад</Link>
       </div>
 

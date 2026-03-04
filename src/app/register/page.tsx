@@ -53,8 +53,6 @@ export default function RegisterPage() {
         fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
       }}
     >
-      <h1 style={{ marginBottom: 20 }}>Регистрация</h1>
-
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <label>Email</label>

@@ -162,7 +162,6 @@ export default function AdminUsersClient() {
     <div className="admin-users-wrap">
       <div className="admin-users-head">
         <div>
-          <h1>Админка: пользователи</h1>
           <p>Управление профилями, правами доступа и паролями.</p>
         </div>
         <button className="btn btn-secondary" onClick={load}>Обновить</button>
