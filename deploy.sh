@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SERVER="${SERVER:-ssh.trykin.online}"
+# Default to direct SSH access. You can still override via:
+#   SERVER=tracker.trykin.online ./deploy.sh
+#   SERVER=37.230.147.134 ./deploy.sh
+SERVER="${SERVER:-37.230.147.134}"
 REMOTE_DIR="${REMOTE_DIR:-/home/ilya/pushup-tracker}"
-# Optional. For Cloudflare SSH host aliases in ~/.ssh/config, leave empty.
+# Optional. If omitted, SSH uses your default keys/agent.
 SSH_KEY="${SSH_KEY:-}"
 
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new)

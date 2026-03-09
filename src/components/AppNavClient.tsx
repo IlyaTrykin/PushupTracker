@@ -6,6 +6,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 type Me = { username: string; isAdmin?: boolean; avatarPath?: string | null };
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+type AuthChangedDetail = Me | null;
 
 function resolvePageTitle(pathname: string | null) {
   if (!pathname || pathname === '/') return 'Главная';
@@ -84,7 +85,21 @@ export default function AppNavClient() {
 
   useEffect(() => {
     loadMe();
-  }, []);
+  }, [pathname]);
+
+  useEffect(() => {
+    const onAuthChanged = (event: Event) => {
+      const detail = (event as CustomEvent<AuthChangedDetail>).detail;
+      if (detail && detail.username) {
+        setMe(detail);
+        return;
+      }
+      loadMe();
+    };
+
+    window.addEventListener('authChanged', onAuthChanged as EventListener);
+    return () => window.removeEventListener('authChanged', onAuthChanged as EventListener);
+  }, [pathname]);
 
   useEffect(() => {
     try {
@@ -109,6 +124,7 @@ export default function AppNavClient() {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
     } catch {}
     setMe(null);
+    window.dispatchEvent(new CustomEvent<AuthChangedDetail>('authChanged', { detail: null }));
     window.location.href = '/login';
   };
 

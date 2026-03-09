@@ -6,8 +6,19 @@ export default function RegisterSW() {
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
+    let intervalId: number | undefined;
+    let reloaded = false;
+
+    const reload = () => {
+      if (reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    };
+
     const onLoad = async () => {
       try {
+        navigator.serviceWorker.addEventListener('controllerchange', reload);
+
         const reg = await navigator.serviceWorker.register('/sw.js');
 
         // Если есть waiting — просим активироваться сразу
@@ -28,14 +39,18 @@ export default function RegisterSW() {
         });
 
         // Периодически проверяем обновления SW
-        setInterval(() => reg.update(), 60 * 60 * 1000);
+        intervalId = window.setInterval(() => reg.update(), 60 * 60 * 1000);
       } catch {
         // игнорируем
       }
     };
 
     window.addEventListener('load', onLoad);
-    return () => window.removeEventListener('load', onLoad);
+    return () => {
+      window.removeEventListener('load', onLoad);
+      navigator.serviceWorker.removeEventListener('controllerchange', reload);
+      if (intervalId) window.clearInterval(intervalId);
+    };
   }, []);
 
   return null;

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
+import { filterUsersByChannel } from '@/lib/notification-preferences';
 import { sendWebPushToUsers } from '@/lib/web-push';
 import { sendAdminNewUserRegisteredEmail } from '@/lib/notification-email';
 
@@ -50,28 +51,36 @@ export async function POST(request: Request) {
         const title = 'Новая регистрация пользователя';
         const body = `${user.username} (${user.email})`;
         const link = '/admin/users';
+        const adminIdsForPush = await filterUsersByChannel(adminIds, 'admin_new_user_registered', 'push');
+        const adminIdsForEmail = await filterUsersByChannel(adminIds, 'admin_new_user_registered', 'email');
+        const adminIdsForInApp = Array.from(new Set([...adminIdsForPush, ...adminIdsForEmail]));
 
-        await prisma.notification.createMany({
-          data: adminIds.map((adminId) => ({
-            userId: adminId,
-            type: 'admin_new_user_registered',
+        if (adminIdsForInApp.length) {
+          await prisma.notification.createMany({
+            data: adminIdsForInApp.map((adminId) => ({
+              userId: adminId,
+              type: 'admin_new_user_registered',
+              title,
+              body,
+              link,
+            })),
+          });
+        }
+
+        if (adminIdsForPush.length) {
+          await sendWebPushToUsers(adminIdsForPush, {
             title,
             body,
             link,
-          })),
-        });
-
-        await sendWebPushToUsers(adminIds, {
-          title,
-          body,
-          link,
-          tag: `admin-register-${user.id}`,
-        }).catch((pushError) => {
-          console.error('REGISTER ADMIN PUSH ERROR:', pushError);
-        });
+            tag: `admin-register-${user.id}`,
+          }).catch((pushError) => {
+            console.error('REGISTER ADMIN PUSH ERROR:', pushError);
+          });
+        }
 
         for (const admin of admins) {
           if (!admin.email) continue;
+          if (!adminIdsForEmail.includes(admin.id)) continue;
           await sendAdminNewUserRegisteredEmail({
             to: admin.email,
             adminUsername: admin.username,

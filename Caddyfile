@@ -1,6 +1,15 @@
+{
+  email pushuptrackerapp@gmail.com
+  acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
 tracker.trykin.online {
   encode gzip
   reverse_proxy web:3000
+}
+
+http://37.230.147.134 {
+  redir https://tracker.trykin.online{uri} permanent
 }
 
 http://localhost {
