@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 type UserRow = {
   id: string;
@@ -14,11 +16,11 @@ type UserRow = {
 
 type RowState = UserRow & { dirty?: boolean; saving?: boolean; sendingReset?: boolean; uploadingAvatar?: boolean };
 
-function fmtDate(v?: string | null): string {
+function fmtDate(v: string | null | undefined, locale: string): string {
   if (!v) return '—';
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('ru-RU');
+  return d.toLocaleString(locale);
 }
 
 async function resizeToWebp256(file: File): Promise<Blob> {
@@ -58,6 +60,9 @@ async function resizeToWebp256(file: File): Promise<Blob> {
 }
 
 export default function AdminUsersClient() {
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const [rows, setRows] = useState<RowState[]>([]);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
@@ -75,7 +80,7 @@ export default function AdminUsersClient() {
     const res = await fetch('/api/admin/users', { cache: 'no-store' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error || 'Ошибка загрузки');
+      setError(tt(data.error || 'Ошибка загрузки'));
       setRows([]);
     } else {
       setRows(
@@ -113,7 +118,7 @@ export default function AdminUsersClient() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error || 'Ошибка создания');
+      setError(tt(data.error || 'Ошибка создания'));
       return;
     }
 
@@ -141,7 +146,7 @@ export default function AdminUsersClient() {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error || 'Ошибка сохранения');
+      setError(tt(data.error || 'Ошибка сохранения'));
       setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, saving: false } : x)));
       return;
     }
@@ -150,7 +155,7 @@ export default function AdminUsersClient() {
   }
 
   async function deleteRow(id: string) {
-    if (!window.confirm('Удалить пользователя?')) return;
+    if (!window.confirm(tt('Удалить пользователя?'))) return;
     setError('');
     const res = await fetch('/api/admin/users', {
       method: 'DELETE',
@@ -159,7 +164,7 @@ export default function AdminUsersClient() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error || 'Ошибка удаления');
+      setError(tt(data.error || 'Ошибка удаления'));
       return;
     }
     await load();
@@ -174,7 +179,7 @@ export default function AdminUsersClient() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error || 'Ошибка восстановления');
+      setError(tt(data.error || 'Ошибка восстановления'));
       return;
     }
     await load();
@@ -192,13 +197,13 @@ export default function AdminUsersClient() {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error || 'Не удалось отправить письмо');
+      setError(tt(data.error || 'Не удалось отправить письмо'));
       setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, sendingReset: false } : x)));
       return;
     }
 
     setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, sendingReset: false } : x)));
-    window.alert(`Ссылка для сброса пароля отправлена на ${r.email}`);
+    window.alert(tt(`Ссылка для сброса пароля отправлена на ${r.email}`));
   }
 
   async function uploadAvatar(r: RowState, file: File) {
@@ -208,7 +213,7 @@ export default function AdminUsersClient() {
     try {
       const blob = await resizeToWebp256(file);
       if (blob.size > 300_000) {
-        setError('Аватар получился слишком большим. Выберите более простое изображение.');
+        setError(tt('Аватар получился слишком большим. Выберите более простое изображение.'));
         return;
       }
 
@@ -219,68 +224,68 @@ export default function AdminUsersClient() {
       const res = await fetch('/api/admin/users/avatar', { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Ошибка загрузки аватара');
+        setError(tt(data.error || 'Ошибка загрузки аватара'));
         return;
       }
 
       await load();
     } catch {
-      setError('Не удалось обработать изображение');
+      setError(tt('Не удалось обработать изображение'));
     } finally {
       setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, uploadingAvatar: false } : x)));
     }
   }
 
-  if (loading) return <div style={{ padding: 16 }}>Загрузка...</div>;
+  if (loading) return <div style={{ padding: 16 }}>{tt('Загрузка...')}</div>;
 
   return (
     <div className="admin-users-wrap">
       <div className="admin-users-head">
         <div>
-          <p>Управление профилями, правами доступа и паролями.</p>
-          <p className="muted">На узких экранах таблица прокручивается горизонтально.</p>
+          <p>{tt('Управление профилями, правами доступа и паролями.')}</p>
+          <p className="muted">{tt('На узких экранах таблица прокручивается горизонтально.')}</p>
         </div>
-        <button className="btn btn-secondary" onClick={load}>Обновить</button>
+        <button className="btn btn-secondary" onClick={load}>{tt('Обновить')}</button>
       </div>
 
       {error ? <div className="error-box">{error}</div> : null}
 
       <section className="panel">
-        <h2>Создать пользователя</h2>
+        <h2>{tt('Создать пользователя')}</h2>
         <div className="create-grid">
           <input className="text-input" placeholder="Email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
-          <input className="text-input" placeholder="Username (опционально)" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
+          <input className="text-input" placeholder={tt('Username (опционально)')} value={newUsername} onChange={(e) => setNewUsername(e.target.value)} />
           <input
             className="text-input"
-            placeholder="Пароль (>=6)"
+            placeholder={tt('Пароль (>=6)')}
             type="password"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
           />
           <label className="checkbox-line">
             <input type="checkbox" checked={newIsAdmin} onChange={(e) => setNewIsAdmin(e.target.checked)} />
-            Администратор
+            {tt('Администратор')}
           </label>
         </div>
         <div>
-          <button className="btn" onClick={createUser}>Создать</button>
+          <button className="btn" onClick={createUser}>{tt('Создать')}</button>
         </div>
       </section>
 
       <section className="panel">
-        <h2>Пользователи</h2>
+        <h2>{tt('Пользователи')}</h2>
 
         <div className="users-table-wrap">
           <table className="users-table">
             <thead>
               <tr>
-                <th>Пользователь</th>
-                <th>Аватар</th>
-                <th>Дата создания</th>
+                <th>{tt('Пользователь')}</th>
+                <th>{tt('Аватар')}</th>
+                <th>{tt('Дата создания')}</th>
                 <th>Email</th>
-                <th>Админ</th>
-                <th>Сброс пароля</th>
-                <th>Действия</th>
+                <th>{tt('Админ')}</th>
+                <th>{tt('Сброс пароля')}</th>
+                <th>{tt('Действия')}</th>
               </tr>
             </thead>
             <tbody>
@@ -293,12 +298,12 @@ export default function AdminUsersClient() {
                   <td className="avatar-cell">
                     <div className="avatar-box">
                       {r.avatarPath ? (
-                        <img className="avatar-preview" src={r.avatarPath} alt={`Аватар ${r.username}`} />
+                        <img className="avatar-preview" src={r.avatarPath} alt={`${tt('Аватар')} ${r.username}`} />
                       ) : (
                         <span className="avatar-preview avatar-fallback">{(r.username || 'U').slice(0, 1).toUpperCase()}</span>
                       )}
                       <label className={`btn btn-secondary btn-file${r.deletedAt ? ' btn-disabled' : ''}`}>
-                        {r.uploadingAvatar ? 'Загрузка...' : 'Изменить'}
+                        {r.uploadingAvatar ? tt('Загрузка...') : tt('Изменить')}
                         <input
                           type="file"
                           accept="image/*"
@@ -312,40 +317,40 @@ export default function AdminUsersClient() {
                       </label>
                     </div>
                   </td>
-                  <td>{fmtDate(r.createdAt)}</td>
+                  <td>{fmtDate(r.createdAt, localeTag)}</td>
                   <td>
                     <input className="text-input" value={r.email} onChange={(e) => updateRow(r.id, { email: e.target.value })} />
                   </td>
                   <td>
                     <label className="checkbox-line">
                       <input type="checkbox" checked={r.isAdmin} onChange={(e) => updateRow(r.id, { isAdmin: e.target.checked })} />
-                      {r.isAdmin ? 'Да' : 'Нет'}
+                      {r.isAdmin ? tt('Да') : tt('Нет')}
                     </label>
                   </td>
                   <td>
                     <button className="btn btn-secondary" disabled={!!r.sendingReset || !!r.deletedAt} onClick={() => sendReset(r)}>
-                      {r.sendingReset ? 'Отправка...' : 'Сбросить пароль'}
+                      {r.sendingReset ? tt('Отправка...') : tt('Сбросить пароль')}
                     </button>
                   </td>
                   <td>
                     <div className="actions-cell">
                       <button className="btn" disabled={!r.dirty || !!r.saving} onClick={() => saveRow(r)}>
-                        {r.saving ? 'Сохранение...' : 'Сохранить'}
+                        {r.saving ? tt('Сохранение...') : tt('Сохранить')}
                       </button>
                       {r.deletedAt ? (
-                        <button className="btn btn-secondary" onClick={() => restoreRow(r.id)}>Восстановить</button>
+                        <button className="btn btn-secondary" onClick={() => restoreRow(r.id)}>{tt('Восстановить')}</button>
                       ) : (
-                        <button className="btn btn-danger" onClick={() => deleteRow(r.id)}>Удалить</button>
+                        <button className="btn btn-danger" onClick={() => deleteRow(r.id)}>{tt('Удалить')}</button>
                       )}
                     </div>
-                    <div className="muted">{r.deletedAt ? `Удален: ${fmtDate(r.deletedAt)}` : 'Активен'}</div>
+                    <div className="muted">{r.deletedAt ? `${tt('Удален')}: ${fmtDate(r.deletedAt, localeTag)}` : tt('Активен')}</div>
                   </td>
                 </tr>
               ))}
 
               {!sorted.length ? (
                 <tr>
-                  <td colSpan={7} className="empty-row">Пользователей нет.</td>
+                  <td colSpan={7} className="empty-row">{tt('Пользователей нет.')}</td>
                 </tr>
               ) : null}
             </tbody>

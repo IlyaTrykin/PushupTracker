@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 type TrainingSet = {
   id: string;
@@ -188,15 +190,15 @@ function addCalendarMonths(d: Date, delta: number) {
   return new Date(d.getFullYear(), d.getMonth() + delta, 1);
 }
 
-function formatMonthTitle(d: Date) {
-  const raw = d.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+function formatMonthTitle(d: Date, locale: string) {
+  const raw = d.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-function formatSessionDateTime(iso: string) {
+function formatSessionDateTime(iso: string, locale: string) {
   const d = toDate(iso);
   if (!d) return '—';
-  return d.toLocaleDateString('ru-RU', {
+  return d.toLocaleDateString(locale, {
     weekday: 'short',
     day: '2-digit',
     month: '2-digit',
@@ -206,10 +208,10 @@ function formatSessionDateTime(iso: string) {
   });
 }
 
-function formatSessionDate(iso: string) {
+function formatSessionDate(iso: string, locale: string) {
   const d = toDate(iso);
   if (!d) return '—';
-  return d.toLocaleDateString('ru-RU', {
+  return d.toLocaleDateString(locale, {
     weekday: 'short',
     day: '2-digit',
     month: '2-digit',
@@ -217,10 +219,10 @@ function formatSessionDate(iso: string) {
   });
 }
 
-function formatDayTitle(dayKey: string) {
+function formatDayTitle(dayKey: string, locale: string) {
   const d = toDate(`${dayKey}T00:00:00`);
   if (!d) return dayKey;
-  return d.toLocaleDateString('ru-RU', {
+  return d.toLocaleDateString(locale, {
     weekday: 'long',
     day: '2-digit',
     month: 'long',
@@ -313,6 +315,9 @@ function suggestedDurationWeeks(args: {
 }
 
 export default function ProgramPage() {
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -357,7 +362,7 @@ export default function ProgramPage() {
         sex: (data.profileHints?.sex as any) || prev.sex,
       }));
     } catch (e: any) {
-      setError(e?.message || 'Не удалось загрузить программу');
+      setError(tt(e?.message || 'Не удалось загрузить программу'));
     } finally {
       setLoading(false);
     }
@@ -512,17 +517,17 @@ export default function ProgramPage() {
 
       setShowCreate(false);
       setFormDrafts({});
-      setInfo('Программа создана');
+      setInfo(tt('Программа создана'));
       await load();
     } catch (e: any) {
-      setError(e?.message || 'Не удалось создать программу');
+      setError(tt(e?.message || 'Не удалось создать программу'));
     } finally {
       setBusy(false);
     }
   };
 
   const handleDeactivate = async (programId: string) => {
-    const ok = window.confirm('Прервать эту программу?');
+    const ok = window.confirm(tt('Прервать эту программу?'));
     if (!ok) return;
 
     setBusy(true);
@@ -530,10 +535,10 @@ export default function ProgramPage() {
     setInfo(null);
     try {
       await fetchJson(`/api/program/${programId}/deactivate`, { method: 'POST' });
-      setInfo('Программа прервана');
+      setInfo(tt('Программа прервана'));
       await load();
     } catch (e: any) {
-      setError(e?.message || 'Не удалось деактивировать программу');
+      setError(tt(e?.message || 'Не удалось деактивировать программу'));
     } finally {
       setBusy(false);
     }
@@ -598,7 +603,7 @@ export default function ProgramPage() {
     return out;
   }, [calendarMonth, sessionsByDay]);
 
-  const calendarWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const calendarWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
   const todayKey = dayKeyFromIso(new Date().toISOString());
   const selectedDaySessions = selectedDayKey
     ? (sessionsByDay.get(selectedDayKey)?.sessions || []).filter((session) => !session.completed)
@@ -608,21 +613,21 @@ export default function ProgramPage() {
     <div className="app-page" style={{ maxWidth: 920 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={btnPrimary} onClick={beginCreate}>
-          Новая программа тренировок
+          {tt('Новая программа тренировок')}
         </button>
       </div>
 
       {error ? <p style={{ color: '#dc2626' }}>{error}</p> : null}
       {info ? <p style={{ color: '#16a34a' }}>{info}</p> : null}
-      {loading ? <p>Загрузка…</p> : null}
+      {loading ? <p>{tt('Загрузка…')}</p> : null}
 
       {!loading ? (
         <section style={card}>
-          <h2 style={{ marginTop: 0 }}>Следующая тренировка</h2>
+          <h2 style={{ marginTop: 0 }}>{tt('Следующая тренировка')}</h2>
           {activePrograms.length === 0 ? (
-            <div style={{ color: '#6b7280' }}>Активных программ нет. Когда будете готовы, начните новую программу.</div>
+            <div style={{ color: '#6b7280' }}>{tt('Активных программ нет. Когда будете готовы, начните новую программу.')}</div>
           ) : !nextSession ? (
-            <div style={{ color: '#6b7280' }}>Предстоящих тренировок не найдено.</div>
+            <div style={{ color: '#6b7280' }}>{tt('Предстоящих тренировок не найдено.')}</div>
           ) : (
             <div style={{ ...programCard, padding: '8px 10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -635,11 +640,11 @@ export default function ProgramPage() {
                     <span style={{ fontWeight: 900 }}>{renderSessionSetPlan(nextSession)}</span>
                   </div>
                   <div style={{ fontSize: 13, color: '#374151' }}>
-                    {formatSessionDate(nextSession.scheduledAt)}
+                    {formatSessionDate(nextSession.scheduledAt, localeTag)}
                   </div>
                 </div>
                 <Link href={`/program/session/${nextSession.id}`} style={{ ...btnPrimaryLink, padding: '8px 10px' }}>
-                  Приступить
+                  {tt('Приступить')}
                 </Link>
               </div>
             </div>
@@ -649,19 +654,19 @@ export default function ProgramPage() {
 
       {!loading ? (
         <section style={card}>
-          <h2 style={{ marginTop: 0 }}>Календарь программ</h2>
+          <h2 style={{ marginTop: 0 }}>{tt('Календарь программ')}</h2>
           {sessionRows.length === 0 ? (
-            <div style={{ color: '#6b7280' }}>Пока нет запланированных тренировок.</div>
+            <div style={{ color: '#6b7280' }}>{tt('Пока нет запланированных тренировок.')}</div>
           ) : (
             <div style={calendarWrap}>
               <div style={calendarNavWrap}>
-                <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(calendarMonth)}</div>
+                <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(calendarMonth, localeTag)}</div>
                 <div style={calendarNavButtons}>
                   <button type="button" style={btnSecondary} onClick={() => setCalendarMonth((d) => addCalendarMonths(d, -1))}>
-                    Предыдущий
+                    {tt('Предыдущий')}
                   </button>
                   <button type="button" style={btnSecondary} onClick={() => setCalendarMonth((d) => addCalendarMonths(d, 1))}>
-                    Следующий
+                    {tt('Следующий')}
                   </button>
                 </div>
               </div>
@@ -715,7 +720,7 @@ export default function ProgramPage() {
                         key={cell.key}
                         onClick={() => setSelectedDayKey(cell.key)}
                         style={{ ...calendarDayButton, ...dayStyle }}
-                        title="Открыть тренировки этого дня"
+                        title={tt('Открыть тренировки этого дня')}
                       >
                         {dayContent}
                       </button>
@@ -736,8 +741,8 @@ export default function ProgramPage() {
               <div style={calendarLegendWrap}>
                 {EXERCISE_ORDER.map((exerciseType) => (
                   <div key={exerciseType} style={calendarLegendItem}>
-                    <img src={exerciseFeedIcon(exerciseType)} alt={exerciseLabel(exerciseType)} style={calendarLegendIcon} />
-                    <span>{exerciseLabel(exerciseType)}</span>
+                    <img src={exerciseFeedIcon(exerciseType)} alt={tt(exerciseLabel(exerciseType))} style={calendarLegendIcon} />
+                    <span>{tt(exerciseLabel(exerciseType))}</span>
                   </div>
                 ))}
               </div>
@@ -748,9 +753,9 @@ export default function ProgramPage() {
 
       {!loading ? (
         <section style={card}>
-          <h2 style={{ marginTop: 0 }}>Активные программы</h2>
+          <h2 style={{ marginTop: 0 }}>{tt('Активные программы')}</h2>
           {activePrograms.length === 0 ? (
-            <div style={{ color: '#6b7280' }}>Активных программ пока нет.</div>
+            <div style={{ color: '#6b7280' }}>{tt('Активных программ пока нет.')}</div>
           ) : (
             <div style={{ display: 'grid', gap: 10 }}>
               {activePrograms.map((program) => (
@@ -765,24 +770,24 @@ export default function ProgramPage() {
                           {exerciseCode(program.exerciseType)}
                         </span>
                         <div style={{ fontWeight: 900, fontSize: 18 }}>
-                          {exerciseLabel(program.exerciseType)}
+                          {tt(exerciseLabel(program.exerciseType))}
                         </div>
                       </div>
                       <div style={{ marginTop: 4, color: '#111827' }}>
-                        База: <b>{program.baselineMaxReps}</b> · Цель: <b>{program.targetReps}</b> · Длительность: <b>{program.durationWeeks}</b> нед
+                        {tt('База')}: <b>{program.baselineMaxReps}</b> · {tt('Цель')}: <b>{program.targetReps}</b> · {tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')}
                       </div>
                       <div style={{ marginTop: 4, color: '#111827' }}>
-                        Темп: <b>{program.frequencyPerWeek}</b>/нед · Прогресс: <b>{program.stats.completionPercent}%</b>
+                        {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')} · {tt('Прогресс')}: <b>{program.stats.completionPercent}%</b>
                       </div>
                       {program.stats.nextSession ? (
                         <div style={{ marginTop: 4, color: '#111827' }}>
-                          Ближайшая: <b>{formatSessionDateTime(program.stats.nextSession.scheduledAt)}</b>
+                          {tt('Ближайшая')}: <b>{formatSessionDateTime(program.stats.nextSession.scheduledAt, localeTag)}</b>
                         </div>
                       ) : null}
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <Link href={`/program/${program.id}`} style={btnLink}>
-                        Открыть программу
+                        {tt('Открыть программу')}
                       </Link>
                       <button
                         type="button"
@@ -790,15 +795,15 @@ export default function ProgramPage() {
                         onClick={() => handleDeactivate(program.id)}
                         disabled={busy}
                       >
-                        Прервать
+                        {tt('Прервать')}
                       </button>
                     </div>
                   </div>
                   {program.warnings?.length ? (
                     <div style={{ marginTop: 8, padding: 10, borderRadius: 10, border: '1px solid #f59e0b', background: '#fffbeb' }}>
-                      <div style={{ fontWeight: 900, marginBottom: 6 }}>Внимание</div>
+                      <div style={{ fontWeight: 900, marginBottom: 6 }}>{tt('Внимание')}</div>
                       {program.warnings.map((w, i) => (
-                        <div key={i} style={{ fontSize: 14, marginTop: i ? 4 : 0 }}>{w}</div>
+                        <div key={i} style={{ fontSize: 14, marginTop: i ? 4 : 0 }}>{tt(w)}</div>
                       ))}
                     </div>
                   ) : null}
@@ -811,26 +816,26 @@ export default function ProgramPage() {
 
       {!loading ? (
         <section style={card}>
-          <h2 style={{ marginTop: 0 }}>История программ</h2>
+          <h2 style={{ marginTop: 0 }}>{tt('История программ')}</h2>
           {history.length === 0 ? (
-            <div>Пока нет завершённых или отключённых программ.</div>
+            <div>{tt('Пока нет завершённых или отключённых программ.')}</div>
           ) : (
             <div style={{ display: 'grid', gap: 10 }}>
               {history.map((row) => (
                 <div key={row.id} style={historyCard}>
                   <div style={{ fontWeight: 900 }}>
-                    {exerciseLabel(row.exerciseType)} · цель: {row.targetReps ?? '—'}
+                    {tt(exerciseLabel(row.exerciseType))} · {tt('цель')}: {row.targetReps ?? '—'}
                   </div>
                   <div style={{ fontSize: 13, color: '#374151', marginTop: 2 }}>
-                    {new Date(row.createdAt).toLocaleDateString('ru-RU')} · статус: {row.status}
+                    {new Date(row.createdAt).toLocaleDateString(localeTag)} · {tt('статус')}: {tt(row.status)}
                   </div>
                   <div style={{ fontSize: 13, color: '#374151', marginTop: 2 }}>
-                    Начато: {new Date(row.startedAt).toLocaleDateString('ru-RU')}
+                    {tt('Начато')}: {new Date(row.startedAt).toLocaleDateString(localeTag)}
                     {' · '}
-                    Завершено: {row.finishedAt ? new Date(row.finishedAt).toLocaleDateString('ru-RU') : '—'}
+                    {tt('Завершено')}: {row.finishedAt ? new Date(row.finishedAt).toLocaleDateString(localeTag) : '—'}
                   </div>
                   <div style={{ marginTop: 6, fontSize: 14 }}>
-                    Выполнено: {row.completedSessions}/{row.totalSessions} ({row.completionPercent}%)
+                    {tt('Выполнено')}: {row.completedSessions}/{row.totalSessions} ({row.completionPercent}%)
                   </div>
                 </div>
               ))}
@@ -843,12 +848,12 @@ export default function ProgramPage() {
         <div style={modalBackdrop} onClick={() => setSelectedDayKey(null)}>
           <section style={modalCard} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <h2 style={{ marginTop: 0, marginBottom: 0 }}>{formatDayTitle(selectedDayKey)}</h2>
-              <button type="button" style={btnSecondary} onClick={() => setSelectedDayKey(null)}>Закрыть</button>
+              <h2 style={{ marginTop: 0, marginBottom: 0 }}>{formatDayTitle(selectedDayKey, localeTag)}</h2>
+              <button type="button" style={btnSecondary} onClick={() => setSelectedDayKey(null)}>{tt('Закрыть')}</button>
             </div>
             <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
               {selectedDaySessions.length === 0 ? (
-                <div style={{ color: '#6b7280' }}>На эту дату нет запланированных тренировок.</div>
+                <div style={{ color: '#6b7280' }}>{tt('На эту дату нет запланированных тренировок.')}</div>
               ) : null}
               {selectedDaySessions
                 .slice()
@@ -860,25 +865,25 @@ export default function ProgramPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span
                             style={{ ...exercisePictogram, background: exerciseColor(session.exerciseType) }}
-                            title={exerciseLabel(session.exerciseType)}
+                            title={tt(exerciseLabel(session.exerciseType))}
                           >
                             {exerciseCode(session.exerciseType)}
                           </span>
-                          <span style={{ fontWeight: 900 }}>{exerciseLabel(session.exerciseType)}</span>
+                          <span style={{ fontWeight: 900 }}>{tt(exerciseLabel(session.exerciseType))}</span>
                         </div>
                         <div style={{ marginTop: 4, color: '#111827' }}>
-                          {formatSessionDateTime(session.scheduledAt)} · тренировка #{session.sessionNumber}
-                          {session.isFinalTest ? ' · финальный тест' : ''}
+                          {formatSessionDateTime(session.scheduledAt, localeTag)} · {tt('тренировка')} #{session.sessionNumber}
+                          {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
                         </div>
                         <div style={{ marginTop: 4, color: '#111827' }}>
-                          План: <b>{renderSessionSetPlan(session)}</b>
+                          {tt('План')}: <b>{renderSessionSetPlan(session)}</b>
                         </div>
                       </div>
                       {session.completed ? (
-                        <span style={doneBadge}>Выполнено</span>
+                        <span style={doneBadge}>{tt('Выполнено')}</span>
                       ) : (
                         <Link href={`/program/session/${session.id}`} style={btnPrimaryLink}>
-                          Приступить
+                          {tt('Приступить')}
                         </Link>
                       )}
                     </div>
@@ -892,28 +897,28 @@ export default function ProgramPage() {
       {showCreate ? (
         <div style={modalBackdrop} onClick={cancelCreate}>
           <section style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginTop: 0 }}>Новая программа тренировок</h2>
-            <div style={{ marginBottom: 10, color: '#4b5563' }}>Шаг {step} из 4</div>
+            <h2 style={{ marginTop: 0 }}>{tt('Новая программа тренировок')}</h2>
+            <div style={{ marginBottom: 10, color: '#4b5563' }}>{tt(`Шаг ${step} из 4`)}</div>
 
             {step === 1 ? (
               <div style={{ display: 'grid', gap: 8 }}>
-                <label>1) Выберите упражнение</label>
+                <label>{tt('1) Выберите упражнение')}</label>
                 <select
                   value={form.exerciseType}
                   onChange={(e) => setForm((f) => ({ ...f, exerciseType: e.target.value as any }))}
                   style={inputStyle}
                 >
-                  <option value="pushups">Отжимания</option>
-                  <option value="pullups">Подтягивания</option>
-                  <option value="crunches">Скручивания</option>
-                  <option value="squats">Приседания</option>
+                  <option value="pushups">{tt('Отжимания')}</option>
+                  <option value="pullups">{tt('Подтягивания')}</option>
+                  <option value="crunches">{tt('Скручивания')}</option>
+                  <option value="squats">{tt('Приседания')}</option>
                 </select>
               </div>
             ) : null}
 
             {step === 2 ? (
               <div style={{ display: 'grid', gap: 8 }}>
-                <label>2) Базовый тест (AMRAP)</label>
+                <label>{tt('2) Базовый тест (AMRAP)')}</label>
                 <input
                   type="number"
                   min={1}
@@ -927,7 +932,7 @@ export default function ProgramPage() {
 
             {step === 3 ? (
               <div style={{ display: 'grid', gap: 8 }}>
-                <label>3) Целевое значение повторений в одном подходе</label>
+                <label>{tt('3) Целевое значение повторений в одном подходе')}</label>
                 <input
                   type="number"
                   min={Math.max(1, resolvedForm.baselineMaxReps)}
@@ -941,11 +946,11 @@ export default function ProgramPage() {
 
             {step === 4 ? (
               <div style={{ display: 'grid', gap: 10 }}>
-                <label>4) Настройки плана</label>
+                <label>{tt('4) Настройки плана')}</label>
 
                 <div style={grid2}>
                   <div>
-                    <div style={{ marginBottom: 4 }}>Темп тренировок (в неделю)</div>
+                    <div style={{ marginBottom: 4 }}>{tt('Темп тренировок (в неделю)')}</div>
                     <input
                       type="number"
                       min={1}
@@ -957,7 +962,7 @@ export default function ProgramPage() {
                       }}
                       style={inputStyle}
                     />
-                    <div style={hint}>Рекомендовано: {recommendedFrequency}/нед</div>
+                    <div style={hint}>{tt('Рекомендовано')}: {recommendedFrequency}/{tt('нед')}</div>
                     {form.frequencyPerWeek !== recommendedFrequency ? (
                       <button
                         type="button"
@@ -967,13 +972,13 @@ export default function ProgramPage() {
                           applyNumericField('frequencyPerWeek', recommendedFrequency);
                         }}
                       >
-                        Вернуть рекомендованный темп
+                        {tt('Вернуть рекомендованный темп')}
                       </button>
                     ) : null}
                   </div>
 
                   <div>
-                    <div style={{ marginBottom: 4 }}>Длительность программы (недели)</div>
+                    <div style={{ marginBottom: 4 }}>{tt('Длительность программы (недели)')}</div>
                     <input
                       type="number"
                       min={4}
@@ -985,7 +990,7 @@ export default function ProgramPage() {
                       }}
                       style={inputStyle}
                     />
-                    <div style={hint}>Рекомендовано: {recommendedDuration} недель</div>
+                    <div style={hint}>{tt('Рекомендовано')}: {recommendedDuration} {tt('недель')}</div>
                     {form.durationWeeks !== recommendedDuration ? (
                       <button
                         type="button"
@@ -995,7 +1000,7 @@ export default function ProgramPage() {
                           applyNumericField('durationWeeks', recommendedDuration);
                         }}
                       >
-                        Вернуть рекомендованную длительность
+                        {tt('Вернуть рекомендованную длительность')}
                       </button>
                     ) : null}
                   </div>
@@ -1003,7 +1008,7 @@ export default function ProgramPage() {
 
                 <div style={grid2}>
                   <div>
-                    <div style={{ marginBottom: 4 }}>Возраст</div>
+                    <div style={{ marginBottom: 4 }}>{tt('Возраст')}</div>
                     <input
                       type="number"
                       min={12}
@@ -1013,11 +1018,11 @@ export default function ProgramPage() {
                       onChange={(e) => setNumericField('ageYears', e.target.value)}
                       style={{ ...inputStyle, opacity: profileHints.ageYears != null ? 0.7 : 1 }}
                     />
-                    {profileHints.ageYears != null ? <div style={hint}>Подставлено из профиля</div> : null}
+                    {profileHints.ageYears != null ? <div style={hint}>{tt('Подставлено из профиля')}</div> : null}
                   </div>
 
                   <div>
-                    <div style={{ marginBottom: 4 }}>Вес (кг)</div>
+                    <div style={{ marginBottom: 4 }}>{tt('Вес (кг)')}</div>
                     <input
                       type="number"
                       min={30}
@@ -1027,22 +1032,22 @@ export default function ProgramPage() {
                       onChange={(e) => setNumericField('weightKg', e.target.value)}
                       style={{ ...inputStyle, opacity: profileHints.weightKg != null ? 0.7 : 1 }}
                     />
-                    {profileHints.weightKg != null ? <div style={hint}>Подставлено из профиля</div> : null}
+                    {profileHints.weightKg != null ? <div style={hint}>{tt('Подставлено из профиля')}</div> : null}
                   </div>
                 </div>
               </div>
             ) : null}
 
             <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button type="button" style={btnSecondary} onClick={cancelCreate} disabled={busy}>Отмена</button>
+              <button type="button" style={btnSecondary} onClick={cancelCreate} disabled={busy}>{tt('Отмена')}</button>
               {step > 1 ? (
-                <button type="button" style={btnSecondary} onClick={() => setStep((s) => s - 1)} disabled={busy}>Назад</button>
+                <button type="button" style={btnSecondary} onClick={() => setStep((s) => s - 1)} disabled={busy}>{tt('Назад')}</button>
               ) : null}
               {step < 4 ? (
-                <button type="button" style={btnPrimary} onClick={() => setStep((s) => s + 1)} disabled={!canNextStep || busy}>Далее</button>
+                <button type="button" style={btnPrimary} onClick={() => setStep((s) => s + 1)} disabled={!canNextStep || busy}>{tt('Далее')}</button>
               ) : (
                 <button type="button" style={btnPrimary} onClick={submitCreate} disabled={!canNextStep || busy}>
-                  Сгенерировать программу
+                  {tt('Сгенерировать программу')}
                 </button>
               )}
             </div>

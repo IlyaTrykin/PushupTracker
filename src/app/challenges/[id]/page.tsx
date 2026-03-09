@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 type ProgressRow = { userId: string; username: string; total: number; creditedDays?: number; totalDays?: number; qualifiedSets?: number; qualifiedReps?: number };
 
@@ -48,6 +50,9 @@ function pct(total: number, target: number) {
 }
 
 export default function ChallengeDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const [id, setId] = useState<string>('');
   const [me, setMe] = useState<{ id: string; username: string } | null>(null);
 
@@ -117,11 +122,11 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
   return (
     <div className="app-page" style={{ maxWidth: 900 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Link href="/challenges" style={{ textDecoration: 'none' }}>← Назад</Link>
+        <Link href="/challenges" style={{ textDecoration: 'none' }}>← {tt('Назад')}</Link>
       </div>
 
       {error && <p style={{ color: 'red' }}>{error}</p>}
-      {loading && <p>Загрузка…</p>}
+      {loading && <p>{tt('Загрузка…')}</p>}
 
       {challenge && meta && (
         <section style={card}>
@@ -129,21 +134,21 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
             <div>
               <div style={{ fontWeight: 900, fontSize: 18 }}>{challenge.name}</div>
               <div style={{ color: '#6b7280', fontSize: 12 }}>
-                {meta.start.toLocaleDateString()} → {meta.end.toLocaleDateString()} · создатель: {challenge.creator.username}
+                {meta.start.toLocaleDateString(localeTag)} → {meta.end.toLocaleDateString(localeTag)} · {tt('создатель')}: {challenge.creator.username}
               </div>
               <div style={{ marginTop: 8, fontSize: 12 }}>
-                Статус: <span style={{ color: meta.st.color, fontWeight: 800 }}>{meta.st.text}</span>
+                {tt('Статус')}: <span style={{ color: meta.st.color, fontWeight: 800 }}>{tt(meta.st.text)}</span>
                 {' · '}
-                Осталось дней: <b>{meta.daysLeft}</b>
+                {tt('Осталось дней')}: <b>{meta.daysLeft}</b>
               </div>
               <div style={{ marginTop: 6, fontSize: 12 }}>
-                Режим: <b>{challenge.mode === 'most' ? 'кто больше' : `цель ${challenge.targetReps}`}</b>
+                {tt('Режим')}: <b>{challenge.mode === 'most' ? tt('кто больше') : `${tt('цель')} ${challenge.targetReps}`}</b>
               </div>
             </div>
 
             {leader && (
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>Лидер</div>
+                <div style={{ fontSize: 12, color: '#6b7280' }}>{tt('Лидер')}</div>
                 <div style={{ fontWeight: 900 }}>{leader.username}</div>
                 <div style={{ fontWeight: 900 }}>{leader.total}</div>
               </div>
@@ -154,24 +159,24 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
 
       <section style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <h2 style={{ margin: 0 }}>Прогресс</h2>
-          <button type="button" onClick={() => id && load(id)} style={btnSecondary}>Обновить</button>
+          <h2 style={{ margin: 0 }}>{tt('Прогресс')}</h2>
+          <button type="button" onClick={() => id && load(id)} style={btnSecondary}>{tt('Обновить')}</button>
         </div>
 
         {progress.length === 0 ? (
-          <p style={{ marginTop: 12 }}>Пока нет данных.</p>
+          <p style={{ marginTop: 12 }}>{tt('Пока нет данных.')}</p>
         ) : (
           <div style={{ overflowX: 'auto', marginTop: 12 }}>
             <table style={{ width: 'max-content', borderCollapse: 'collapse', tableLayout: 'auto' }}>
               <thead>
                 <tr style={{ background: '#f3f4f6' }}>
                   <th style={thTiny}>#</th>
-                  <th style={thBase}>Участник</th>
-                  <th style={thNum}>{challenge?.mode === 'daily_min' ? 'Дни' : challenge?.mode === 'sets_min' ? 'Подходы' : 'Сумма'}</th>
-                  {challenge?.mode === 'sets_min' ? <th style={thNum}>Повторы (зачт.)</th> : null}
+                  <th style={thBase}>{tt('Участник')}</th>
+                  <th style={thNum}>{challenge?.mode === 'daily_min' ? tt('Дни') : challenge?.mode === 'sets_min' ? tt('Подходы') : tt('Сумма')}</th>
+                  {challenge?.mode === 'sets_min' ? <th style={thNum}>{tt('Повторы (зачт.)')}</th> : null}
                   <th style={thNum}>%</th>
-                  <th style={thNum}>Осталось</th>
-                  <th style={{ ...thClamp2, textAlign: 'right' }}>Дельта (я vs он)</th>
+                  <th style={thNum}>{tt('Осталось')}</th>
+                  <th style={{ ...thClamp2, textAlign: 'right' }}>{tt('Дельта (я vs он)')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -201,7 +206,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                     <tr key={p.userId}>
                       <td style={tdTiny}>{idx + 1}</td>
                       <td style={tdBase}>
-                        <b style={{ color: idx === 0 ? '#d4af37' : (idx === 1 ? '#c0c0c0' : (idx === 2 ? '#cd7f32' : '#000')) }}>{p.username}</b>{isMe ? ' (я)' : ''}
+                        <b style={{ color: idx === 0 ? '#d4af37' : (idx === 1 ? '#c0c0c0' : (idx === 2 ? '#cd7f32' : '#000')) }}>{p.username}</b>{isMe ? ` ${tt('(я)')}` : ''}
                       </td>
                                             <td style={tdNum}>
                         {challenge?.mode === 'daily_min'
@@ -228,7 +233,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
 
             {challenge?.mode === 'target' && typeof challenge.targetReps === 'number' && (
               <p style={{ marginTop: 10, color: '#6b7280', fontSize: 12 }}>
-                Для режима “цель” % считается как total / targetReps.
+                {tt('Для режима “цель” % считается как total / targetReps.')}
               </p>
             )}
           </div>

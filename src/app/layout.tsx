@@ -2,9 +2,12 @@ import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import Script from 'next/script';
 import './globals.css';
+import { AuthProvider } from '@/auth/provider';
 import AppNav from '@/components/AppNav';
 import RegisterSW from '@/components/RegisterSW';
 import ScreenWakeLock from '@/components/ScreenWakeLock';
+import { LocaleProvider } from '@/i18n/provider';
+import { getRequestLocale } from '@/i18n/server';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -69,7 +72,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: 'Pushup Tracker',
-  description: 'Трекер тренировок и соревнований с друзьями',
+  description: 'Workout and challenge tracker with friends',
   manifest: '/manifest.webmanifest',
   icons: {
     icon: ['/icons/favicon-32.png', '/icons/favicon-16.png', '/icons/icon-192.png'],
@@ -90,21 +93,27 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getRequestLocale();
+
   return (
-    <html lang="ru">
+    <html lang={locale}>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <Script id="sw-recovery" strategy="beforeInteractive">
-          {swRecoveryScript}
-        </Script>
-        <ScreenWakeLock />
-        <RegisterSW />
-        <AppNav />
-        <div className="app-shell"><div className="app-content">{children}</div></div>
+        <LocaleProvider initialLocale={locale}>
+          <AuthProvider>
+            <Script id="sw-recovery" strategy="beforeInteractive">
+              {swRecoveryScript}
+            </Script>
+            <ScreenWakeLock />
+            <RegisterSW />
+            <AppNav />
+            <div className="app-shell"><div className="app-content">{children}</div></div>
+          </AuthProvider>
+        </LocaleProvider>
       </body>
     </html>
   );

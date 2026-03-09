@@ -3,28 +3,31 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/auth/provider';
+import LanguageSelect from '@/components/LanguageSelect';
+import { type Locale, normalizeLocale } from '@/i18n/locale';
+import { useI18n } from '@/i18n/provider';
 
-type Me = { username: string; isAdmin?: boolean; avatarPath?: string | null };
+type Me = { username: string; isAdmin?: boolean; avatarPath?: string | null; language?: string };
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
-type AuthChangedDetail = Me | null;
 
-function resolvePageTitle(pathname: string | null) {
-  if (!pathname || pathname === '/') return 'Главная';
-  if (pathname.startsWith('/dashboard')) return 'Тренировка';
-  if (pathname.startsWith('/program/session/')) return 'Тренировка по программе';
-  if (pathname.startsWith('/program')) return 'Программа';
-  if (pathname.startsWith('/friends')) return 'Друзья';
-  if (pathname.startsWith('/challenges/')) return 'Соревнование';
-  if (pathname.startsWith('/challenges')) return 'Соревнования';
-  if (pathname.startsWith('/progress')) return 'Сводка';
-  if (pathname.startsWith('/notifications')) return 'Уведомления';
-  if (pathname.startsWith('/profile')) return 'Профиль';
-  if (pathname.startsWith('/admin/users')) return 'Админка';
-  if (pathname.startsWith('/login')) return 'Вход';
-  if (pathname.startsWith('/register')) return 'Регистрация';
-  if (pathname.startsWith('/forgot-password')) return 'Восстановление пароля';
-  if (pathname.startsWith('/reset-password')) return 'Новый пароль';
-  return 'Tracker';
+function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles']) {
+  if (!pathname || pathname === '/') return titles.home;
+  if (pathname.startsWith('/dashboard')) return titles.dashboard;
+  if (pathname.startsWith('/program/session/')) return titles.programSession;
+  if (pathname.startsWith('/program')) return titles.program;
+  if (pathname.startsWith('/friends')) return titles.friends;
+  if (pathname.startsWith('/challenges/')) return titles.challenge;
+  if (pathname.startsWith('/challenges')) return titles.challenges;
+  if (pathname.startsWith('/progress')) return titles.progress;
+  if (pathname.startsWith('/notifications')) return titles.notifications;
+  if (pathname.startsWith('/profile')) return titles.profile;
+  if (pathname.startsWith('/admin/users')) return titles.adminUsers;
+  if (pathname.startsWith('/login')) return titles.login;
+  if (pathname.startsWith('/register')) return titles.register;
+  if (pathname.startsWith('/forgot-password')) return titles.forgotPassword;
+  if (pathname.startsWith('/reset-password')) return titles.resetPassword;
+  return titles.fallback;
 }
 
 function AvatarCircle({ src, size = 24 }: { src?: string | null; size?: number }) {
@@ -52,54 +55,32 @@ function AvatarCircle({ src, size = 24 }: { src?: string | null; size?: number }
 }
 
 export default function AppNavClient() {
+  const { locale, messages, setLocale } = useI18n();
+  const { user: me, setUser, refreshUser } = useAuth();
   const pathname = usePathname();
-  const pageTitle = useMemo(() => resolvePageTitle(pathname), [pathname]);
+  const pageTitle = useMemo(() => resolvePageTitle(pathname, messages.nav.pageTitles), [messages.nav.pageTitles, pathname]);
   const [open, setOpen] = useState(false);
-  const [me, setMe] = useState<Me | null>(null);
   const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
+  const [updatingLanguage, setUpdatingLanguage] = useState(false);
   const navIconVersion = '20260225';
 
   const navActive = (href: string) => pathname === href || (href !== '/' && pathname?.startsWith(href));
   const bottomItemClass = (active: boolean) => `bottom-nav__item ${active ? 'bottom-nav__item--active' : ''}`;
 
   const exerciseLabel = useMemo(() => {
-    if (exerciseType === 'pushups') return 'Отжимания';
-    if (exerciseType === 'pullups') return 'Подтягивания';
-    if (exerciseType === 'crunches') return 'Скручивания';
-    return 'Приседания';
-  }, [exerciseType]);
-
-  const loadMe = async () => {
-    try {
-      const res = await fetch('/api/me', { cache: 'no-store', credentials: 'include' });
-      if (!res.ok) {
-        setMe(null);
-        return;
-      }
-      const data = (await res.json()) as Me;
-      setMe(data);
-    } catch {
-      setMe(null);
-    }
-  };
+    if (exerciseType === 'pushups') return messages.nav.exercise.pushups;
+    if (exerciseType === 'pullups') return messages.nav.exercise.pullups;
+    if (exerciseType === 'crunches') return messages.nav.exercise.crunches;
+    return messages.nav.exercise.squats;
+  }, [exerciseType, messages.nav.exercise]);
 
   useEffect(() => {
-    loadMe();
-  }, [pathname]);
+    if (me?.language) setLocale(normalizeLocale(me.language));
+  }, [me?.language, setLocale]);
 
   useEffect(() => {
-    const onAuthChanged = (event: Event) => {
-      const detail = (event as CustomEvent<AuthChangedDetail>).detail;
-      if (detail && detail.username) {
-        setMe(detail);
-        return;
-      }
-      loadMe();
-    };
-
-    window.addEventListener('authChanged', onAuthChanged as EventListener);
-    return () => window.removeEventListener('authChanged', onAuthChanged as EventListener);
-  }, [pathname]);
+    void refreshUser();
+  }, [pathname, refreshUser]);
 
   useEffect(() => {
     try {
@@ -123,9 +104,43 @@ export default function AppNavClient() {
     try {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
     } catch {}
-    setMe(null);
-    window.dispatchEvent(new CustomEvent<AuthChangedDetail>('authChanged', { detail: null }));
+    setUser(null);
+    window.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
     window.location.href = '/login';
+  };
+
+  const handleLanguageChange = async (nextLocale: Locale) => {
+    if (!me?.username || updatingLanguage || nextLocale === locale) return;
+    const previousLocale = locale;
+    setUpdatingLanguage(true);
+    setLocale(nextLocale);
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ language: nextLocale }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Failed to update language');
+      if (data?.user) {
+        setUser({
+          id: data.user.id,
+          email: data.user.email,
+          username: data.user.username,
+          isAdmin: data.user.isAdmin,
+          avatarPath: data.user.avatarPath,
+          language: data.user.language,
+        });
+      } else {
+        await refreshUser();
+      }
+    } catch {
+      setLocale(previousLocale);
+      await refreshUser();
+    } finally {
+      setUpdatingLanguage(false);
+    }
   };
 
   const linkClass = (href: string) => {
@@ -156,14 +171,14 @@ export default function AppNavClient() {
             >
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 <AvatarCircle src={me?.avatarPath ?? null} size={22} />
-                <span>{me?.username || 'Гость'}</span>
+                <span>{me?.username || messages.common.guest}</span>
               </span>
             </div>
             <button
               type="button"
               className="app-menu-btn"
               onClick={() => setOpen(true)}
-              aria-label="Меню"
+              aria-label={messages.nav.menuAria}
               style={{
                 width: 40,
                 height: 40,
@@ -183,30 +198,30 @@ export default function AppNavClient() {
         </div>
       </header>
 
-      <nav className="bottom-nav" role="navigation" aria-label="Нижнее меню">
-        <Link className={bottomItemClass(navActive('/dashboard'))} href="/dashboard" aria-label="Тренировка">
+      <nav className="bottom-nav" role="navigation" aria-label={messages.nav.menuAria}>
+        <Link className={bottomItemClass(navActive('/dashboard'))} href="/dashboard" aria-label={messages.nav.bottom.dashboard}>
           <img src={`/icons/bottom-nav/training.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" />
-          <span className="bottom-nav__label">Тренировка</span>
+          <span className="bottom-nav__label">{messages.nav.bottom.dashboard}</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/program'))} href="/program" aria-label="Программа">
+        <Link className={bottomItemClass(navActive('/program'))} href="/program" aria-label={messages.nav.bottom.program}>
           <img src="/icons/bottom-nav/program.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
-          <span className="bottom-nav__label">Программа</span>
+          <span className="bottom-nav__label">{messages.nav.bottom.program}</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/friends'))} href="/friends" aria-label="Друзья">
+        <Link className={bottomItemClass(navActive('/friends'))} href="/friends" aria-label={messages.nav.bottom.friends}>
           <img src="/icons/bottom-nav/friends.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
-          <span className="bottom-nav__label">Друзья</span>
+          <span className="bottom-nav__label">{messages.nav.bottom.friends}</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/challenges'))} href="/challenges" aria-label="Соревнования">
+        <Link className={bottomItemClass(navActive('/challenges'))} href="/challenges" aria-label={messages.nav.bottom.challenges}>
           <img src={`/icons/bottom-nav/challenges.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" />
-          <span className="bottom-nav__label">Соревнования</span>
+          <span className="bottom-nav__label">{messages.nav.bottom.challenges}</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/progress'))} href="/progress" aria-label="Сводка">
+        <Link className={bottomItemClass(navActive('/progress'))} href="/progress" aria-label={messages.nav.bottom.progress}>
           <img src="/icons/bottom-nav/summary.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
-          <span className="bottom-nav__label">Сводка</span>
+          <span className="bottom-nav__label">{messages.nav.bottom.progress}</span>
         </Link>
       </nav>
 
@@ -216,12 +231,12 @@ export default function AppNavClient() {
             <div className="app-drawer__top">
               <div className="app-drawer__user">
                 <div style={{ fontWeight: 900, color: '#000' }}>
-                  {me?.username || 'Пользователь не авторизован'}
+                  {me?.username || messages.nav.unauthorized}
                 </div>
                 <div style={{ fontSize: 12, color: '#000', opacity: 0.75 }}>{exerciseLabel}</div>
               </div>
 
-              <button type="button" className="app-drawer__close" onClick={() => setOpen(false)} aria-label="Закрыть">
+              <button type="button" className="app-drawer__close" onClick={() => setOpen(false)} aria-label={messages.nav.closeAria}>
                 ✕
               </button>
             </div>
@@ -229,13 +244,13 @@ export default function AppNavClient() {
             <div className="app-drawer__links">
               {me?.username ? (
                 <Link className={linkClass('/profile')} href="/profile" onClick={() => setOpen(false)}>
-                  Профиль
+                  {messages.nav.drawer.profile}
                 </Link>
               ) : null}
 
               {me?.isAdmin ? (
                 <Link className={linkClass('/admin/users')} href="/admin/users" onClick={() => setOpen(false)}>
-                  Админка
+                  {messages.nav.drawer.admin}
                 </Link>
               ) : null}
 
@@ -244,18 +259,29 @@ export default function AppNavClient() {
                 href="mailto:PushupTrackerApp@gmail.com"
                 onClick={() => setOpen(false)}
               >
-                Обратная связь: PushupTrackerApp@gmail.com
+                {messages.nav.drawer.feedbackEmail}
               </a>
+
+              {me?.username ? (
+                <div style={{ padding: '4px 2px' }}>
+                  <LanguageSelect
+                    value={locale}
+                    onChange={handleLanguageChange}
+                    label={messages.common.language}
+                    disabled={updatingLanguage}
+                  />
+                </div>
+              ) : null}
 
               <div style={{ height: 8 }} />
 
               {me?.username ? (
                 <button type="button" className="app-drawer__btn app-drawer__btn--danger" onClick={logout}>
-                  Выйти
+                  {messages.nav.drawer.logout}
                 </button>
               ) : (
                 <Link className={linkClass('/login')} href="/login" onClick={() => setOpen(false)}>
-                  Вход
+                  {messages.nav.drawer.login}
                 </Link>
               )}
             </div>

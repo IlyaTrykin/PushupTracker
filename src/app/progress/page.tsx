@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
 type ExerciseFilter = ExerciseType | 'all';
@@ -182,6 +184,7 @@ function HeroOverview({
   trainingDays,
   periodDays,
   color,
+  tt,
 }: {
   currentTotal: number;
   previousTotal: number;
@@ -191,6 +194,7 @@ function HeroOverview({
   trainingDays: number;
   periodDays: number;
   color: string;
+  tt: (input: string) => string;
 }) {
   const isPositive = delta >= 0;
   const deltaColor = isPositive ? '#16a34a' : '#dc2626';
@@ -236,10 +240,10 @@ function HeroOverview({
       />
 
       <div style={{ position: 'relative', zIndex: 1, display: 'grid', gap: 8 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>Объём за период</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{tt('Объём за период')}</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
           <div style={{ fontSize: 52, lineHeight: 0.9, fontWeight: 900, color: '#0b1324' }}>{currentTotal}</div>
-          <div style={{ fontSize: 13, color: '#475569', marginBottom: 6 }}>повторений</div>
+          <div style={{ fontSize: 13, color: '#475569', marginBottom: 6 }}>{tt('повторений')}</div>
         </div>
       </div>
 
@@ -257,10 +261,10 @@ function HeroOverview({
             background: deltaColor,
           }}
         >
-          {isPositive ? 'Рост' : 'Спад'} {formatSigned(delta)} ({deltaPercent})
+          {isPositive ? tt('Рост') : tt('Спад')} {formatSigned(delta)} ({deltaPercent})
         </span>
         <span style={{ fontSize: 12, fontWeight: 800, color: '#334155', background: '#fff', border: '1px solid #dbe4f0', borderRadius: 999, padding: '6px 10px' }}>
-          Было: {previousTotal}
+          {tt('Было')}: {previousTotal}
         </span>
       </div>
 
@@ -274,14 +278,14 @@ function HeroOverview({
         }}
       >
         <div style={{ borderRadius: 12, border: '1px solid #dbe4f0', background: '#ffffffd6', padding: '10px 11px' }}>
-          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>Активность</div>
+          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>{tt('Активность')}</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: '#0b1324', marginTop: 4 }}>{trainingDays}/{periodDays}</div>
-          <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>дней с тренировками</div>
+          <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{tt('дней с тренировками')}</div>
         </div>
         <div style={{ borderRadius: 12, border: '1px solid #dbe4f0', background: '#ffffffd6', padding: '10px 11px' }}>
-          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>Серия</div>
+          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>{tt('Серия')}</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: '#0b1324', marginTop: 4 }}>{streak}</div>
-          <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>дней подряд</div>
+          <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{tt('дней подряд')}</div>
         </div>
       </div>
     </section>
@@ -291,9 +295,11 @@ function HeroOverview({
 function ExerciseShareDonut({
   totals,
   periodTotal,
+  tt,
 }: {
   totals: Record<ExerciseType, number>;
   periodTotal: number;
+  tt: (input: string) => string;
 }) {
   const size = 190;
   const center = size / 2;
@@ -323,10 +329,10 @@ function ExerciseShareDonut({
         gap: 12,
       }}
     >
-      <div style={{ fontWeight: 900, color: '#0f172a' }}>Структура объёма</div>
+      <div style={{ fontWeight: 900, color: '#0f172a' }}>{tt('Структура объёма')}</div>
 
       <div style={{ display: 'grid', justifyItems: 'center', gap: 10 }}>
-        <svg width={size} height={size} role="img" aria-label="Круговая диаграмма структуры упражнений">
+        <svg width={size} height={size} role="img" aria-label={tt('Круговая диаграмма структуры упражнений')}>
           <g transform={`rotate(-90 ${center} ${center})`}>
             <circle cx={center} cy={center} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
             {segments.map((s) => (
@@ -345,7 +351,7 @@ function ExerciseShareDonut({
             ))}
           </g>
 
-          <text x={center} y={center - 6} textAnchor="middle" fontSize={12} fill="#64748b" fontWeight={800}>За период</text>
+          <text x={center} y={center - 6} textAnchor="middle" fontSize={12} fill="#64748b" fontWeight={800}>{tt('За период')}</text>
           <text x={center} y={center + 24} textAnchor="middle" fontSize={30} fill="#0b1324" fontWeight={900}>{periodTotal}</text>
         </svg>
       </div>
@@ -358,7 +364,7 @@ function ExerciseShareDonut({
             <div key={type} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center' }}>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, color: '#0f172a', fontWeight: 800 }}>
                 <span style={{ width: 10, height: 10, borderRadius: 999, background: exerciseColor(type) }} />
-                {exerciseLabel(type)}
+                {tt(exerciseLabel(type))}
               </div>
               <div style={{ fontSize: 12, color: '#334155', fontWeight: 800 }}>{value} ({ratio}%)</div>
             </div>
@@ -369,7 +375,7 @@ function ExerciseShareDonut({
   );
 }
 
-function ActivityRhythm({ data, color }: { data: DayPoint[]; color: string }) {
+function ActivityRhythm({ data, color, tt, localeTag }: { data: DayPoint[]; color: string; tt: (input: string) => string; localeTag: string }) {
   if (!data.length) return null;
 
   const max = Math.max(1, ...data.map((d) => d.total));
@@ -387,8 +393,8 @@ function ActivityRhythm({ data, color }: { data: DayPoint[]; color: string }) {
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ fontWeight: 900, color: '#0f172a' }}>Ритм активности</div>
-        <div style={{ fontSize: 12, color: '#334155', fontWeight: 800 }}>Активных дней: {active}/{data.length}</div>
+        <div style={{ fontWeight: 900, color: '#0f172a' }}>{tt('Ритм активности')}</div>
+        <div style={{ fontSize: 12, color: '#334155', fontWeight: 800 }}>{tt('Активных дней')}: {active}/{data.length}</div>
       </div>
 
       <div style={{ overflowX: 'auto', paddingBottom: 2 }}>
@@ -401,7 +407,7 @@ function ActivityRhythm({ data, color }: { data: DayPoint[]; color: string }) {
               <div key={d.key} style={{ width: 12, display: 'grid', gap: 5, justifyItems: 'center' }}>
                 <div style={{ height: 92, display: 'flex', alignItems: 'flex-end' }}>
                   <div
-                    title={`${d.date.toLocaleDateString('ru-RU')}: ${d.total}`}
+                    title={`${d.date.toLocaleDateString(localeTag)}: ${d.total}`}
                     style={{
                       width: 10,
                       height: h,
@@ -421,7 +427,7 @@ function ActivityRhythm({ data, color }: { data: DayPoint[]; color: string }) {
   );
 }
 
-function TrendChart({ data, color }: { data: DayPoint[]; color: string }) {
+function TrendChart({ data, color, tt }: { data: DayPoint[]; color: string; tt: (input: string) => string }) {
   if (!data.length) return null;
 
   const width = Math.max(390, data.length * 24);
@@ -449,7 +455,7 @@ function TrendChart({ data, color }: { data: DayPoint[]; color: string }) {
 
   return (
     <div style={{ overflowX: 'auto', border: '1px solid #dbe4ff', borderRadius: 14, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
-      <svg width={width} height={height} role="img" aria-label="График повторений по дням">
+      <svg width={width} height={height} role="img" aria-label={tt('График повторений по дням')}>
         <defs>
           <linearGradient id="dayAreaFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={hexToRgba(color, 0.34)} />
@@ -470,7 +476,7 @@ function TrendChart({ data, color }: { data: DayPoint[]; color: string }) {
         })}
 
         <line x1={padX} x2={width - padX} y1={avgY} y2={avgY} stroke="#94a3b8" strokeDasharray="4 4" strokeWidth={1} />
-        <text x={width - padX - 2} y={avgY - 4} textAnchor="end" fontSize={10} fill="#64748b">ср. {avgValue}</text>
+        <text x={width - padX - 2} y={avgY - 4} textAnchor="end" fontSize={10} fill="#64748b">{tt(`ср. ${avgValue}`)}</text>
 
         <polygon points={area} fill="url(#dayAreaFill)" />
         <polyline points={points} fill="none" stroke={color} strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
@@ -480,7 +486,7 @@ function TrendChart({ data, color }: { data: DayPoint[]; color: string }) {
         ))}
 
         <text x={xFor(peakIndex)} y={Math.max(14, yFor(data[peakIndex].total) - 8)} textAnchor="middle" fontSize={10} fill="#0f172a" fontWeight={800}>
-          пик {data[peakIndex].total}
+          {tt(`пик ${data[peakIndex].total}`)}
         </text>
 
         {data.map((d, i) => {
@@ -501,11 +507,13 @@ function WeeklyTrendChart({
   currentTotals,
   previousTotals,
   color,
+  tt,
 }: {
   weeks: WeekPoint[];
   currentTotals: number[];
   previousTotals: number[];
   color: string;
+  tt: (input: string) => string;
 }) {
   if (!weeks.length) return null;
 
@@ -534,7 +542,7 @@ function WeeklyTrendChart({
 
   return (
     <div style={{ overflowX: 'auto', border: '1px solid #dbe4ff', borderRadius: 14, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
-      <svg width={width} height={height} role="img" aria-label="Недельный график: текущий и прошлый период">
+      <svg width={width} height={height} role="img" aria-label={tt('Недельный график: текущий и прошлый период')}>
         <defs>
           <linearGradient id="weeklyAreaFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={hexToRgba(color, 0.36)} />
@@ -583,6 +591,9 @@ function formatWeekRange(weekStart: Date): string {
 }
 
 export default function ProgressPage() {
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [periodDays, setPeriodDays] = useState<number>(30);
@@ -600,7 +611,7 @@ export default function ProgressPage() {
         const items = Array.isArray(data) ? data : (data?.items ?? []);
         if (!cancelled) setWorkouts(items);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Ошибка загрузки');
+        if (!cancelled) setError(tt(e?.message || 'Ошибка загрузки'));
       }
     })();
 
@@ -691,8 +702,8 @@ export default function ProgressPage() {
     };
   }, [totals, previousPeriodStats, periodDays]);
   const deltaPercentLabel = useMemo(
-    () => formatDeltaPercent(totals.total, previousPeriodStats.total),
-    [totals.total, previousPeriodStats.total],
+    () => tt(formatDeltaPercent(totals.total, previousPeriodStats.total)),
+    [previousPeriodStats.total, totals.total, tt],
   );
 
   const streak = useMemo(() => calcStreak(scopedByExercise), [scopedByExercise]);
@@ -813,13 +824,13 @@ export default function ProgressPage() {
   return (
     <div className="app-page" style={{ maxWidth: 980, display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Link href="/dashboard" style={{ textDecoration: 'none' }}>← На тренировку</Link>
+        <Link href="/dashboard" style={{ textDecoration: 'none' }}>← {tt('На тренировку')}</Link>
       </div>
 
       {error ? <p style={{ color: 'red', margin: 0 }}>{error}</p> : null}
 
       <section style={{ border: '1px solid #e5e7eb', borderRadius: 12, background: '#f9fafb', padding: 12, display: 'grid', gap: 10 }}>
-        <div style={{ fontWeight: 900, color: '#111827' }}>Фильтры</div>
+        <div style={{ fontWeight: 900, color: '#111827' }}>{tt('Фильтры')}</div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {PERIOD_OPTIONS.map((p) => (
@@ -837,13 +848,13 @@ export default function ProgressPage() {
                 fontWeight: 800,
               }}
             >
-              {p.label}
+              {tt(p.label)}
             </button>
           ))}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#374151' }}>Упражнение:</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#374151' }}>{tt('Упражнение:')}</div>
           <select
             value={exercise}
             onChange={(e) => setExercise(e.target.value as ExerciseFilter)}
@@ -857,9 +868,9 @@ export default function ProgressPage() {
               minWidth: 210,
             }}
           >
-            <option value="all">Все упражнения</option>
+            <option value="all">{tt('Все упражнения')}</option>
             {EXERCISE_ORDER.map((t) => (
-              <option key={t} value={t}>{exerciseLabel(t)}</option>
+              <option key={t} value={t}>{tt(exerciseLabel(t))}</option>
             ))}
           </select>
         </div>
@@ -874,80 +885,82 @@ export default function ProgressPage() {
         trainingDays={totals.trainingDays}
         periodDays={periodDays}
         color={mainColor}
+        tt={tt}
       />
 
       <section style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
         <StatCard
-          label="Текущий период"
+          label={tt('Текущий период')}
           value={totals.total}
-          hint={`${rangeStart.toLocaleDateString('ru-RU')} - ${rangeEnd.toLocaleDateString('ru-RU')}`}
+          hint={`${rangeStart.toLocaleDateString(localeTag)} - ${rangeEnd.toLocaleDateString(localeTag)}`}
           accentColor={mainColor}
         />
         <StatCard
-          label="Прошлый период"
+          label={tt('Прошлый период')}
           value={previousPeriodStats.total}
-          hint={`${previousRangeStart.toLocaleDateString('ru-RU')} - ${previousRangeEnd.toLocaleDateString('ru-RU')}`}
+          hint={`${previousRangeStart.toLocaleDateString(localeTag)} - ${previousRangeEnd.toLocaleDateString(localeTag)}`}
           accentColor="#64748b"
         />
         <StatCard
-          label="Разница"
+          label={tt('Разница')}
           value={formatSigned(comparisonStats.deltaTotal)}
-          hint={`${deltaPercentLabel} к прошлому периоду`}
+          hint={`${deltaPercentLabel} ${tt('к прошлому периоду')}`}
           accentColor={comparisonStats.deltaTotal >= 0 ? '#16a34a' : '#dc2626'}
         />
         <StatCard
-          label="Активные дни"
+          label={tt('Активные дни')}
           value={`${totals.trainingDays}/${periodDays}`}
-          hint={`было ${previousPeriodStats.trainingDays}/${periodDays} (${formatSigned(comparisonStats.deltaTrainingDays)})`}
+          hint={tt(`было ${previousPeriodStats.trainingDays}/${periodDays} (${formatSigned(comparisonStats.deltaTrainingDays)})`)}
           accentColor="#2563eb"
         />
         <StatCard
-          label="Среднее в день"
+          label={tt('Среднее в день')}
           value={comparisonStats.dailyCurrent}
-          hint={`было ${comparisonStats.dailyPrevious} (${formatSigned(comparisonStats.deltaDaily)})`}
+          hint={tt(`было ${comparisonStats.dailyPrevious} (${formatSigned(comparisonStats.deltaDaily)})`)}
           accentColor="#0891b2"
         />
         <StatCard
-          label="Среднее за тренировку"
+          label={tt('Среднее за тренировку')}
           value={totals.avgPerTraining}
-          hint={`было ${previousPeriodStats.avgPerTraining}`}
+          hint={tt(`было ${previousPeriodStats.avgPerTraining}`)}
           accentColor="#9333ea"
         />
       </section>
 
       <section style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
         <div style={{ border: '1px solid #dbe4ff', borderRadius: 16, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', padding: 12, display: 'grid', gap: 10 }}>
-          <div style={{ fontWeight: 900, color: '#111827' }}>Динамика по дням</div>
-          <TrendChart data={daySeries} color={mainColor} />
+          <div style={{ fontWeight: 900, color: '#111827' }}>{tt('Динамика по дням')}</div>
+          <TrendChart data={daySeries} color={mainColor} tt={tt} />
           <div style={{ fontSize: 12, color: '#64748b' }}>
-            Период: {rangeStart.toLocaleDateString('ru-RU')} - {rangeEnd.toLocaleDateString('ru-RU')}
+            {tt(`Период: ${rangeStart.toLocaleDateString(localeTag)} - ${rangeEnd.toLocaleDateString(localeTag)}`)}
           </div>
         </div>
-        <ExerciseShareDonut totals={rangeByExerciseTotals} periodTotal={totals.total} />
+        <ExerciseShareDonut totals={rangeByExerciseTotals} periodTotal={totals.total} tt={tt} />
       </section>
 
       <section style={{ border: '1px solid #dbe4ff', borderRadius: 16, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', padding: 12, display: 'grid', gap: 10 }}>
-        <div style={{ fontWeight: 900, color: '#111827' }}>Недельный тренд</div>
+        <div style={{ fontWeight: 900, color: '#111827' }}>{tt('Недельный тренд')}</div>
         <WeeklyTrendChart
           weeks={weekSeries}
           currentTotals={weeklyTotals}
           previousTotals={previousWeeklyTotals}
           color={mainColor}
+          tt={tt}
         />
 
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#111827', fontWeight: 700 }}>
             <span style={{ width: 18, height: 0, borderTop: `3px solid ${mainColor}`, borderRadius: 999 }} />
-            <span>Текущий период</span>
+            <span>{tt('Текущий период')}</span>
           </div>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#4b5563', fontWeight: 700 }}>
             <span style={{ width: 18, height: 0, borderTop: '2px dashed #94a3b8', borderRadius: 999 }} />
-            <span>Прошлый период</span>
+            <span>{tt('Прошлый период')}</span>
           </div>
         </div>
       </section>
 
-      <ActivityRhythm data={rhythmData} color={mainColor} />
+      <ActivityRhythm data={rhythmData} color={mainColor} tt={tt} localeTag={localeTag} />
 
       <section
         style={{
@@ -961,27 +974,27 @@ export default function ProgressPage() {
         }}
       >
         <StatCard
-          label="Лучший день"
+          label={tt('Лучший день')}
           value={records.bestDay ? `${records.bestDay.total}` : '—'}
-          hint={records.bestDay ? new Date(`${records.bestDay.key}T00:00:00`).toLocaleDateString('ru-RU') : undefined}
+          hint={records.bestDay ? new Date(`${records.bestDay.key}T00:00:00`).toLocaleDateString(localeTag) : undefined}
           accentColor="#2563eb"
         />
         <StatCard
-          label="Лучшая неделя"
+          label={tt('Лучшая неделя')}
           value={records.bestWeek ? `${records.bestWeek.total}` : '—'}
           hint={records.bestWeek ? formatWeekRange(new Date(`${records.bestWeek.key}T00:00:00`)) : undefined}
           accentColor="#14b8a6"
         />
         <StatCard
-          label="Лучший подход"
+          label={tt('Лучший подход')}
           value={records.bestSet ? records.bestSet.reps : '—'}
-          hint={records.bestSet ? getWorkoutDate(records.bestSet).toLocaleDateString('ru-RU') : undefined}
+          hint={records.bestSet ? getWorkoutDate(records.bestSet).toLocaleDateString(localeTag) : undefined}
           accentColor="#f97316"
         />
         <StatCard
-          label="Последняя тренировка"
+          label={tt('Последняя тренировка')}
           value={records.lastWorkout ? records.lastWorkout.reps : '—'}
-          hint={records.lastWorkout ? getWorkoutDate(records.lastWorkout).toLocaleString('ru-RU') : undefined}
+          hint={records.lastWorkout ? getWorkoutDate(records.lastWorkout).toLocaleString(localeTag) : undefined}
           accentColor="#8b5cf6"
         />
       </section>

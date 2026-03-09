@@ -1,15 +1,24 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import LanguageSelect from '@/components/LanguageSelect';
+import { type Locale } from '@/i18n/locale';
+import { useI18n } from '@/i18n/provider';
 
 export default function RegisterPage() {
+  const { locale, messages, setLocale } = useI18n();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [language, setLanguage] = useState<Locale>(locale);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    setLanguage(locale);
+  }, [locale]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,7 +29,7 @@ export default function RegisterPage() {
       const res = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, username, password }),
+        body: JSON.stringify({ email, username, password, language }),
       });
 
       let data: any = {};
@@ -31,17 +40,18 @@ export default function RegisterPage() {
       }
 
       if (!res.ok) {
-        const base = data?.error || `Ошибка регистрации (код ${res.status})`;
+        const base = data?.error || `${messages.auth.register.defaultError} (код ${res.status})`;
         const msg = data?.details ? `${base}: ${data.details}` : base;
         setError(msg);
       } else {
+        setLocale(language);
         setSuccess(true);
         setTimeout(() => router.push('/login'), 1000);
       }
 
     } catch (err) {
       console.error('Register error:', err);
-      setError('Не удалось связаться с сервером');
+      setError(messages.auth.register.networkError);
     }
   };
 
@@ -55,7 +65,7 @@ export default function RegisterPage() {
     >
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label>Email</label>
+          <label>{messages.auth.register.email}</label>
           <input
             value={email}
             onChange={e => setEmail(e.target.value)}
@@ -64,7 +74,7 @@ export default function RegisterPage() {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label>Ник</label>
+          <label>{messages.auth.register.username}</label>
           <input
             value={username}
             onChange={e => setUsername(e.target.value)}
@@ -73,7 +83,7 @@ export default function RegisterPage() {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label>Пароль</label>
+          <label>{messages.auth.register.password}</label>
           <input
             type="password"
             value={password}
@@ -82,7 +92,15 @@ export default function RegisterPage() {
           />
         </div>
 
-        {/* ВОТ ОНА, КНОПКА */}
+        <LanguageSelect
+          value={language}
+          onChange={(nextLocale) => {
+            setLanguage(nextLocale);
+            setLocale(nextLocale);
+          }}
+          label={messages.common.language}
+        />
+
         <button
           type="submit"
           style={{
@@ -96,12 +114,12 @@ export default function RegisterPage() {
             cursor: 'pointer',
           }}
         >
-          Зарегистрироваться
+          {messages.auth.register.submit}
         </button>
       </form>
 
       {error && <p style={{ color: 'red', marginTop: 12 }}>{error}</p>}
-      {success && <p style={{ color: 'green', marginTop: 12 }}>Аккаунт создан, сейчас перейдём на вход…</p>}
+      {success && <p style={{ color: 'green', marginTop: 12 }}>{messages.auth.register.success}</p>}
     </div>
   );
 }

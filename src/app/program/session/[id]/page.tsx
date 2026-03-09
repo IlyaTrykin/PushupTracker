@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { getLocaleTimerAudio } from '@/i18n/locale';
 
 type TrainingSet = {
   id: string;
@@ -49,11 +51,19 @@ async function fetchJson(url: string, init?: RequestInit) {
   return data;
 }
 
-function exerciseLabel(exerciseType: string) {
-  if (exerciseType === 'pushups') return 'Отжимания';
-  if (exerciseType === 'pullups') return 'Подтягивания';
-  if (exerciseType === 'crunches') return 'Скручивания';
-  if (exerciseType === 'squats') return 'Приседания';
+function exerciseLabel(
+  exerciseType: string,
+  labels: {
+    pushups: string;
+    pullups: string;
+    crunches: string;
+    squats: string;
+  },
+) {
+  if (exerciseType === 'pushups') return labels.pushups;
+  if (exerciseType === 'pullups') return labels.pullups;
+  if (exerciseType === 'crunches') return labels.crunches;
+  if (exerciseType === 'squats') return labels.squats;
   return exerciseType;
 }
 
@@ -64,7 +74,15 @@ function sanitizePositiveInt(value: string): number {
   return Math.min(5000, Math.round(n));
 }
 
+function formatText(template: string, values: Record<string, string | number>) {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
+    template,
+  );
+}
+
 export default function ProgramSessionPage() {
+  const { locale, messages } = useI18n();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const sessionId = String(params?.id || '');
@@ -96,6 +114,7 @@ export default function ProgramSessionPage() {
     return session.sets[currentIdx] || null;
   }, [session, currentIdx]);
   const isFinalCountdown = restSeconds > 0 && restSeconds <= 5;
+  const timerAudio = useMemo(() => getLocaleTimerAudio(locale), [locale]);
 
   const load = async (forceStartEarly = false) => {
     if (!sessionId) return;
@@ -118,7 +137,7 @@ export default function ProgramSessionPage() {
       setSession(s);
 
       if (!s) {
-        setError('Сессия не найдена');
+        setError(messages.programSession.errors.sessionNotFound);
       } else if (s.completed) {
         setDone(true);
       } else {
@@ -131,14 +150,14 @@ export default function ProgramSessionPage() {
     } catch (e: any) {
       if (e?.code === 'REST_PERIOD_NOT_FINISHED' && !forceStartEarly) {
         const ok = window.confirm(
-          `${e?.message || 'Период отдыха ещё не завершён.'}\n\nНачать тренировку раньше срока? Это сдвинет даты последующих тренировок.`,
+          `${e?.message || messages.programSession.confirmStartEarly.title}\n\n${messages.programSession.confirmStartEarly.body}`,
         );
         if (ok) {
           await load(true);
           return;
         }
       }
-      setError(e?.message || 'Не удалось открыть тренировку');
+      setError(e?.message || messages.programSession.errors.openFailed);
     } finally {
       setLoading(false);
     }
@@ -183,21 +202,36 @@ export default function ProgramSessionPage() {
 
   const getAudioElements = useCallback(() => {
     if (typeof window === 'undefined') return null;
+    const prepareSrc = timerAudio.prepare;
+    const startSrc = timerAudio.start;
+
     if (!prepareAudioRef.current) {
-      prepareAudioRef.current = new Audio('/audio/program-prepare.mp3');
+      prepareAudioRef.current = new Audio(prepareSrc);
       prepareAudioRef.current.preload = 'auto';
+      prepareAudioRef.current.dataset.clipSrc = prepareSrc;
+    } else if (prepareAudioRef.current.dataset.clipSrc !== prepareSrc) {
+      prepareAudioRef.current.pause();
+      prepareAudioRef.current.src = prepareSrc;
+      prepareAudioRef.current.load();
+      prepareAudioRef.current.dataset.clipSrc = prepareSrc;
     }
     if (!startAudioRef.current) {
-      startAudioRef.current = new Audio('/audio/program-start.mp3');
+      startAudioRef.current = new Audio(startSrc);
       startAudioRef.current.preload = 'auto';
+      startAudioRef.current.dataset.clipSrc = startSrc;
+    } else if (startAudioRef.current.dataset.clipSrc !== startSrc) {
+      startAudioRef.current.pause();
+      startAudioRef.current.src = startSrc;
+      startAudioRef.current.load();
+      startAudioRef.current.dataset.clipSrc = startSrc;
     }
     const mediaSession = navigator.mediaSession;
     const MediaMetadataCtor = window.MediaMetadata;
     if (mediaSession && MediaMetadataCtor) {
       mediaSession.metadata = new MediaMetadataCtor({
-        title: 'Таймер отдыха',
-        artist: 'Pushup Tracker',
-        album: 'Тренировка по программе',
+        title: messages.programSession.rest.mediaTitle,
+        artist: messages.common.appName,
+        album: messages.programSession.rest.mediaAlbum,
         artwork: [
           { src: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
@@ -207,7 +241,7 @@ export default function ProgramSessionPage() {
       });
     }
     return { prepare: prepareAudioRef.current, start: startAudioRef.current };
-  }, []);
+  }, [messages.common.appName, messages.programSession.rest.mediaAlbum, messages.programSession.rest.mediaTitle, timerAudio.prepare, timerAudio.start]);
 
   const primeAudioPlayback = useCallback(async () => {
     if (typeof window !== 'undefined') {
@@ -343,7 +377,7 @@ export default function ProgramSessionPage() {
 
     const actualReps = sanitizePositiveInt(actualRepsInput);
     if (!Number.isFinite(actualReps) || actualReps <= 0) {
-      setError('Введите корректное число повторений (> 0)');
+      setError(messages.programSession.errors.invalidReps);
       return;
     }
 
@@ -371,7 +405,7 @@ export default function ProgramSessionPage() {
       if (isLast) {
         await fetchJson(`/api/program/session/${session.id}/complete`, { method: 'POST' });
         setDone(true);
-        setInfo('Тренировка завершена. Подходы сохранены.');
+        setInfo(messages.programSession.complete.info);
         return;
       }
 
@@ -380,22 +414,22 @@ export default function ProgramSessionPage() {
       setCurrentIdx((x) => x + 1);
       const nextSet = session.sets[currentIdx + 1];
       if (nextSet) setActualRepsInput(String(nextSet.targetReps));
-      setInfo(`Подход ${currentSet.setNumber} записан`);
+      setInfo(formatText(messages.programSession.set.saved, { setNumber: currentSet.setNumber }));
     } catch (e: any) {
-      setError(e?.message || 'Ошибка записи подхода');
+      setError(e?.message || messages.programSession.errors.saveSetFailed);
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) return <div className="app-page" style={{ maxWidth: 760 }}>Загрузка…</div>;
+  if (loading) return <div className="app-page" style={{ maxWidth: 760 }}>{messages.common.loading}</div>;
 
   return (
     <div className="app-page" style={{ maxWidth: 760 }}>
       {program && session ? (
         <div style={{ color: '#111827', marginBottom: 12 }}>
-          {exerciseLabel(program.exerciseType)} · неделя {session.weekNumber} · тренировка #{session.sessionNumber}
-          {session.isFinalTest ? ' · финальный тест' : ''}
+          {exerciseLabel(program.exerciseType, messages.nav.exercise)} · {messages.programSession.header.week} {session.weekNumber} · {messages.programSession.header.workout} #{session.sessionNumber}
+          {session.isFinalTest ? ` · ${messages.programSession.header.finalTest}` : ''}
         </div>
       ) : null}
 
@@ -406,7 +440,7 @@ export default function ProgramSessionPage() {
         <section style={card}>
           {restSeconds > 0 ? (
             <div style={restWrap}>
-              <div style={{ fontWeight: 900, fontSize: 18 }}>Отдых перед следующим подходом</div>
+              <div style={{ fontWeight: 900, fontSize: 18 }}>{messages.programSession.rest.title}</div>
               <div style={{ ...restTimer, ...(isFinalCountdown ? restTimerDanger : null) }}>
                 {Math.floor(restSeconds / 60)}:{String(restSeconds % 60).padStart(2, '0')}
               </div>
@@ -419,7 +453,7 @@ export default function ProgramSessionPage() {
                     setRestPaused((x) => !x);
                   }}
                 >
-                  {restPaused ? 'Продолжить' : 'Пауза'}
+                  {restPaused ? messages.programSession.rest.resume : messages.programSession.rest.pause}
                 </button>
                 <button
                   type="button"
@@ -429,16 +463,22 @@ export default function ProgramSessionPage() {
                     setRestSeconds(0);
                   }}
                 >
-                  Пропустить
+                  {messages.programSession.rest.skip}
                 </button>
               </div>
             </div>
           ) : (
             <div style={{ display: 'grid', gap: 12, justifyItems: 'center' }}>
               <div style={{ fontWeight: 900, textAlign: 'center' }}>
-                Подход {currentSet.setNumber}/{session.sets.length} {currentSet.isKeySet ? '· max' : ''}
+                {formatText(messages.programSession.set.title, {
+                  current: currentSet.setNumber,
+                  total: session.sets.length,
+                  maxSuffix: currentSet.isKeySet ? messages.programSession.set.maxSuffix : '',
+                })}
               </div>
-              <div style={{ textAlign: 'center' }}>Цель: <b>{currentSet.targetReps}</b> повторений</div>
+              <div style={{ textAlign: 'center' }}>
+                {formatText(messages.programSession.set.target, { reps: currentSet.targetReps })}
+              </div>
 
               <div style={setInputWrap}>
                 <input
@@ -472,7 +512,7 @@ export default function ProgramSessionPage() {
                 </div>
 
                 <button type="button" style={{ ...btnPrimary, width: '100%' }} onClick={saveCurrentSet} disabled={saving}>
-                  {saving ? 'Сохранение…' : 'Сделал'}
+                  {saving ? messages.programSession.set.saving : messages.programSession.set.done}
                 </button>
               </div>
             </div>
@@ -482,16 +522,16 @@ export default function ProgramSessionPage() {
 
       {done ? (
         <section style={card}>
-          <div style={{ fontWeight: 900, marginBottom: 8 }}>Выполнено</div>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>{messages.programSession.complete.title}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Link href="/program" style={btnLink}>К программе</Link>
-            <button type="button" style={btnSecondary} onClick={() => router.push('/dashboard')}>На тренировку</button>
+            <Link href="/program" style={btnLink}>{messages.programSession.complete.toProgram}</Link>
+            <button type="button" style={btnSecondary} onClick={() => router.push('/dashboard')}>{messages.programSession.complete.toDashboard}</button>
           </div>
         </section>
       ) : null}
 
       <div style={{ marginTop: 12 }}>
-        <Link href="/program" style={btnLink}>← Назад к расписанию</Link>
+        <Link href="/program" style={btnLink}>{messages.programSession.complete.backToSchedule}</Link>
       </div>
     </div>
   );

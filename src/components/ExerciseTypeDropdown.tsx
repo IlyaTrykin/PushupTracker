@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { t } from '@/i18n/translate';
 
 export type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
 
@@ -14,6 +16,8 @@ const OPTIONS: { value: ExerciseType; label: string }[] = [
 ];
 
 export default function ExerciseTypeDropdown() {
+  const { locale } = useI18n();
+  const tt = (input: string) => t(locale, input);
   const [value, setValue] = useState<ExerciseType>('pushups');
 
   useEffect(() => {
@@ -46,7 +50,7 @@ export default function ExerciseTypeDropdown() {
       }}
     >
       {OPTIONS.map((o) => (
-        <option key={o.value} value={o.value}>{o.label}</option>
+        <option key={o.value} value={o.value}>{tt(o.label)}</option>
       ))}
     </select>
   );

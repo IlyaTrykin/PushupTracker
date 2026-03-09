@@ -1,13 +1,19 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
+import { normalizeLocale } from '@/i18n/locale';
+import { setPreferredLocaleCookie } from '@/i18n/server';
 import { filterUsersByChannel } from '@/lib/notification-preferences';
 import { sendWebPushToUsers } from '@/lib/web-push';
 import { sendAdminNewUserRegisteredEmail } from '@/lib/notification-email';
 
 export async function POST(request: Request) {
   try {
-    const { email, username, password } = await request.json();
+    const body = await request.json();
+    const email = String(body?.email || '').trim();
+    const username = String(body?.username || '').trim();
+    const password = String(body?.password || '');
+    const language = normalizeLocale(body?.language);
 
     if (!email || !username || !password) {
       return NextResponse.json({ error: 'Заполните все поля' }, { status: 400 });
@@ -36,6 +42,7 @@ export async function POST(request: Request) {
         email,
         username,
         passwordHash,
+        language,
       },
     });
 
@@ -96,11 +103,14 @@ export async function POST(request: Request) {
       console.error('REGISTER ADMIN NOTIFY ERROR:', notifyError);
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       id: user.id,
       email: user.email,
       username: user.username,
+      language: user.language,
     });
+    setPreferredLocaleCookie(res, language, request);
+    return res;
   } catch (e: any) {
     console.error('REGISTER ERROR:', e);
 
