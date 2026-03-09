@@ -3,7 +3,7 @@
  * Key rule: NEVER cache /_next/* (build chunks) and never cache /api/*
  */
 
-const VERSION = 'v3'; // при больших изменениях меняем версию, чтобы сбросить старый cache-first
+const VERSION = 'v4'; // при больших изменениях меняем версию, чтобы сбросить старый cache-first
 const STATIC_CACHE = `pushup-static-${VERSION}`;
 
 self.addEventListener('install', (event) => {
@@ -23,6 +23,13 @@ self.addEventListener('activate', (event) => {
 
     // Забираем контроль над открытыми вкладками
     await self.clients.claim();
+
+    // Критично после деплоя: принудительно перезагружаем открытые вкладки,
+    // чтобы сбросить старые client bundles / Server Action IDs.
+    const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    await Promise.all(
+      allClients.map((client) => ('navigate' in client ? client.navigate(client.url) : Promise.resolve()))
+    );
   })());
 });
 

@@ -7,6 +7,7 @@ type Profile = {
   id: string;
   email: string;
   username: string;
+  isAdmin: boolean;
   createdAt: string;
   updatedAt: string;
   gender: string | null;
@@ -397,8 +398,13 @@ export default function ProfilePage() {
         <div style={{ marginTop: 20, borderTop: '1px solid #e5e7eb', paddingTop: 16, display: 'grid', gap: 8 }}>
           <div style={{ fontWeight: 900, fontSize: 16 }}>Push уведомления</div>
           <div style={{ fontSize: 13, color: '#4b5563' }}>
-            События: запрос в друзья, приглашение в соревнование, смена позиции в активном соревновании.
+            События: запросы в друзья, приглашения, изменения в соревнованиях, тренировки друзей и уведомления программы.
           </div>
+          {profile?.isAdmin ? (
+            <div style={{ fontSize: 13, color: '#4b5563' }}>
+              Для админа здесь также доступны push и e-mail уведомления о новых регистрациях пользователей.
+            </div>
+          ) : null}
           <PushNotificationsToggle />
         </div>
 

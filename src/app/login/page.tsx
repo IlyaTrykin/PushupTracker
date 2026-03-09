@@ -4,6 +4,16 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
+type LoginResponse = {
+  ok?: boolean;
+  user?: {
+    username: string;
+    isAdmin?: boolean;
+    avatarPath?: string | null;
+  };
+  error?: string;
+};
+
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
@@ -20,11 +30,13 @@ export default function LoginPage() {
       body: JSON.stringify({ username, password }),
     });
 
-    const data = await res.json();
+    const data = (await res.json()) as LoginResponse;
     if (!res.ok) {
       setError(data.error || 'Ошибка входа');
     } else {
-      router.push('/dashboard');
+      window.dispatchEvent(new CustomEvent('authChanged', { detail: data.user || null }));
+      router.replace('/dashboard');
+      router.refresh();
     }
   };
 

@@ -6,16 +6,20 @@ export type NotificationEventType =
   | 'challenge_rank_change'
   | 'friend_workout'
   | 'friend_reaction'
-  | 'program_reminder';
+  | 'program_reminder'
+  | 'admin_new_user_registered';
 
 export type NotificationChannel = 'push' | 'email';
 
-export const NOTIFICATION_EVENT_DEFS: Array<{
+type NotificationEventDef = {
   eventType: NotificationEventType;
   label: string;
   defaultPush: boolean;
   defaultEmail: boolean;
-}> = [
+  adminOnly?: boolean;
+};
+
+export const NOTIFICATION_EVENT_DEFS: NotificationEventDef[] = [
   {
     eventType: 'friend_request',
     label: 'Запрос в друзья',
@@ -52,15 +56,32 @@ export const NOTIFICATION_EVENT_DEFS: Array<{
     defaultPush: true,
     defaultEmail: false,
   },
+  {
+    eventType: 'admin_new_user_registered',
+    label: 'Новая регистрация пользователя',
+    defaultPush: true,
+    defaultEmail: true,
+    adminOnly: true,
+  },
 ];
 
 const eventDefMap = new Map(NOTIFICATION_EVENT_DEFS.map((d) => [d.eventType, d]));
 
-export function getDefaultFor(eventType: NotificationEventType) {
-  return eventDefMap.get(eventType) || { defaultPush: true, defaultEmail: false, label: eventType };
+export function getDefaultFor(eventType: NotificationEventType): NotificationEventDef {
+  return eventDefMap.get(eventType) || {
+    eventType,
+    label: eventType,
+    defaultPush: true,
+    defaultEmail: false,
+  };
 }
 
 export async function getResolvedPreferencesForUser(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isAdmin: true },
+  });
+  const availableDefs = NOTIFICATION_EVENT_DEFS.filter((def) => !def.adminOnly || user?.isAdmin);
   const rows = await prisma.notificationPreference.findMany({
     where: { userId },
     select: { eventType: true, pushEnabled: true, emailEnabled: true },
@@ -68,7 +89,7 @@ export async function getResolvedPreferencesForUser(userId: string) {
 
   const byEvent = new Map(rows.map((r) => [r.eventType as NotificationEventType, r]));
 
-  return NOTIFICATION_EVENT_DEFS.map((def) => {
+  return availableDefs.map((def) => {
     const row = byEvent.get(def.eventType);
     return {
       eventType: def.eventType,
@@ -87,6 +108,11 @@ export async function filterUsersByChannel(
   if (!userIds.length) return [];
 
   const uniqueUserIds = Array.from(new Set(userIds));
+  const users = await prisma.user.findMany({
+    where: { id: { in: uniqueUserIds } },
+    select: { id: true, isAdmin: true },
+  });
+  const userMap = new Map(users.map((user) => [user.id, user]));
   const rows = await prisma.notificationPreference.findMany({
     where: {
       userId: { in: uniqueUserIds },
@@ -99,6 +125,7 @@ export async function filterUsersByChannel(
   const def = getDefaultFor(eventType);
 
   return uniqueUserIds.filter((uid) => {
+    if (def.adminOnly && !userMap.get(uid)?.isAdmin) return false;
     const row = rowMap.get(uid);
     if (!row) return channel === 'push' ? def.defaultPush : def.defaultEmail;
     return channel === 'push' ? row.pushEnabled : row.emailEnabled;

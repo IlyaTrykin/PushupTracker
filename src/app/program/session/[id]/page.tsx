@@ -92,6 +92,7 @@ export default function ProgramSessionPage() {
     if (!session) return null;
     return session.sets[currentIdx] || null;
   }, [session, currentIdx]);
+  const isFinalCountdown = restSeconds > 0 && restSeconds <= 5;
 
   const load = async (forceStartEarly = false) => {
     if (!sessionId) return;
@@ -211,7 +212,7 @@ export default function ProgramSessionPage() {
       return;
     }
 
-    if (restSeconds <= 5 && lastBeepSecondRef.current !== restSeconds) {
+    if (restSeconds <= 3 && lastBeepSecondRef.current !== restSeconds) {
       lastBeepSecondRef.current = restSeconds;
       playCountdownBeep();
     }
@@ -334,7 +335,7 @@ export default function ProgramSessionPage() {
           {restSeconds > 0 ? (
             <div style={restWrap}>
               <div style={{ fontWeight: 900, fontSize: 18 }}>Отдых перед следующим подходом</div>
-              <div style={restTimer}>
+              <div style={{ ...restTimer, ...(isFinalCountdown ? restTimerDanger : null) }}>
                 {Math.floor(restSeconds / 60)}:{String(restSeconds % 60).padStart(2, '0')}
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -484,6 +485,10 @@ const restTimer: React.CSSProperties = {
   lineHeight: 1,
   fontSize: 'clamp(76px, 23vw, 180px)',
   letterSpacing: 2,
+};
+
+const restTimerDanger: React.CSSProperties = {
+  color: '#dc2626',
 };
 
 const btnPrimary: React.CSSProperties = {

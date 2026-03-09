@@ -21,6 +21,7 @@ function base64ToUint8Array(base64String: string) {
 
 export default function PushNotificationsToggle() {
   const [supported, setSupported] = useState(false);
+  const [requiresSecureContext, setRequiresSecureContext] = useState(false);
   const [configured, setConfigured] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [publicKey, setPublicKey] = useState('');
@@ -32,7 +33,13 @@ export default function PushNotificationsToggle() {
   const canEditTable = useMemo(() => rows.length > 0, [rows]);
 
   useEffect(() => {
-    setSupported(typeof window !== 'undefined' && 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window);
+    if (typeof window === 'undefined') return;
+
+    const hasRequiredApis = 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+    const secureContextRequired = !window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+
+    setRequiresSecureContext(secureContextRequired);
+    setSupported(hasRequiredApis && !secureContextRequired);
   }, []);
 
   useEffect(() => {
@@ -162,7 +169,13 @@ export default function PushNotificationsToggle() {
   }
 
   if (!supported) {
-    return <div style={{ fontSize: 13, color: '#6b7280' }}>Push не поддерживается в этом браузере.</div>;
+    return (
+      <div style={{ fontSize: 13, color: '#6b7280' }}>
+        {requiresSecureContext
+          ? 'Push работает только через HTTPS на домене. При открытии по IP уведомления недоступны.'
+          : 'Push не поддерживается в этом браузере.'}
+      </div>
+    );
   }
 
   return (

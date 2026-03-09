@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import Script from 'next/script';
 import './globals.css';
 import AppNav from '@/components/AppNav';
 import RegisterSW from '@/components/RegisterSW';
+import ScreenWakeLock from '@/components/ScreenWakeLock';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -13,6 +15,52 @@ const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
   subsets: ['latin'],
 });
+
+const swRecoveryScript = `
+(() => {
+  const version = '2026-03-08-sw-recovery-1';
+  const marker = 'pushup-sw-recovery-version';
+
+  try {
+    if (sessionStorage.getItem(marker) === version) return;
+  } catch {}
+
+  if (!('serviceWorker' in navigator) && !('caches' in window)) return;
+
+  (async () => {
+    let touched = false;
+
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      if (registrations.length > 0) {
+        await Promise.all(registrations.map((registration) => registration.unregister().catch(() => false)));
+        touched = true;
+      }
+    }
+
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      const staleKeys = keys.filter((key) => key.startsWith('pushup-'));
+      if (staleKeys.length > 0) {
+        await Promise.all(staleKeys.map((key) => caches.delete(key)));
+        touched = true;
+      }
+    }
+
+    try {
+      sessionStorage.setItem(marker, version);
+    } catch {}
+
+    if (touched) {
+      window.location.reload();
+    }
+  })().catch(() => {
+    try {
+      sessionStorage.setItem(marker, version);
+    } catch {}
+  });
+})();
+`;
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -50,6 +98,10 @@ export default function RootLayout({
   return (
     <html lang="ru">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <Script id="sw-recovery" strategy="beforeInteractive">
+          {swRecoveryScript}
+        </Script>
+        <ScreenWakeLock />
         <RegisterSW />
         <AppNav />
         <div className="app-shell"><div className="app-content">{children}</div></div>
