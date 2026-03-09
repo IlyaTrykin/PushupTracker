@@ -254,7 +254,7 @@ function suggestedFrequencyPerWeek(args: {
 }) {
   const baseline = Math.max(1, Math.round(args.baselineMaxReps));
   const target = Math.max(baseline, Math.round(args.targetReps));
-  const age = Math.max(12, Math.min(90, Math.round(args.ageYears)));
+  const age = Math.max(8, Math.min(90, Math.round(args.ageYears)));
   const weight = Math.max(30, Math.min(250, Math.round(args.weightKg)));
   const gap = Math.max(0, target - baseline);
 
@@ -280,7 +280,7 @@ function suggestedDurationWeeks(args: {
 }) {
   const baseline = Math.max(1, Math.round(args.baselineMaxReps));
   const target = Math.max(baseline, Math.round(args.targetReps));
-  const age = Math.max(12, Math.min(90, Math.round(args.ageYears)));
+  const age = Math.max(8, Math.min(90, Math.round(args.ageYears)));
   const weight = Math.max(30, Math.min(250, Math.round(args.weightKg)));
   const frequency = Math.max(1, Math.min(6, Math.round(args.frequencyPerWeek)));
 
@@ -455,7 +455,7 @@ export default function ProgramPage() {
         resolvedForm.frequencyPerWeek <= 6 &&
         resolvedForm.durationWeeks >= 4 &&
         resolvedForm.durationWeeks <= 24 &&
-        resolvedForm.ageYears >= 12 &&
+        resolvedForm.ageYears >= 8 &&
         resolvedForm.ageYears <= 90 &&
         resolvedForm.weightKg >= 30 &&
         resolvedForm.weightKg <= 250

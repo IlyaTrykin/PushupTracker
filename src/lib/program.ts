@@ -182,7 +182,7 @@ export function suggestDurationWeeks(args: {
 }): number {
   const baseline = clampInt(args.baselineMaxReps, 1, 500);
   const target = clampInt(args.targetReps, baseline, 1000);
-  const age = clampInt(args.ageYears, 12, 90);
+  const age = clampInt(args.ageYears, 8, 90);
   const weight = clampInt(args.weightKg, 30, 250);
   const frequency = clampInt(
     Number(args.frequencyPerWeek ?? suggestFrequencyPerWeek(args)),
@@ -221,7 +221,7 @@ export function suggestFrequencyPerWeek(args: {
 }): number {
   const baseline = clampInt(args.baselineMaxReps, 1, 500);
   const target = clampInt(args.targetReps, baseline, 1000);
-  const age = clampInt(args.ageYears, 12, 90);
+  const age = clampInt(args.ageYears, 8, 90);
   const weight = clampInt(args.weightKg, 30, 250);
   const goalGap = Math.max(0, target - baseline);
 
@@ -327,7 +327,7 @@ function normalizeCreateInput(raw: ProgramCreateInput): NormalizedCreateInput {
   const baselineMaxReps = clampInt(raw.baselineMaxReps, 1, 500);
   const targetReps = clampInt(raw.targetReps, baselineMaxReps, 1000);
 
-  const ageYears = clampInt(Number(raw.ageYears ?? 25), 12, 90);
+  const ageYears = clampInt(Number(raw.ageYears ?? 25), 8, 90);
   const weightKg = clampInt(Number(raw.weightKg ?? 70), 30, 250);
   const frequencyPerWeek = raw.frequencyPerWeek != null
     ? clampInt(Number(raw.frequencyPerWeek), 1, 6)
