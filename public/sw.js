@@ -3,7 +3,7 @@
  * Key rule: NEVER cache /_next/* (build chunks) and never cache /api/*
  */
 
-const VERSION = 'v4'; // при больших изменениях меняем версию, чтобы сбросить старый cache-first
+const VERSION = 'v5'; // при больших изменениях меняем версию, чтобы сбросить старый cache-first
 const STATIC_CACHE = `pushup-static-${VERSION}`;
 
 self.addEventListener('install', (event) => {
