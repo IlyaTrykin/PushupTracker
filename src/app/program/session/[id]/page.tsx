@@ -87,6 +87,9 @@ export default function ProgramSessionPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastBeepSecondRef = useRef<number | null>(null);
   const wakeLockRef = useRef<any>(null);
+  const prepareAudioRef = useRef<HTMLAudioElement | null>(null);
+  const startAudioRef = useRef<HTMLAudioElement | null>(null);
+  const prevRestSecondsRef = useRef(0);
 
   const currentSet = useMemo(() => {
     if (!session) return null;
@@ -178,17 +181,65 @@ export default function ProgramSessionPage() {
     } catch {}
   }, []);
 
-  const playCountdownBeep = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtor) return;
-
-    if (!audioContextRef.current) audioContextRef.current = new AudioCtor();
-    const ctx = audioContextRef.current;
-
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
+  const getAudioElements = useCallback(() => {
+    if (typeof window === 'undefined') return null;
+    if (!prepareAudioRef.current) {
+      prepareAudioRef.current = new Audio('/audio/program-prepare.mp3');
+      prepareAudioRef.current.preload = 'auto';
     }
+    if (!startAudioRef.current) {
+      startAudioRef.current = new Audio('/audio/program-start.mp3');
+      startAudioRef.current.preload = 'auto';
+    }
+    const mediaSession = navigator.mediaSession;
+    const MediaMetadataCtor = window.MediaMetadata;
+    if (mediaSession && MediaMetadataCtor) {
+      mediaSession.metadata = new MediaMetadataCtor({
+        title: 'Таймер отдыха',
+        artist: 'Pushup Tracker',
+        album: 'Тренировка по программе',
+        artwork: [
+          { src: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: '/icons/icon-1024.png', sizes: '1024x1024', type: 'image/png' },
+        ],
+      });
+    }
+    return { prepare: prepareAudioRef.current, start: startAudioRef.current };
+  }, []);
+
+  const primeAudioPlayback = useCallback(async () => {
+    if (typeof window !== 'undefined') {
+      const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtor) {
+        if (!audioContextRef.current) audioContextRef.current = new AudioCtor();
+        if (audioContextRef.current.state === 'suspended') {
+          try {
+            await audioContextRef.current.resume();
+          } catch {}
+        }
+      }
+    }
+
+    const audio = getAudioElements();
+    if (!audio) return;
+
+    await Promise.all(Object.values(audio).map(async (clip) => {
+      try {
+        clip.muted = true;
+        clip.currentTime = 0;
+        await clip.play();
+        clip.pause();
+        clip.currentTime = 0;
+        clip.muted = false;
+      } catch {}
+    }));
+  }, [getAudioElements]);
+
+  const playCountdownBeep = useCallback(() => {
+    const ctx = audioContextRef.current;
+    if (!ctx || ctx.state !== 'running') return;
 
     const oscillator = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -206,17 +257,35 @@ export default function ProgramSessionPage() {
     oscillator.stop(ctx.currentTime + 0.15);
   }, []);
 
+  const playVoiceAnnouncement = useCallback((kind: 'prepare' | 'start') => {
+    const audio = getAudioElements()?.[kind];
+    if (!audio) return;
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+      void audio.play().catch(() => {});
+    } catch {}
+  }, [getAudioElements]);
+
   useEffect(() => {
+    const prevRestSeconds = prevRestSecondsRef.current;
+    prevRestSecondsRef.current = restSeconds;
+
+    if (!restPaused && prevRestSeconds > 0 && restSeconds === 0) {
+      playVoiceAnnouncement('start');
+    }
     if (restPaused || restSeconds <= 0) {
       lastBeepSecondRef.current = null;
       return;
     }
-
+    if (restSeconds === 5 && prevRestSeconds !== 5) {
+      playVoiceAnnouncement('prepare');
+    }
     if (restSeconds <= 3 && lastBeepSecondRef.current !== restSeconds) {
       lastBeepSecondRef.current = restSeconds;
       playCountdownBeep();
     }
-  }, [restSeconds, restPaused, playCountdownBeep]);
+  }, [restSeconds, restPaused, playVoiceAnnouncement, playCountdownBeep]);
 
   useEffect(() => {
     const shouldKeepAwake = restSeconds > 0 && !restPaused && !done;
@@ -247,6 +316,8 @@ export default function ProgramSessionPage() {
 
   useEffect(() => {
     return () => {
+      prepareAudioRef.current?.pause();
+      startAudioRef.current?.pause();
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => {});
       }
@@ -281,6 +352,7 @@ export default function ProgramSessionPage() {
     setInfo(null);
 
     try {
+      await primeAudioPlayback();
       await fetchJson(`/api/program/session/${session.id}/set/${currentSet.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -339,10 +411,26 @@ export default function ProgramSessionPage() {
                 {Math.floor(restSeconds / 60)}:{String(restSeconds % 60).padStart(2, '0')}
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-                <button type="button" style={btnSecondary} onClick={() => setRestPaused((x) => !x)}>
+                <button
+                  type="button"
+                  style={btnSecondary}
+                  onClick={async () => {
+                    await primeAudioPlayback();
+                    setRestPaused((x) => !x);
+                  }}
+                >
                   {restPaused ? 'Продолжить' : 'Пауза'}
                 </button>
-                <button type="button" style={btnSecondary} onClick={() => setRestSeconds(0)}>Пропустить</button>
+                <button
+                  type="button"
+                  style={btnSecondary}
+                  onClick={async () => {
+                    await primeAudioPlayback();
+                    setRestSeconds(0);
+                  }}
+                >
+                  Пропустить
+                </button>
               </div>
             </div>
           ) : (
