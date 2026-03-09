@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
 
@@ -93,21 +95,21 @@ function addCalendarMonths(d: Date, delta: number) {
   return new Date(d.getFullYear(), d.getMonth() + delta, 1);
 }
 
-function formatMonthTitle(d: Date) {
-  const raw = d.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+function formatMonthTitle(d: Date, locale: string) {
+  const raw = d.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-function formatTimeHHMM(iso?: string) {
+function formatTimeHHMM(iso: string | undefined, locale: string) {
   if (!iso) return '';
   const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return '';
-  return dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  return dt.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
-function formatDateWithWeekday(dayKey: string) {
+function formatDateWithWeekday(dayKey: string, locale: string) {
   const d = new Date(`${dayKey}T00:00:00`);
-  return d.toLocaleDateString('ru-RU', {
+  return d.toLocaleDateString(locale, {
     weekday: 'long',
     day: '2-digit',
     month: '2-digit',
@@ -270,6 +272,9 @@ function AvatarMini({ src }: { src?: string | null }) {
 }
 
 export default function DashboardPage() {
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
   const [workouts, setWorkouts] = useState<Workout[]>([]);
 
@@ -437,7 +442,7 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reps, date, time: toIsoTime(date, timeToSend), exerciseType }),
       });
-      setInfo('Добавлено');
+      setInfo(tt('Добавлено'));
       const toast = reps >= 50 ? 'МАШИНА!!!! 💪🎉' : reps >= 21 ? '👍👍' : '👍';
       setToastMessage(toast);
       setTime(normalizeTime(new Date()));
@@ -482,7 +487,7 @@ export default function DashboardPage() {
         }),
       });
       setEditingId(null);
-      setInfo('Изменения сохранены');
+      setInfo(tt('Изменения сохранены'));
       await loadWorkouts();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -492,7 +497,7 @@ export default function DashboardPage() {
   const deleteWorkout = async (id: string) => {
     setError(null);
     setInfo(null);
-    if (!window.confirm('Удалить эту запись?')) return;
+    if (!window.confirm(tt('Удалить эту запись?'))) return;
 
     try {
       await fetchJsonSafe('/api/workouts', {
@@ -500,7 +505,7 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
       });
-      setInfo('Запись удалена');
+      setInfo(tt('Запись удалена'));
       await loadWorkouts();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -508,7 +513,7 @@ export default function DashboardPage() {
   };
 
   const selectedDayData = detailDay ? dayMap.get(detailDay) ?? null : null;
-  const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
   const todayKey = normalizeDate(new Date());
 
   useEffect(() => {
@@ -525,7 +530,7 @@ export default function DashboardPage() {
     <div className="app-page" style={{ maxWidth: 920 }}>
       {toastMessage ? <div className="app-toast">{toastMessage}</div> : null}
 
-      <div style={exerciseTypePickerWrap} role="tablist" aria-label="Выбор типа упражнения">
+      <div style={exerciseTypePickerWrap} role="tablist" aria-label={tt('Упражнение')}>
         {EXERCISE_ORDER.map((type) => {
           const active = exerciseType === type;
           return (
@@ -534,8 +539,8 @@ export default function DashboardPage() {
               type="button"
               onClick={() => handleExerciseTypeChange(type)}
               style={exerciseTypePickerButton(active)}
-              title={exerciseLabel(type)}
-              aria-label={exerciseLabel(type)}
+              title={tt(exerciseLabel(type))}
+              aria-label={tt(exerciseLabel(type))}
               aria-pressed={active}
             >
               <img src={exerciseFeedIcon(type)} alt="" aria-hidden="true" style={exerciseTypePickerIcon} />
@@ -558,7 +563,7 @@ export default function DashboardPage() {
             value={date}
             onChange={(e) => setDate(e.target.value)}
             style={smallInput}
-            aria-label="Дата"
+            aria-label={tt('Дата')}
           />
           <input
             type="time"
@@ -568,7 +573,7 @@ export default function DashboardPage() {
               setTimeTouched(true);
             }}
             style={smallInput}
-            aria-label="Время"
+            aria-label={tt('Время')}
           />
         </div>
 
@@ -601,7 +606,7 @@ export default function DashboardPage() {
         </div>
 
         <button type="button" onClick={() => handleAdd()} style={addButton}>
-          Добавить
+          {tt('Добавить')}
         </button>
       </div>
 
@@ -609,27 +614,27 @@ export default function DashboardPage() {
       {info ? <p style={{ color: 'green', marginTop: 6 }}>{info}</p> : null}
 
       <section className="app-tiles" style={{ marginBottom: 20 }}>
-        <Stat label="Сегодня" value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} />
-        <Stat label="Всего" value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} />
-        <Stat label="Текущий год" value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} />
-        <Stat label="Текущий месяц" value={stats.totalMonth} breakdown={breakdownFromStats((s) => s.totalMonth)} />
-        <Stat label="Текущая неделя" value={stats.totalWeek} breakdown={breakdownFromStats((s) => s.totalWeek)} />
-        <Stat label="Среднее/день (месяц)" value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} />
-        <Stat label="Среднее/день (год)" value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} />
-        <Stat label="Среднее/день (всего)" value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} />
-        <Stat label="Серия дней подряд" value={stats.streak} breakdown={breakdownFromStats((s) => s.streak)} />
+        <Stat label={tt('Сегодня')} value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} />
+        <Stat label={tt('Всего')} value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} />
+        <Stat label={tt('Текущий год')} value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} />
+        <Stat label={tt('Текущий месяц')} value={stats.totalMonth} breakdown={breakdownFromStats((s) => s.totalMonth)} />
+        <Stat label={tt('Текущая неделя')} value={stats.totalWeek} breakdown={breakdownFromStats((s) => s.totalWeek)} />
+        <Stat label={tt('Среднее/день (месяц)')} value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} />
+        <Stat label={tt('Среднее/день (год)')} value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} />
+        <Stat label={tt('Среднее/день (всего)')} value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} />
+        <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={breakdownFromStats((s) => s.streak)} />
       </section>
 
       <section style={card}>
-        <h2 style={{ marginTop: 0 }}>Календарь записей</h2>
+        <h2 style={{ marginTop: 0 }}>{tt('Календарь записей')}</h2>
         <div style={calendarNavWrap}>
-          <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(calendarMonth)}</div>
+          <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(calendarMonth, localeTag)}</div>
           <div style={calendarNavButtons}>
             <button type="button" style={btnSecondary} onClick={() => setCalendarMonth((d) => addCalendarMonths(d, -1))}>
-              Предыдущий
+              {tt('Предыдущий')}
             </button>
             <button type="button" style={btnSecondary} onClick={() => setCalendarMonth((d) => addCalendarMonths(d, 1))}>
-              Следующий
+              {tt('Следующий')}
             </button>
           </div>
         </div>
@@ -676,7 +681,7 @@ export default function DashboardPage() {
                 <div style={exerciseNumbersRow}>
                   {exerciseTotals.map(({ type, sum }) => (
                     <span key={type} style={exerciseNumberItem}>
-                      <img src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={exerciseNumberIcon} />
+                      <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={exerciseNumberIcon} />
                       <span style={exerciseNumber}>{sum}</span>
                     </span>
                   ))}
@@ -689,8 +694,8 @@ export default function DashboardPage() {
         <div style={legendWrap}>
           {EXERCISE_ORDER.map((type) => (
             <div key={type} style={legendItem}>
-              <img src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={legendIcon} />
-              <span>{exerciseLabel(type)}</span>
+              <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={legendIcon} />
+              <span>{tt(exerciseLabel(type))}</span>
             </div>
           ))}
         </div>
@@ -706,7 +711,7 @@ export default function DashboardPage() {
         >
           <section style={modalCard} onClick={(e) => e.stopPropagation()}>
             <div style={modalTop}>
-              <h2 style={{ margin: 0 }}>Подходы за день</h2>
+              <h2 style={{ margin: 0 }}>{tt('Подходы за день')}</h2>
               <button
                 type="button"
                 style={btnSecondary}
@@ -715,16 +720,16 @@ export default function DashboardPage() {
                   setEditingId(null);
                 }}
               >
-                Закрыть
+                {tt('Закрыть')}
               </button>
             </div>
 
             {!detailDay || !selectedDayData ? (
-              <div style={{ color: '#6b7280' }}>Нет записей на выбранный день.</div>
+              <div style={{ color: '#6b7280' }}>{tt('Нет записей на выбранный день.')}</div>
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(detailDay)} · всего: {selectedDayData.totalReps}
+                  {formatDateWithWeekday(detailDay, localeTag)} · {tt('всего')}: {selectedDayData.totalReps}
                 </div>
 
                 {selectedDayData.items.map((w) => {
@@ -735,31 +740,31 @@ export default function DashboardPage() {
                         <div style={{ display: 'grid', gap: 8, width: '100%' }}>
                           <div style={editGrid}>
                             <div style={{ display: 'grid', gap: 4 }}>
-                              <label>Упражнение</label>
+                              <label>{tt('Упражнение')}</label>
                               <select
                                 value={editExerciseType}
                                 onChange={(e) => setEditExerciseType(e.target.value as ExerciseType)}
                                 style={editInput}
                               >
-                                <option value="pushups">Отжимания</option>
-                                <option value="pullups">Подтягивания</option>
-                                <option value="crunches">Скручивания</option>
-                                <option value="squats">Приседания</option>
+                                <option value="pushups">{tt('Отжимания')}</option>
+                                <option value="pullups">{tt('Подтягивания')}</option>
+                                <option value="crunches">{tt('Скручивания')}</option>
+                                <option value="squats">{tt('Приседания')}</option>
                               </select>
                             </div>
 
                             <div style={{ display: 'grid', gap: 4 }}>
-                              <label>Дата</label>
+                              <label>{tt('Дата')}</label>
                               <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} style={editInput} />
                             </div>
 
                             <div style={{ display: 'grid', gap: 4 }}>
-                              <label>Время</label>
+                              <label>{tt('Время')}</label>
                               <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} style={editInput} />
                             </div>
 
                             <div style={{ display: 'grid', gap: 4 }}>
-                              <label>Повторы</label>
+                              <label>{tt('Повторы')}</label>
                               <input
                                 type="number"
                                 value={editReps}
@@ -770,8 +775,8 @@ export default function DashboardPage() {
                           </div>
 
                           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            <button type="button" onClick={saveEdit} style={btnPrimary}>Сохранить</button>
-                            <button type="button" onClick={cancelEdit} style={btnSecondary}>Отмена</button>
+                            <button type="button" onClick={saveEdit} style={btnPrimary}>{tt('Сохранить')}</button>
+                            <button type="button" onClick={cancelEdit} style={btnSecondary}>{tt('Отмена')}</button>
                           </div>
                         </div>
                       ) : (
@@ -779,16 +784,16 @@ export default function DashboardPage() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>
                             <div style={{ display: 'grid', gap: 4 }}>
                               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                                <img src={exerciseFeedIcon(w.exerciseType)} alt={exerciseLabel(w.exerciseType)} style={detailsExerciseIcon} />
-                                <span style={{ fontWeight: 800 }}>{exerciseLabel(w.exerciseType)}</span>
+                                <img src={exerciseFeedIcon(w.exerciseType)} alt={tt(exerciseLabel(w.exerciseType))} style={detailsExerciseIcon} />
+                                <span style={{ fontWeight: 800 }}>{tt(exerciseLabel(w.exerciseType))}</span>
                               </div>
-                              <div>Время: <b>{formatTimeHHMM(w.time || w.date)}</b></div>
-                              <div>Повторы: <b>{w.reps}</b></div>
+                              <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag)}</b></div>
+                              <div>{tt('Повторы')}: <b>{w.reps}</b></div>
                             </div>
 
                             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                              <button type="button" onClick={() => startEdit(w)} style={btnSecondary}>Редактировать</button>
-                              <button type="button" onClick={() => deleteWorkout(w.id)} style={btnDanger}>Удалить</button>
+                              <button type="button" onClick={() => startEdit(w)} style={btnSecondary}>{tt('Редактировать')}</button>
+                              <button type="button" onClick={() => deleteWorkout(w.id)} style={btnDanger}>{tt('Удалить')}</button>
                             </div>
                           </div>
 

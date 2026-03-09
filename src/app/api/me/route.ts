@@ -12,6 +12,7 @@ export async function GET(request: Request) {
         email: true,
         username: true,
         isAdmin: true,
+        language: true,
         createdAt: true,
         updatedAt: true,
         gender: true,

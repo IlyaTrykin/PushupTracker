@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 type NotificationItem = {
   id: string;
@@ -29,6 +31,9 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
 }
 
 export default function NotificationsPage() {
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +81,7 @@ export default function NotificationsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ all: true }),
       });
-      setInfo('Отмечено как прочитанное');
+      setInfo(tt('Отмечено как прочитанное'));
       await load();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -86,25 +91,25 @@ export default function NotificationsPage() {
   return (
     <div style={{ maxWidth: 900, margin: '40px auto', fontFamily: 'system-ui' }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Link href="/" style={{ textDecoration: 'none' }}>← На главную</Link>
+        <Link href="/" style={{ textDecoration: 'none' }}>← {tt('На главную')}</Link>
       </div>
 
       <div style={{ marginTop: 10, color: '#6b7280' }}>
-        Непрочитанных: <b>{unreadCount}</b>
+        {tt('Непрочитанных')}: <b>{unreadCount}</b>
       </div>
 
       <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-        <button type="button" onClick={load} style={btnSecondary}>Обновить</button>
-        <button type="button" onClick={markAllRead} style={btnPrimary}>Отметить всё прочитанным</button>
+        <button type="button" onClick={load} style={btnSecondary}>{tt('Обновить')}</button>
+        <button type="button" onClick={markAllRead} style={btnPrimary}>{tt('Отметить всё прочитанным')}</button>
       </div>
 
       {error && <p style={{ color: 'red', marginTop: 12 }}>{error}</p>}
       {info && <p style={{ color: 'green', marginTop: 12 }}>{info}</p>}
-      {loading && <p style={{ marginTop: 12 }}>Загрузка…</p>}
+      {loading && <p style={{ marginTop: 12 }}>{tt('Загрузка…')}</p>}
 
       <div style={{ marginTop: 16, display: 'grid', gap: 10 }}>
         {items.length === 0 ? (
-          <div style={{ color: '#6b7280' }}>Пока уведомлений нет.</div>
+          <div style={{ color: '#6b7280' }}>{tt('Пока уведомлений нет.')}</div>
         ) : (
           items.map(n => (
             <div
@@ -120,12 +125,12 @@ export default function NotificationsPage() {
                 <div>
                   <div style={{ fontWeight: 900 }}>{n.title}</div>
                   <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-                    {new Date(n.createdAt).toLocaleString()} · <span style={{ fontWeight: 700 }}>{n.type}</span>
+                    {new Date(n.createdAt).toLocaleString(localeTag)} · <span style={{ fontWeight: 700 }}>{tt(n.type)}</span>
                   </div>
-                  {n.body && <div style={{ marginTop: 8 }}>{n.body}</div>}
+                  {n.body && <div style={{ marginTop: 8 }}>{tt(n.body)}</div>}
                   {n.link && (
                     <div style={{ marginTop: 8 }}>
-                      <Link href={n.link} style={{ textDecoration: 'none' }}>Открыть</Link>
+                      <Link href={n.link} style={{ textDecoration: 'none' }}>{tt('Открыть')}</Link>
                     </div>
                   )}
                 </div>
@@ -133,7 +138,7 @@ export default function NotificationsPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   {!n.isRead && (
                     <button type="button" onClick={() => markRead(n.id)} style={btnSecondary}>
-                      Прочитано
+                      {tt('Прочитано')}
                     </button>
                   )}
                 </div>

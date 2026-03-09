@@ -16,6 +16,7 @@ export type AuthUser = {
   username: string;
   email: string | null;
   isAdmin: boolean;
+  language: string;
 };
 
 function parseCookieHeader(cookieHeader: string, name: string): string | null {
@@ -56,7 +57,7 @@ export async function getAuthUser(request: Request): Promise<AuthUser | null> {
     select: {
       token: true,
       expiresAt: true,
-      user: { select: { id: true, username: true, email: true, isAdmin: true, deletedAt: true } },
+      user: { select: { id: true, username: true, email: true, isAdmin: true, language: true, deletedAt: true } },
     },
   });
 
@@ -78,6 +79,7 @@ export async function getAuthUser(request: Request): Promise<AuthUser | null> {
     username: session.user.username,
     email: session.user.email ?? null,
     isAdmin: Boolean((session.user as any).isAdmin),
+    language: String((session.user as any).language || 'ru'),
   };
 }
 

@@ -2,8 +2,12 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useI18n } from '@/i18n/provider';
+import { t } from '@/i18n/translate';
 
 export default function ForgotPasswordPage() {
+  const { locale } = useI18n();
+  const tt = (input: string) => t(locale, input);
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -15,7 +19,7 @@ export default function ForgotPasswordPage() {
     setMessage('');
 
     if (!email.trim()) {
-      setError('Введите email');
+      setError(tt('Введите email'));
       return;
     }
 
@@ -28,12 +32,12 @@ export default function ForgotPasswordPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Не удалось отправить письмо');
+        setError(tt(data.error || 'Не удалось отправить письмо'));
       } else {
-        setMessage(data.message || 'Если аккаунт существует, ссылка отправлена на почту.');
+        setMessage(tt(data.message || 'Если аккаунт существует, ссылка отправлена на почту.'));
       }
     } catch {
-      setError('Ошибка сети');
+      setError(tt('Ошибка сети'));
     } finally {
       setSending(false);
     }
@@ -41,7 +45,7 @@ export default function ForgotPasswordPage() {
 
   return (
     <div style={{ maxWidth: 420, margin: '40px auto', padding: 16 }}>
-      <p style={{ color: '#4b5563' }}>Введите email из профиля, мы отправим ссылку для смены пароля.</p>
+      <p style={{ color: '#4b5563' }}>{tt('Введите email из профиля, мы отправим ссылку для смены пароля.')}</p>
 
       <form onSubmit={submit} style={{ display: 'grid', gap: 10 }}>
         <input
@@ -56,7 +60,7 @@ export default function ForgotPasswordPage() {
           disabled={sending}
           style={{ padding: '10px 12px', borderRadius: 10, border: 'none', background: '#2563eb', color: '#fff', fontWeight: 800 }}
         >
-          {sending ? 'Отправка...' : 'Отправить ссылку'}
+          {sending ? tt('Отправка...') : tt('Отправить ссылку')}
         </button>
       </form>
 
@@ -64,7 +68,7 @@ export default function ForgotPasswordPage() {
       {message ? <p style={{ color: '#065f46' }}>{message}</p> : null}
 
       <div style={{ marginTop: 12 }}>
-        <Link href="/login">Назад ко входу</Link>
+        <Link href="/login">{tt('Назад ко входу')}</Link>
       </div>
     </div>
   );

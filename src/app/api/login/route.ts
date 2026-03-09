@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { setSessionCookie } from '@/lib/auth';
 import crypto from 'crypto';
+import { normalizeLocale } from '@/i18n/locale';
+import { setPreferredLocaleCookie } from '@/i18n/server';
 
 function isHttps(request: Request) {
   const xfProto = request.headers.get('x-forwarded-proto');
@@ -26,7 +28,7 @@ export async function POST(request: Request) {
 
     const user = await prisma.user.findUnique({
       where: { username },
-      select: { id: true, email: true, username: true, passwordHash: true, isAdmin: true, deletedAt: true },
+      select: { id: true, email: true, username: true, passwordHash: true, isAdmin: true, language: true, deletedAt: true },
     });
 
     if (!user) {
@@ -63,7 +65,13 @@ export async function POST(request: Request) {
 
     const res = NextResponse.json({
       ok: true,
-      user: { id: user.id, email: user.email, username: user.username, isAdmin: user.isAdmin },
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        isAdmin: user.isAdmin,
+        language: user.language,
+      },
     });
 
     // Не задаём Domain — cookie привязана к текущему хосту
@@ -74,6 +82,7 @@ export async function POST(request: Request) {
       path: '/',
       maxAge: 60 * 60 * 24 * 30,
     });
+    setPreferredLocaleCookie(res, normalizeLocale(user.language), request);
 
     return res;
   } catch {

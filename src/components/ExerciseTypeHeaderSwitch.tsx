@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { t } from '@/i18n/translate';
 
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
 const KEY = 'exerciseType';
@@ -10,6 +12,8 @@ function isValid(v: any): v is ExerciseType {
 }
 
 export default function ExerciseTypeHeaderSwitch() {
+  const { locale } = useI18n();
+  const tt = (input: string) => t(locale, input);
   const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
 
   useEffect(() => {
@@ -38,16 +42,16 @@ export default function ExerciseTypeHeaderSwitch() {
   return (
     <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
       <button type="button" style={pill(exerciseType === 'pushups')} onClick={() => setType('pushups')}>
-        Отжимания
+        {tt('Отжимания')}
       </button>
       <button type="button" style={pill(exerciseType === 'pullups')} onClick={() => setType('pullups')}>
-        Подтягивания
+        {tt('Подтягивания')}
       </button>
       <button type="button" style={pill(exerciseType === 'crunches')} onClick={() => setType('crunches')}>
-        Скручивания
+        {tt('Скручивания')}
       </button>
       <button type="button" style={pill(exerciseType === 'squats')} onClick={() => setType('squats')}>
-        Приседания
+        {tt('Приседания')}
       </button>
     </div>
   );

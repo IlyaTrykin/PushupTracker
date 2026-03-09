@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 interface Friend {
   friendshipId: string;
@@ -138,13 +140,13 @@ function addCalendarMonths(base: Date, delta: number): Date {
   return new Date(base.getFullYear(), base.getMonth() + delta, 1);
 }
 
-function formatMonthTitle(date: Date): string {
-  return date.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+function formatMonthTitle(date: Date, locale: string): string {
+  return date.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
 }
 
-function formatDateWithWeekday(dayKey: string): string {
+function formatDateWithWeekday(dayKey: string, locale: string): string {
   const d = new Date(`${dayKey}T00:00:00`);
-  return d.toLocaleDateString('ru-RU', {
+  return d.toLocaleDateString(locale, {
     weekday: 'short',
     day: '2-digit',
     month: 'long',
@@ -335,6 +337,9 @@ async function fetchJson(url: string) {
 }
 
 export default function FriendsPage() {
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<PendingRequest[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<PendingRequest[]>([]);
@@ -432,7 +437,7 @@ export default function FriendsPage() {
 
     const username = newUsername.trim();
     if (!username) {
-      setError('Введите ник друга');
+      setError(tt('Введите ник друга'));
       return;
     }
 
@@ -457,7 +462,7 @@ export default function FriendsPage() {
       }
 
       setNewUsername('');
-      setInfo(`Запрос отправлен пользователю ${data.username}`);
+      setInfo(tt(`Запрос отправлен пользователю ${data.username}`));
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -480,7 +485,7 @@ export default function FriendsPage() {
         const details = data?.details || '';
         throw new Error(details ? `${base}: ${details}` : base);
       }
-      setInfo(action === 'accept' ? 'Запрос в друзья принят' : 'Запрос отклонён');
+      setInfo(tt(action === 'accept' ? 'Запрос в друзья принят' : 'Запрос отклонён'));
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -488,7 +493,7 @@ export default function FriendsPage() {
   };
 
   const handleCancelOutgoing = async (friendshipId: string, username: string) => {
-    const ok = window.confirm(`Отменить запрос в друзья пользователю ${username}?`);
+    const ok = window.confirm(tt(`Отменить запрос в друзья пользователю ${username}?`));
     if (!ok) return;
     setError(null);
     setInfo(null);
@@ -505,7 +510,7 @@ export default function FriendsPage() {
         const details = data?.details || '';
         throw new Error(details ? `${base}: ${details}` : base);
       }
-      setInfo('Исходящий запрос отменён');
+      setInfo(tt('Исходящий запрос отменён'));
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -535,7 +540,7 @@ export default function FriendsPage() {
   };
 
   const handleRemoveFriend = async (friendshipId: string, username: string) => {
-    const ok = window.confirm(`Удалить пользователя ${username} из друзей?`);
+    const ok = window.confirm(tt(`Удалить пользователя ${username} из друзей?`));
     if (!ok) return;
 
     setError(null);
@@ -561,7 +566,7 @@ export default function FriendsPage() {
         throw new Error(details ? `${base}: ${details}` : base);
       }
 
-      setInfo(`Пользователь ${username} удалён из друзей`);
+      setInfo(tt(`Пользователь ${username} удалён из друзей`));
       await loadAll();
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -731,7 +736,7 @@ export default function FriendsPage() {
 
   const latestFeedWorkouts = useMemo<FeedWorkoutItem[]>(() => {
     const out: FeedWorkoutItem[] = [];
-    const meLabel = me?.username || 'Ты';
+    const meLabel = me?.username || tt('Ты');
 
     for (const w of myWorkouts) {
       out.push({
@@ -801,7 +806,7 @@ export default function FriendsPage() {
 
   const hasPendingRequests = incomingRequests.length > 0 || outgoingRequests.length > 0;
   const todayKey = normalizeDate(new Date());
-  const friendWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  const friendWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
   const selectedFriendDayData = friendDetailDay ? selectedFriendDayMap.get(friendDetailDay) ?? null : null;
   const accentColor = exerciseNumberColor('pushups');
   const accentCard = useMemo<React.CSSProperties>(
@@ -890,17 +895,17 @@ export default function FriendsPage() {
     <div className="app-page">
       {error ? <p style={{ color: 'red', marginTop: 12 }}>{error}</p> : null}
       {info ? <p style={{ color: 'green', marginTop: 12 }}>{info}</p> : null}
-      {loading ? <p style={{ marginTop: 12 }}>Загрузка…</p> : null}
+      {loading ? <p style={{ marginTop: 12 }}>{tt('Загрузка…')}</p> : null}
 
       <section style={accentCard}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', overflowX: 'auto' }}>
-          <h2 style={{ marginTop: 0, marginBottom: 0, whiteSpace: 'nowrap' }}>Друзья</h2>
+          <h2 style={{ marginTop: 0, marginBottom: 0, whiteSpace: 'nowrap' }}>{tt('Друзья')}</h2>
           <button
             type="button"
             onClick={() => setShowAddFriendForm((prev) => !prev)}
             style={btnPlusPrimary}
-            aria-label="Добавить друга"
-            title={showAddFriendForm ? 'Скрыть форму' : 'Добавить друга'}
+            aria-label={tt('Добавить друга')}
+            title={showAddFriendForm ? tt('Скрыть форму') : tt('Добавить друга')}
           >
             {showAddFriendForm ? '−' : '+'}
           </button>
@@ -909,7 +914,7 @@ export default function FriendsPage() {
         {showAddFriendForm ? (
           <form onSubmit={handleAddFriend} style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label>Ник (username)</label>
+              <label>{tt('Ник (username)')}</label>
               <input
                 value={newUsername}
                 onChange={(e) => setNewUsername(e.target.value)}
@@ -917,13 +922,13 @@ export default function FriendsPage() {
               />
             </div>
 
-            <button type="submit" style={btnPrimary}>Добавить</button>
-            <button type="button" onClick={loadAll} style={btnSecondary}>Обновить</button>
+            <button type="submit" style={btnPrimary}>{tt('Добавить')}</button>
+            <button type="button" onClick={loadAll} style={btnSecondary}>{tt('Обновить')}</button>
           </form>
         ) : null}
 
         {sortedAll.length <= 1 ? (
-          <p style={{ marginTop: 12 }}>Пока друзей нет.</p>
+          <p style={{ marginTop: 12 }}>{tt('Пока друзей нет.')}</p>
         ) : (
           <div className="table-scroll" style={{ marginTop: 12 }}>
             <table style={{ width: 'max-content', borderCollapse: 'collapse' }}>
@@ -931,24 +936,24 @@ export default function FriendsPage() {
                 <tr style={{ background: '#f3f4f6' }}>
                   <th style={{ ...thCompact, ...stickyNameHead }} className="table-sticky-first table-sticky-first--head">
                     <button type="button" onClick={() => toggleSort('username')} style={thBtn}>
-                      Имя {sortIndicator('username')}
+                      {tt('Имя')} {sortIndicator('username')}
                     </button>
                   </th>
 
-                  <th style={{ ...thCompact, ...stickyExerciseHead }}>Упр</th>
+                  <th style={{ ...thCompact, ...stickyExerciseHead }}>{tt('Упр')}</th>
 
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('today')} style={thBtn}>Сегодня {sortIndicator('today')}</button></th>
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('all')} style={thBtn}>Всего {sortIndicator('all')}</button></th>
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('year')} style={thBtn}>Год {sortIndicator('year')}</button></th>
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('month')} style={thBtn}>Месяц {sortIndicator('month')}</button></th>
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('week')} style={thBtn}>Неделя {sortIndicator('week')}</button></th>
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgMonth')} style={thBtn}>Ср/мес {sortIndicator('avgMonth')}</button></th>
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgYear')} style={thBtn}>Ср/год {sortIndicator('avgYear')}</button></th>
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgAll')} style={thBtn}>Ср/всего {sortIndicator('avgAll')}</button></th>
-                  <th style={thCompact}><button type="button" onClick={() => toggleSort('streak')} style={thBtn}>Серия {sortIndicator('streak')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('today')} style={thBtn}>{tt('Сегодня')} {sortIndicator('today')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('all')} style={thBtn}>{tt('Всего')} {sortIndicator('all')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('year')} style={thBtn}>{tt('Год')} {sortIndicator('year')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('month')} style={thBtn}>{tt('Месяц')} {sortIndicator('month')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('week')} style={thBtn}>{tt('Неделя')} {sortIndicator('week')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgMonth')} style={thBtn}>{tt('Ср/мес')} {sortIndicator('avgMonth')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgYear')} style={thBtn}>{tt('Ср/год')} {sortIndicator('avgYear')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('avgAll')} style={thBtn}>{tt('Ср/всего')} {sortIndicator('avgAll')}</button></th>
+                  <th style={thCompact}><button type="button" onClick={() => toggleSort('streak')} style={thBtn}>{tt('Серия')} {sortIndicator('streak')}</button></th>
 
-                  <th style={thCompact}>Следить</th>
-                  <th style={thCompact}>Действия</th>
+                  <th style={thCompact}>{tt('Следить')}</th>
+                  <th style={thCompact}>{tt('Действия')}</th>
                 </tr>
               </thead>
 
@@ -957,7 +962,7 @@ export default function FriendsPage() {
                   const isMe = !!row.isMe;
 
                   const sBy: StatsByExercise = row.statsByExercise;
-                  const uname = isMe ? 'Ты' : row.friend.username;
+                  const uname = isMe ? tt('Ты') : row.friend.username;
 
                   return (
                     <tr key={isMe ? '__me__' : row.friend.friendshipId}>
@@ -973,7 +978,7 @@ export default function FriendsPage() {
                       <td style={{ ...tdCompact, ...stickyExerciseCell }}>
                         <div style={exerciseIconStack}>
                           {EXERCISE_ORDER.map((type) => (
-                            <img key={`${uname}-${type}`} src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={tableExerciseIcon} />
+                            <img key={`${uname}-${type}`} src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={tableExerciseIcon} />
                           ))}
                         </div>
                       </td>
@@ -1030,7 +1035,7 @@ export default function FriendsPage() {
                             type="checkbox"
                             checked={Boolean(row.friend.isFollowing)}
                             onChange={(e) => handleToggleFollow(row.friend as Friend, e.target.checked)}
-                            aria-label={`Следить за ${row.friend.username}`}
+                            aria-label={tt(`Следить за ${row.friend.username}`)}
                           />
                         )}
                       </td>
@@ -1044,7 +1049,7 @@ export default function FriendsPage() {
                             onClick={() => handleRemoveFriend(row.friend.friendshipId, row.friend.username)}
                             style={btnDanger}
                           >
-                            Удалить
+                            {tt('Удалить')}
                           </button>
                         )}
                       </td>
@@ -1059,11 +1064,11 @@ export default function FriendsPage() {
 
       {hasPendingRequests ? (
         <section style={accentCard}>
-          <h2 style={{ marginTop: 0 }}>Запросы в друзья</h2>
+          <h2 style={{ marginTop: 0 }}>{tt('Запросы в друзья')}</h2>
           <div style={{ display: 'grid', gap: 12 }}>
             {incomingRequests.length > 0 ? (
               <div>
-                <div style={{ fontWeight: 800, marginBottom: 8 }}>Входящие ({incomingRequests.length})</div>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>{tt('Входящие')} ({incomingRequests.length})</div>
                 <div style={{ display: 'grid', gap: 8 }}>
                   {incomingRequests.map((r) => (
                     <div key={r.friendshipId} style={requestRow}>
@@ -1071,12 +1076,12 @@ export default function FriendsPage() {
                         <AvatarCircle src={r.avatarPath} size={26} />
                         <div>
                           <div style={{ fontWeight: 800 }}>{r.username}</div>
-                          <div style={{ fontSize: 12, color: '#6b7280' }}>{new Date(r.createdAt).toLocaleString()}</div>
+                          <div style={{ fontSize: 12, color: '#6b7280' }}>{new Date(r.createdAt).toLocaleString(localeTag)}</div>
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button type="button" style={btnPrimary} onClick={() => handleRespondRequest(r.friendshipId, 'accept')}>Принять</button>
-                        <button type="button" style={btnDanger} onClick={() => handleRespondRequest(r.friendshipId, 'decline')}>Отклонить</button>
+                        <button type="button" style={btnPrimary} onClick={() => handleRespondRequest(r.friendshipId, 'accept')}>{tt('Принять')}</button>
+                        <button type="button" style={btnDanger} onClick={() => handleRespondRequest(r.friendshipId, 'decline')}>{tt('Отклонить')}</button>
                       </div>
                     </div>
                   ))}
@@ -1086,7 +1091,7 @@ export default function FriendsPage() {
 
             {outgoingRequests.length > 0 ? (
               <div>
-                <div style={{ fontWeight: 800, marginBottom: 8 }}>Исходящие ({outgoingRequests.length})</div>
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>{tt('Исходящие')} ({outgoingRequests.length})</div>
                 <div style={{ display: 'grid', gap: 8 }}>
                   {outgoingRequests.map((r) => (
                     <div key={r.friendshipId} style={requestRow}>
@@ -1094,10 +1099,10 @@ export default function FriendsPage() {
                         <AvatarCircle src={r.avatarPath} size={26} />
                         <div>
                           <div style={{ fontWeight: 800 }}>{r.username}</div>
-                          <div style={{ fontSize: 12, color: '#6b7280' }}>{new Date(r.createdAt).toLocaleString()}</div>
+                          <div style={{ fontSize: 12, color: '#6b7280' }}>{new Date(r.createdAt).toLocaleString(localeTag)}</div>
                         </div>
                       </div>
-                      <button type="button" style={btnSecondary} onClick={() => handleCancelOutgoing(r.friendshipId, r.username)}>Отменить</button>
+                      <button type="button" style={btnSecondary} onClick={() => handleCancelOutgoing(r.friendshipId, r.username)}>{tt('Отменить')}</button>
                     </div>
                   ))}
                 </div>
@@ -1109,8 +1114,8 @@ export default function FriendsPage() {
 
       <section style={accentCard}>
         <div style={feedHeaderRow}>
-          <h2 style={{ marginTop: 0, marginBottom: 0 }}>Лента тренировок</h2>
-          <div role="group" aria-label="Показывать тренировок" style={feedLimitToggleRow}>
+          <h2 style={{ marginTop: 0, marginBottom: 0 }}>{tt('Лента тренировок')}</h2>
+          <div role="group" aria-label={tt('Показывать тренировок')} style={feedLimitToggleRow}>
             {FEED_LIMIT_OPTIONS.map((limit) => {
               const active = feedLimit === limit;
               return (
@@ -1132,7 +1137,7 @@ export default function FriendsPage() {
         </div>
 
         {latestFeedWorkouts.length === 0 ? (
-          <p style={{ margin: 0 }}>Пока нет тренировок в ленте.</p>
+          <p style={{ margin: 0 }}>{tt('Пока нет тренировок в ленте.')}</p>
         ) : (
           <div
             ref={feedListRef}
@@ -1148,7 +1153,7 @@ export default function FriendsPage() {
             {groupedFeedWorkouts.map((group) => (
               <section key={`feed-day-${group.dayKey}`} style={{ display: 'grid', gap: 6 }}>
                 <div style={{ fontSize: 12, fontWeight: 900, color: '#334155' }}>
-                  {formatDateWithWeekday(group.dayKey)}
+                  {formatDateWithWeekday(group.dayKey, localeTag)}
                 </div>
 
                 {group.items.map((w) => {
@@ -1175,12 +1180,12 @@ export default function FriendsPage() {
                         <div style={feedUserCell}>
                           <AvatarCircle src={w.ownerAvatarPath} size={26} />
                           <div style={feedUserText}>
-                            <span style={{ fontWeight: 900, color: '#0f172a' }}>{w.isMe ? 'Ты' : w.ownerUsername}</span>
+                            <span style={{ fontWeight: 900, color: '#0f172a' }}>{w.isMe ? tt('Ты') : w.ownerUsername}</span>
                             <span style={{ color: '#475569' }}> · {formatTimeHHMM(w.time || w.date)}</span>
                           </div>
                         </div>
 
-                        <img src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={feedTypeIcon} />
+                        <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={feedTypeIcon} />
 
                         <div style={feedReps}>{w.reps}</div>
                       </div>
@@ -1250,15 +1255,15 @@ export default function FriendsPage() {
       </section>
 
       <section style={accentCard}>
-        <h2 style={{ marginTop: 0 }}>Тренировки друга</h2>
+        <h2 style={{ marginTop: 0 }}>{tt('Тренировки друга')}</h2>
 
         {friends.length === 0 ? (
-          <p>Пока друзей нет.</p>
+          <p>{tt('Пока друзей нет.')}</p>
         ) : (
           <>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'end', marginBottom: 12 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>Выбери друга</label>
+                <label>{tt('Выбери друга')}</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <AvatarCircle src={selectedFriendObj?.avatarPath} size={34} />
                   <select
@@ -1283,22 +1288,22 @@ export default function FriendsPage() {
               </div>
 
               <div style={{ color: '#000', fontSize: 13, marginBottom: 2 }}>
-                В календаре показаны все виды тренировок.
+                {tt('В календаре показаны все виды тренировок.')}
               </div>
             </div>
 
             {selectedFriendDayMap.size === 0 ? (
-              <p>Нет записей для выбранного друга по этому упражнению.</p>
+              <p>{tt('Нет записей для выбранного друга по этому упражнению.')}</p>
             ) : (
               <>
                 <div style={calendarNavWrap}>
-                  <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(friendCalendarMonth)}</div>
+                  <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(friendCalendarMonth, localeTag)}</div>
                   <div style={calendarNavButtons}>
                     <button type="button" style={btnSecondary} onClick={() => setFriendCalendarMonth((d) => addCalendarMonths(d, -1))}>
-                      Предыдущий
+                      {tt('Предыдущий')}
                     </button>
                     <button type="button" style={btnSecondary} onClick={() => setFriendCalendarMonth((d) => addCalendarMonths(d, 1))}>
-                      Следующий
+                      {tt('Следующий')}
                     </button>
                   </div>
                 </div>
@@ -1345,7 +1350,7 @@ export default function FriendsPage() {
                           <div style={friendDayValues}>
                             {exerciseTotals.map(({ type, sum }) => (
                               <span key={type} style={friendTotalValue}>
-                                <img src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={friendTotalIcon} />
+                                <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={friendTotalIcon} />
                                 <span>{sum}</span>
                               </span>
                             ))}
@@ -1359,8 +1364,8 @@ export default function FriendsPage() {
                 <div style={legendWrap}>
                   {EXERCISE_ORDER.map((type) => (
                     <div key={type} style={legendItem}>
-                      <img src={exerciseFeedIcon(type)} alt={exerciseLabel(type)} style={legendIcon} />
-                      <span>{exerciseLabel(type)}</span>
+                      <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={legendIcon} />
+                      <span>{tt(exerciseLabel(type))}</span>
                     </div>
                   ))}
                 </div>
@@ -1388,7 +1393,7 @@ export default function FriendsPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={modalTop}>
-              <h2 style={{ margin: 0 }}>Подходы друга за день</h2>
+              <h2 style={{ margin: 0 }}>{tt('Подходы друга за день')}</h2>
               <button
                 type="button"
                 style={btnSecondary}
@@ -1398,16 +1403,16 @@ export default function FriendsPage() {
                   setModalReactionPickerWorkoutId(null);
                 }}
               >
-                Закрыть
+                {tt('Закрыть')}
               </button>
             </div>
 
             {!friendDetailDay || !selectedFriendDayData ? (
-              <div style={{ color: '#6b7280' }}>Нет записей на выбранный день.</div>
+              <div style={{ color: '#6b7280' }}>{tt('Нет записей на выбранный день.')}</div>
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(friendDetailDay)} · всего: {selectedFriendDayData.totalReps}
+                  {formatDateWithWeekday(friendDetailDay, localeTag)} · {tt('всего')}: {selectedFriendDayData.totalReps}
                 </div>
 
                 {selectedFriendDayData.items.map((w) => {
@@ -1428,7 +1433,7 @@ export default function FriendsPage() {
                     >
                       <div style={friendRowMain}>
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <img src={exerciseFeedIcon(workoutType)} alt={exerciseLabel(workoutType)} style={friendWorkoutTypeIcon} />
+                          <img src={exerciseFeedIcon(workoutType)} alt={tt(exerciseLabel(workoutType))} style={friendWorkoutTypeIcon} />
                         </div>
                         <div>{formatTimeHHMM(w.time || w.date)}</div>
                         <div style={{ fontWeight: 900 }}>{w.reps}</div>
@@ -1473,7 +1478,7 @@ export default function FriendsPage() {
                                   background: active ? '#dbeafe' : '#fff',
                                   opacity: reactingWorkoutId === w.id ? 0.6 : 1,
                                 }}
-                                aria-label={`Реакция ${emoji}`}
+                                aria-label={tt(`Реакция ${emoji}`)}
                               >
                                 <span>{emoji}</span>
                               </button>

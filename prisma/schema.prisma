@@ -15,6 +15,7 @@ model User {
   passwordHash            String
   createdAt               DateTime               @default(now())
   updatedAt               DateTime               @updatedAt
+  language                String                 @default("ru")
   gender                  String?
   birthDate               DateTime?
   weightKg                Int?

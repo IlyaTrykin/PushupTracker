@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 type TrainingSet = {
   id: string;
@@ -62,9 +64,9 @@ function exerciseLabel(exerciseType: string) {
   return exerciseType;
 }
 
-function formatSessionDate(iso: string) {
+function formatSessionDate(iso: string, locale: string) {
   const d = new Date(iso);
-  return d.toLocaleDateString('ru-RU', {
+  return d.toLocaleDateString(locale, {
     weekday: 'short',
     day: '2-digit',
     month: '2-digit',
@@ -82,6 +84,9 @@ function renderSetPlan(session: TrainingSession) {
 
 export default function ProgramDetailPage() {
   const params = useParams<{ id: string }>();
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const programId = String(params?.id || '');
 
   const [loading, setLoading] = useState(true);
@@ -100,7 +105,7 @@ export default function ProgramDetailPage() {
         const data = (await fetchJson(`/api/program/${programId}`)) as ProgramDetail;
         if (!cancelled) setProgram(data);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Не удалось загрузить программу');
+        if (!cancelled) setError(tt(e?.message || 'Не удалось загрузить программу'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -127,57 +132,57 @@ export default function ProgramDetailPage() {
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-        <Link href="/program" style={btnLink}>← К программам</Link>
+        <Link href="/program" style={btnLink}>← {tt('К программам')}</Link>
       </div>
 
-      {loading ? <p>Загрузка…</p> : null}
+      {loading ? <p>{tt('Загрузка…')}</p> : null}
       {error ? <p style={{ color: '#dc2626' }}>{error}</p> : null}
 
       {program && !loading ? (
         <>
           <section style={card}>
             <div style={{ display: 'grid', gap: 4 }}>
-              <div>Упражнение: <b>{exerciseLabel(program.exerciseType)}</b></div>
-              <div>Базовый тест: <b>{program.baselineMaxReps}</b> · Цель: <b>{program.targetReps ?? '—'}</b></div>
-              <div>Длительность: <b>{program.durationWeeks}</b> нед · Темп: <b>{program.frequencyPerWeek}</b>/нед</div>
-              <div>Прогресс: <b>{program.stats.completedSessions}/{program.stats.totalSessions}</b> ({program.stats.completionPercent}%)</div>
+              <div>{tt('Упражнение')}: <b>{tt(exerciseLabel(program.exerciseType))}</b></div>
+              <div>{tt('Базовый тест')}: <b>{program.baselineMaxReps}</b> · {tt('Цель')}: <b>{program.targetReps ?? '—'}</b></div>
+              <div>{tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')} · {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')}</div>
+              <div>{tt('Прогресс')}: <b>{program.stats.completedSessions}/{program.stats.totalSessions}</b> ({program.stats.completionPercent}%)</div>
             </div>
           </section>
 
           <section style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <h2 style={{ margin: 0 }}>{showCompleted ? 'Выполненные тренировки' : 'Предстоящие тренировки'}</h2>
+              <h2 style={{ margin: 0 }}>{showCompleted ? tt('Выполненные тренировки') : tt('Предстоящие тренировки')}</h2>
               <button type="button" style={btnSecondary} onClick={() => setShowCompleted((x) => !x)}>
-                {showCompleted ? 'Показать предстоящие' : 'Показать выполненные'}
+                {showCompleted ? tt('Показать предстоящие') : tt('Показать выполненные')}
               </button>
             </div>
 
             <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
               {sessionsToShow.length === 0 ? (
                 <div style={{ color: '#6b7280' }}>
-                  {showCompleted ? 'Выполненных тренировок пока нет.' : 'Предстоящих тренировок нет.'}
+                  {showCompleted ? tt('Выполненных тренировок пока нет.') : tt('Предстоящих тренировок нет.')}
                 </div>
               ) : sessionsToShow.map((session) => (
                 <div key={session.id} style={rowCard}>
                   <div style={{ display: 'grid', gap: 4 }}>
                     <div style={{ fontWeight: 900 }}>
-                      {formatSessionDate(session.scheduledAt)} · #{session.sessionNumber}
-                      {session.isFinalTest ? ' · финальный тест' : ''}
+                      {formatSessionDate(session.scheduledAt, localeTag)} · #{session.sessionNumber}
+                      {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
                     </div>
                     <div style={{ color: '#111827' }}>
-                      План подходов: <b>{renderSetPlan(session)}</b>
+                      {tt('План подходов')}: <b>{renderSetPlan(session)}</b>
                     </div>
                     <div style={{ color: '#111827' }}>
-                      Статус: {session.completed ? 'Выполнено' : 'Запланировано'}
+                      {tt('Статус')}: {session.completed ? tt('Выполнено') : tt('Запланировано')}
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {!session.completed ? (
                       <Link href={`/program/session/${session.id}`} style={btnPrimaryLink}>
-                        Приступить
+                        {tt('Приступить')}
                       </Link>
                     ) : (
-                      <span style={doneBadge}>Выполнено</span>
+                      <span style={doneBadge}>{tt('Выполнено')}</span>
                     )}
                   </div>
                 </div>

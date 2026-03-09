@@ -2,9 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useI18n } from '@/i18n/provider';
+import { t } from '@/i18n/translate';
 
 export default function ResetPasswordPage() {
   const router = useRouter();
+  const { locale } = useI18n();
+  const tt = (input: string) => t(locale, input);
   const [token, setToken] = useState('');
 
   const [password, setPassword] = useState('');
@@ -24,15 +28,15 @@ export default function ResetPasswordPage() {
     setMessage('');
 
     if (!token) {
-      setError('Некорректная ссылка: отсутствует токен');
+      setError(tt('Некорректная ссылка: отсутствует токен'));
       return;
     }
     if (password.length < 6) {
-      setError('Пароль должен быть не меньше 6 символов');
+      setError(tt('Пароль должен быть не меньше 6 символов'));
       return;
     }
     if (password !== confirm) {
-      setError('Подтверждение пароля не совпадает');
+      setError(tt('Подтверждение пароля не совпадает'));
       return;
     }
 
@@ -45,13 +49,13 @@ export default function ResetPasswordPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Не удалось сменить пароль');
+        setError(tt(data.error || 'Не удалось сменить пароль'));
       } else {
-        setMessage('Пароль успешно обновлён. Сейчас перенаправим на вход.');
+        setMessage(tt('Пароль успешно обновлён. Сейчас перенаправим на вход.'));
         setTimeout(() => router.push('/login'), 1200);
       }
     } catch {
-      setError('Ошибка сети');
+      setError(tt('Ошибка сети'));
     } finally {
       setSaving(false);
     }
@@ -62,14 +66,14 @@ export default function ResetPasswordPage() {
       <form onSubmit={submit} style={{ display: 'grid', gap: 10 }}>
         <input
           type="password"
-          placeholder="Новый пароль"
+          placeholder={tt('Новый пароль')}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
         />
         <input
           type="password"
-          placeholder="Подтвердите пароль"
+          placeholder={tt('Подтвердите пароль')}
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
           style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
@@ -79,7 +83,7 @@ export default function ResetPasswordPage() {
           disabled={saving}
           style={{ padding: '10px 12px', borderRadius: 10, border: 'none', background: '#2563eb', color: '#fff', fontWeight: 800 }}
         >
-          {saving ? 'Сохранение...' : 'Сменить пароль'}
+          {saving ? tt('Сохранение...') : tt('Сменить пароль')}
         </button>
       </form>
 

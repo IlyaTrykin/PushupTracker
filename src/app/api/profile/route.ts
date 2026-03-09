@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError, invalidateSession } from '@/lib/auth';
+import { normalizeLocale } from '@/i18n/locale';
+import { setPreferredLocaleCookie } from '@/i18n/server';
 
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -35,6 +37,7 @@ export async function GET(request: Request) {
         email: true,
         username: true,
         isAdmin: true,
+        language: true,
         createdAt: true,
         updatedAt: true,
         gender: true,
@@ -61,6 +64,7 @@ export async function PATCH(request: Request) {
     if (!body) return jsonError('Некорректный JSON');
 
     const nextUsername = body.username !== undefined ? String(body.username || '').trim() : undefined;
+    const nextLanguage = body.language !== undefined ? normalizeLocale(body.language) : undefined;
     const nextGender = body.gender !== undefined ? normalizeGender(body.gender) : undefined;
     const nextBirthDate = body.birthDate !== undefined ? parseBirthDate(body.birthDate) : undefined;
     const nextWeightKg = body.weightKg !== undefined && body.weightKg !== null && String(body.weightKg).trim() !== ''
@@ -74,6 +78,7 @@ export async function PATCH(request: Request) {
       select: {
         id: true,
         username: true,
+        language: true,
         gender: true,
         birthDate: true,
         weightKg: true,
@@ -98,6 +103,11 @@ export async function PATCH(request: Request) {
         data.username = nextUsername;
         changes.username = { from: current.username, to: nextUsername };
       }
+    }
+
+    if (nextLanguage !== undefined && nextLanguage !== current.language) {
+      data.language = nextLanguage;
+      changes.language = { from: current.language, to: nextLanguage };
     }
 
     if (nextGender !== undefined) {
@@ -141,6 +151,7 @@ export async function PATCH(request: Request) {
           email: true,
           username: true,
           isAdmin: true,
+          language: true,
           createdAt: true,
           updatedAt: true,
           gender: true,
@@ -159,7 +170,9 @@ export async function PATCH(request: Request) {
       return u;
     });
 
-    return NextResponse.json({ ok: true, user: updated });
+    const res = NextResponse.json({ ok: true, user: updated });
+    setPreferredLocaleCookie(res, normalizeLocale(updated.language), request);
+    return res;
   } catch (e: any) {
     if (e instanceof AuthError) return jsonError(e.message, e.status);
     if (String(e?.code || '') === 'P2002') return jsonError('Имя уже занято', 409);

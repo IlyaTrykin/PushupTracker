@@ -1,13 +1,17 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/auth/provider';
 import PushNotificationsToggle from '@/components/PushNotificationsToggle';
+import { normalizeLocale } from '@/i18n/locale';
+import { useI18n } from '@/i18n/provider';
 
 type Profile = {
   id: string;
   email: string;
   username: string;
   isAdmin: boolean;
+  language: string;
   createdAt: string;
   updatedAt: string;
   gender: string | null;
@@ -66,6 +70,8 @@ async function resizeToWebp256(file: File): Promise<Blob> {
 }
 
 export default function ProfilePage() {
+  const { setUser } = useAuth();
+  const { messages } = useI18n();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [username, setUsername] = useState('');
@@ -93,7 +99,7 @@ export default function ProfilePage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setProfile(null);
-        setError(data.error || 'Не удалось загрузить профиль');
+        setError(data.error || messages.profile.errors.load);
       } else {
         setProfile(data as Profile);
         setUsername((data as Profile).username || '');
@@ -102,7 +108,7 @@ export default function ProfilePage() {
         setWeightKg((data as Profile).weightKg != null ? String((data as Profile).weightKg) : '');
       }
     } catch {
-      setError('Не удалось связаться с сервером');
+      setError(messages.profile.errors.network);
     } finally {
       setLoading(false);
     }
@@ -128,12 +134,22 @@ export default function ProfilePage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Ошибка сохранения');
+        setError(data.error || messages.profile.errors.save);
       } else {
+        if (data.user) {
+          setUser({
+            id: data.user.id,
+            email: data.user.email,
+            username: data.user.username,
+            isAdmin: data.user.isAdmin,
+            avatarPath: data.user.avatarPath,
+            language: data.user.language,
+          });
+        }
         await load();
       }
     } catch {
-      setError('Не удалось связаться с сервером');
+      setError(messages.profile.errors.network);
     } finally {
       setSaving(false);
     }
@@ -145,7 +161,7 @@ export default function ProfilePage() {
     try {
       const blob = await resizeToWebp256(file);
       if (blob.size > 300_000) {
-        setError('Аватар получился слишком большой. Возьми картинку попроще (или меньше деталей).');
+        setError(messages.profile.errors.avatarTooLarge);
         return;
       }
 
@@ -154,45 +170,45 @@ export default function ProfilePage() {
       const res = await fetch('/api/profile/avatar', { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Ошибка загрузки аватара');
+        setError(data.error || messages.profile.errors.avatarUpload);
       } else {
         await load();
       }
     } catch {
-      setError('Не удалось обработать изображение');
+      setError(messages.profile.errors.avatarProcess);
     } finally {
       setUploading(false);
     }
   }
 
   async function deleteProfile() {
-    if (!confirm('Удалить профиль? Его можно будет восстановить администратором в течение 1 года.')) return;
+    if (!confirm(messages.profile.delete.confirm)) return;
     setError('');
     try {
       const res = await fetch('/api/profile', { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Не удалось удалить профиль');
+        setError(data.error || messages.profile.errors.delete);
       } else {
         window.location.href = '/login';
       }
     } catch {
-      setError('Не удалось связаться с сервером');
+      setError(messages.profile.errors.network);
     }
   }
 
   async function changePassword() {
     setError('');
     if (!currentPassword) {
-      setError('Введите текущий пароль');
+      setError(messages.profile.password.missingCurrent);
       return;
     }
     if (newPassword.length < 6) {
-      setError('Новый пароль должен быть не меньше 6 символов');
+      setError(messages.profile.password.minLength);
       return;
     }
     if (newPassword !== confirmNewPassword) {
-      setError('Подтверждение пароля не совпадает');
+      setError(messages.profile.password.mismatch);
       return;
     }
 
@@ -208,20 +224,20 @@ export default function ProfilePage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Не удалось изменить пароль');
+        setError(data.error || messages.profile.errors.changePassword);
       } else {
         setCurrentPassword('');
         setNewPassword('');
         setConfirmNewPassword('');
       }
     } catch {
-      setError('Не удалось связаться с сервером');
+      setError(messages.profile.errors.network);
     } finally {
       setChangingPassword(false);
     }
   }
 
-  if (loading) return <div style={{ padding: 16 }}>Загрузка…</div>;
+  if (loading) return <div style={{ padding: 16 }}>{messages.common.loading}</div>;
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto', padding: 16 }}>
@@ -255,9 +271,9 @@ export default function ProfilePage() {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 4 }}>Аватар</div>
+          <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 4 }}>{messages.profile.avatar.title}</div>
           <div style={{ fontSize: 12, color: '#374151', marginBottom: 8 }}>
-            Автоматически приводим к 256×256 и WebP. Лимит: 300KB.
+            {messages.profile.avatar.hint}
           </div>
           <label
             style={{
@@ -271,7 +287,7 @@ export default function ProfilePage() {
               fontWeight: 800,
             }}
           >
-            {uploading ? 'Загрузка…' : 'Загрузить'}
+            {uploading ? messages.profile.avatar.uploading : messages.profile.avatar.upload}
             <input
               type="file"
               accept="image/*"
@@ -289,31 +305,31 @@ export default function ProfilePage() {
 
       <div style={{ display: 'grid', gap: 12 }}>
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={{ fontWeight: 800 }}>Имя (username)</div>
+          <div style={{ fontWeight: 800 }}>{messages.profile.fields.username}</div>
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
           />
-          <div style={{ fontSize: 12, color: '#6b7280' }}>Только латиница, цифры и ._- (до 32 символов).</div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>{messages.profile.fields.usernameHint}</div>
         </div>
 
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={{ fontWeight: 800 }}>Пол</div>
+          <div style={{ fontWeight: 800 }}>{messages.profile.fields.gender}</div>
           <select
             value={gender}
             onChange={(e) => setGender(e.target.value)}
             style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
           >
-            <option value="">Не указано</option>
-            <option value="male">Мужской</option>
-            <option value="female">Женский</option>
-            <option value="other">Другое</option>
+            <option value="">{messages.profile.fields.notSpecified}</option>
+            <option value="male">{messages.profile.fields.male}</option>
+            <option value="female">{messages.profile.fields.female}</option>
+            <option value="other">{messages.profile.fields.other}</option>
           </select>
         </div>
 
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={{ fontWeight: 800 }}>Дата рождения</div>
+          <div style={{ fontWeight: 800 }}>{messages.profile.fields.birthDate}</div>
           <input
             type="date"
             value={birthDate}
@@ -323,7 +339,7 @@ export default function ProfilePage() {
         </div>
 
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={{ fontWeight: 800 }}>Вес (кг)</div>
+          <div style={{ fontWeight: 800 }}>{messages.profile.fields.weightKg}</div>
           <input
             type="number"
             min={30}
@@ -349,35 +365,36 @@ export default function ProfilePage() {
               opacity: saving ? 0.6 : 1,
             }}
           >
-            {saving ? 'Сохранение…' : 'Сохранить'}
+            {saving ? messages.common.saving : messages.common.save}
           </button>
         </div>
 
         <div style={{ marginTop: 20, borderTop: '1px solid #e5e7eb', paddingTop: 16, display: 'grid', gap: 8 }}>
-          <div style={{ fontWeight: 900, fontSize: 16 }}>Смена пароля</div>
+          <div style={{ fontWeight: 900, fontSize: 16 }}>{messages.profile.sections.password}</div>
           <input
             type="password"
-            placeholder="Текущий пароль"
+            placeholder={messages.profile.password.current}
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
             style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
           />
           <input
             type="password"
-            placeholder="Новый пароль"
+            placeholder={messages.profile.password.next}
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
           />
           <input
             type="password"
-            placeholder="Подтвердите новый пароль"
+            placeholder={messages.profile.password.confirm}
             value={confirmNewPassword}
             onChange={(e) => setConfirmNewPassword(e.target.value)}
             style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
           />
           <div>
             <button
+              type="button"
               onClick={changePassword}
               disabled={changingPassword}
               style={{
@@ -391,24 +408,27 @@ export default function ProfilePage() {
                 opacity: changingPassword ? 0.6 : 1,
               }}
             >
-              {changingPassword ? 'Изменение…' : 'Сменить пароль'}
+              {changingPassword ? messages.profile.password.submitting : messages.profile.password.submit}
             </button>
+          </div>
         </div>
 
         <div style={{ marginTop: 20, borderTop: '1px solid #e5e7eb', paddingTop: 16, display: 'grid', gap: 8 }}>
-          <div style={{ fontWeight: 900, fontSize: 16 }}>Push уведомления</div>
+          <div style={{ fontWeight: 900, fontSize: 16 }}>{messages.profile.sections.notifications}</div>
           <div style={{ fontSize: 13, color: '#4b5563' }}>
-            События: запросы в друзья, приглашения, изменения в соревнованиях, тренировки друзей и уведомления программы.
+            {messages.profile.notifications.summary}
           </div>
           {profile?.isAdmin ? (
             <div style={{ fontSize: 13, color: '#4b5563' }}>
-              Для админа здесь также доступны push и e-mail уведомления о новых регистрациях пользователей.
+              {messages.profile.notifications.adminSummary}
             </div>
           ) : null}
           <PushNotificationsToggle />
         </div>
 
+        <div style={{ marginTop: 8 }}>
           <button
+            type="button"
             onClick={deleteProfile}
             style={{
               padding: '10px 14px',
@@ -420,7 +440,7 @@ export default function ProfilePage() {
               cursor: 'pointer',
             }}
           >
-            Удалить профиль
+            {messages.profile.delete.button}
           </button>
         </div>
       </div>

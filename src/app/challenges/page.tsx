@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useI18n } from '@/i18n/provider';
+import { getIntlLocale, t } from '@/i18n/translate';
 
 type Friend = {
   friendshipId: string;
@@ -20,12 +22,16 @@ type ChallengeListItem = {
   createdAt: string;
   creatorId?: string;
   creator: { username: string };
-  myStatus?: 'pending' | 'accepted' | null;
-  participants: { userId?: string; status?: 'pending' | 'accepted'; user: { username: string } }[];
+  myStatus?: 'pending' | 'accepted' | 'declined' | null;
+  participants: { userId?: string; status?: 'pending' | 'accepted' | 'declined'; user: { username: string } }[];
 };
 
 async function fetchJsonSafe(url: string, init?: RequestInit) {
-  const res = await fetch(url, init);
+  const res = await fetch(url, {
+    cache: 'no-store',
+    credentials: 'include',
+    ...init,
+  });
   const text = await res.text();
   let data: any = null;
   if (text) {
@@ -89,12 +95,16 @@ function badge(text: string, tone: 'gray' | 'green' | 'amber' | 'red') {
 }
 
 export default function ChallengesPage() {
+  const { locale } = useI18n();
+  const localeTag = getIntlLocale(locale);
+  const tt = (input: string) => t(locale, input);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [challenges, setChallenges] = useState<ChallengeListItem[]>([]);
+  const [meId, setMeId] = useState<string>('');
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [showCreate, setShowCreate] = useState(false);
 
-  const [name, setName] = useState('Соревнование месяца');
+  const [name, setName] = useState(() => t(locale, 'Соревнование месяца'));
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(endOfMonthISO());
   const [exerciseType, setExerciseType] = useState<'pushups' | 'pullups' | 'crunches' | 'squats'>('pushups');
@@ -105,23 +115,64 @@ export default function ChallengesPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const loadAll = async () => {
-    setLoading(true);
+  const loadAll = useCallback(async ({
+    showLoading = true,
+    resetInfo = true,
+  }: {
+    showLoading?: boolean;
+    resetInfo?: boolean;
+  } = {}) => {
+    if (showLoading) setLoading(true);
     setError(null);
-    setInfo(null);
+    if (resetInfo) setInfo(null);
     try {
-      const fr = await fetchJsonSafe('/api/friends');
+      const [me, fr, ch] = await Promise.all([
+        fetchJsonSafe('/api/me'),
+        fetchJsonSafe('/api/friends'),
+        fetchJsonSafe('/api/challenges'),
+      ]);
+      setMeId(me?.id || '');
       setFriends(fr || []);
-      const ch = await fetchJsonSafe('/api/challenges');
       setChallenges(ch || []);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    void loadAll();
+  }, [loadAll]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void loadAll({ showLoading: false, resetInfo: false });
+      }
+    }, 3000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void loadAll({ showLoading: false, resetInfo: false });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [loadAll]);
+
+  useEffect(() => {
+    setName((prev) => {
+      if (!prev || prev === 'Соревнование месяца' || prev === 'Challenge of the month') {
+        return tt('Соревнование месяца');
+      }
+      return prev;
+    });
+  }, [locale]);
 
   const selectedUsernames = useMemo(() => {
     return friends.filter(f => selected[f.username]).map(f => f.username);
@@ -131,13 +182,32 @@ export default function ChallengesPage() {
     return (challenges || []).filter(c => c.myStatus === 'pending');
   }, [challenges]);
 
-  const acceptedChallenges = useMemo(() => {
-    return (challenges || []).filter(c => c.myStatus !== 'pending');
-  }, [challenges]);
+  const pendingConfirmationChallenges = useMemo(() => {
+    return (challenges || [])
+      .filter((c) => c.creatorId === meId && c.participants.some((p) => p.userId !== meId && p.status === 'pending'))
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }, [challenges, meId]);
 
-  const activeChallenges = useMemo(() => {
-    const arr = acceptedChallenges.filter((c) => challengeStatus(c.startDate, c.endDate).active);
-    return arr.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime());
+  const acceptedChallenges = useMemo(() => {
+    return (challenges || []).filter((c) => {
+      if (c.myStatus !== 'accepted') return false;
+      if (c.creatorId === meId && c.participants.some((p) => p.userId !== meId && p.status === 'pending')) return false;
+      return true;
+    });
+  }, [challenges, meId]);
+
+  const visibleChallenges = useMemo(() => {
+    const arr = acceptedChallenges.filter((c) => !challengeStatus(c.startDate, c.endDate).finished);
+    return arr.sort((a, b) => {
+      const aStatus = challengeStatus(a.startDate, a.endDate);
+      const bStatus = challengeStatus(b.startDate, b.endDate);
+
+      if (aStatus.active !== bStatus.active) return aStatus.active ? -1 : 1;
+      if (!aStatus.active && !bStatus.active) {
+        return new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+      }
+      return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
+    });
   }, [acceptedChallenges]);
 
   const historyChallenges = useMemo(() => {
@@ -165,17 +235,17 @@ export default function ChallengesPage() {
         }),
       });
 
-      setInfo('Соревнование создано');
+      setInfo(tt('Соревнование создано'));
       setSelected({});
       setShowCreate(false);
-      await loadAll();
+      await loadAll({ showLoading: false, resetInfo: false });
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
   };
 
   const deleteChallenge = async (id: string) => {
-    const ok = window.confirm('Удалить соревнование?');
+    const ok = window.confirm(tt('Удалить соревнование?'));
     if (!ok) return;
 
     setError(null);
@@ -183,8 +253,8 @@ export default function ChallengesPage() {
 
     try {
       await fetchJsonSafe(`/api/challenges/${id}`, { method: 'DELETE' });
-      setInfo('Удалено');
-      await loadAll();
+      setInfo(tt('Удалено'));
+      await loadAll({ showLoading: false, resetInfo: false });
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -195,23 +265,23 @@ export default function ChallengesPage() {
     setInfo(null);
     try {
       await fetchJsonSafe(`/api/challenges/${id}/accept`, { method: 'POST' });
-      setInfo('Приглашение принято');
-      await loadAll();
+      setInfo(tt('Приглашение принято'));
+      await loadAll({ showLoading: false, resetInfo: false });
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
   };
 
   const declineInvite = async (id: string) => {
-    const ok = window.confirm('Отклонить приглашение?');
+    const ok = window.confirm(tt('Отклонить приглашение?'));
     if (!ok) return;
 
     setError(null);
     setInfo(null);
     try {
       await fetchJsonSafe(`/api/challenges/${id}/decline`, { method: 'POST' });
-      setInfo('Приглашение отклонено');
-      await loadAll();
+      setInfo(tt('Приглашение отклонено'));
+      await loadAll({ showLoading: false, resetInfo: false });
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -221,7 +291,7 @@ export default function ChallengesPage() {
     <div className="app-page" style={{ maxWidth: 900 }}>
       <div style={{ marginBottom: 12 }}>
         <button type="button" style={btnPrimary} onClick={() => setShowCreate(v => !v)}>
-          {showCreate ? 'Скрыть' : 'Создать соревнование'}
+          {showCreate ? tt('Скрыть') : tt('Создать соревнование')}
         </button>
       </div>
 
@@ -230,33 +300,33 @@ export default function ChallengesPage() {
           <form onSubmit={createChallenge} style={{ display: 'grid', gap: 10, maxWidth: '100%' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>Название</label>
+                <label>{tt('Название')}</label>
                 <input value={name} onChange={e => setName(e.target.value)} style={input} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>Старт</label>
+                <label>{tt('Старт')}</label>
                 <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={input} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>Финиш</label>
+                <label>{tt('Финиш')}</label>
                 <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={input} />
               </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, alignItems: 'end' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>Режим</label>
+                <label>{tt('Режим')}</label>
                 <select value={mode} onChange={e => setMode(e.target.value as any)} style={input}>
-                  <option value="most">Кто больше за период</option>
-                  <option value="target">Цель (N повторов)</option>
-                  <option value="daily_min">Зачтённые дни (мин. X в день)</option>
-                  <option value="sets_min">Зачтённые подходы (reps ≥ X)</option>
+                  <option value="most">{tt('Кто больше за период')}</option>
+                  <option value="target">{tt('Цель (N повторов)')}</option>
+                  <option value="daily_min">{tt('Зачтённые дни (мин. X в день)')}</option>
+                  <option value="sets_min">{tt('Зачтённые подходы (reps ≥ X)')}</option>
                 </select>
               </div>
 
               {mode === 'target' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label>Цель (повторы)</label>
+                  <label>{tt('Цель (повторы)')}</label>
                   <input
                     type="number"
                     min={1}
@@ -267,7 +337,7 @@ export default function ChallengesPage() {
                 </div>
               ) : mode === 'daily_min' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label>Минимум повторов в день (X)</label>
+                  <label>{tt('Минимум повторов в день (X)')}</label>
                   <input
                     type="number"
                     min={1}
@@ -278,7 +348,7 @@ export default function ChallengesPage() {
                 </div>
               ) : mode === 'sets_min' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label>Минимум повторов для зачёта подхода (X)</label>
+                  <label>{tt('Минимум повторов для зачёта подхода (X)')}</label>
                   <input
                     type="number"
                     min={1}
@@ -289,25 +359,25 @@ export default function ChallengesPage() {
                 </div>
               ) : (
                 <div style={{ color: '#6b7280', fontSize: 12 }}>
-                  В этом режиме цель не задаётся — считаем сумму за период.
+                  {tt('В этом режиме цель не задаётся — считаем сумму за период.')}
                 </div>
               )}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label>Упражнение</label>
+              <label>{tt('Упражнение')}</label>
               <select value={exerciseType} onChange={e => setExerciseType(e.target.value as any)} style={input}>
-                <option value="pushups">Отжимания</option>
-                <option value="pullups">Подтягивания</option>
-                <option value="crunches">Скручивания</option>
-                <option value="squats">Приседания</option>
+                <option value="pushups">{tt('Отжимания')}</option>
+                <option value="pullups">{tt('Подтягивания')}</option>
+                <option value="crunches">{tt('Скручивания')}</option>
+                <option value="squats">{tt('Приседания')}</option>
               </select>
             </div>
 
             <div>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>Участники (друзья)</div>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>{tt('Участники (друзья)')}</div>
               {friends.length === 0 ? (
-                <div style={{ color: '#6b7280' }}>Друзей пока нет.</div>
+                <div style={{ color: '#6b7280' }}>{tt('Друзей пока нет.')}</div>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                   {friends.map(f => (
@@ -325,8 +395,8 @@ export default function ChallengesPage() {
             </div>
 
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button type="submit" style={btnPrimary}>Создать</button>
-              <button type="button" onClick={loadAll} style={btnSecondary}>Обновить</button>
+              <button type="submit" style={btnPrimary}>{tt('Создать')}</button>
+              <button type="button" onClick={() => void loadAll()} style={btnSecondary}>{tt('Обновить')}</button>
             </div>
           </form>
         </section>
@@ -334,34 +404,71 @@ export default function ChallengesPage() {
 
       {error && <p style={{ color: 'red', marginTop: 12 }}>{error}</p>}
       {info && <p style={{ color: 'green', marginTop: 12 }}>{info}</p>}
-      {loading && <p style={{ marginTop: 12 }}>Загрузка…</p>}
+      {loading && <p style={{ marginTop: 12 }}>{tt('Загрузка…')}</p>}
 
-      {activeChallenges.length > 0 ? (
+      {pendingConfirmationChallenges.length > 0 ? (
         <section style={card}>
-          <h2 style={{ marginTop: 0 }}>Соревнования</h2>
+          <h2 style={{ marginTop: 0 }}>{tt('Ожидают подтверждения')}</h2>
           <div style={{ display: 'grid', gap: 10 }}>
-            {activeChallenges.map(c => {
-              const st = challengeStatus(c.startDate, c.endDate);
-              const warn = st.daysLeft < 3 ? badge(`осталось ${st.daysLeft} дн.`, 'amber') : null;
+            {pendingConfirmationChallenges.map((c) => {
+              const acceptedCount = c.participants.filter((p) => p.status === 'accepted').length;
+              const pendingCount = c.participants.filter((p) => p.userId !== meId && p.status === 'pending').length;
               return (
                 <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                         <span>{c.name}</span>
-                        {badge('идёт', 'green')}
-                        {warn ? <span style={{ marginLeft: 6 }}>{warn}</span> : null}
+                        {badge(tt('Ожидает подтверждения'), 'amber')}
                       </div>
-                      <div style={{ color: '#6b7280', fontSize: 12 }}>
-                        {new Date(c.startDate).toLocaleDateString()} → {new Date(c.endDate).toLocaleDateString()} · создатель: {c.creator.username}
+                      <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
+                        {new Date(c.startDate).toLocaleDateString(localeTag)} → {new Date(c.endDate).toLocaleDateString(localeTag)} · {tt('создатель')}: {c.creator.username}
+                      </div>
+                      <div style={{ color: '#374151', fontSize: 12, marginTop: 6 }}>
+                        {tt('Подтверждено')}: <b>{acceptedCount}</b> · {tt('Ожидает ответа')}: <b>{pendingCount}</b>
                       </div>
                     </div>
 
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                       <Link href={`/challenges/${c.id}`} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
-                        Открыть
+                        {tt('Открыть')}
                       </Link>
-                      <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>Удалить</button>
+                      <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>{tt('Удалить')}</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {visibleChallenges.length > 0 ? (
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>{tt('Соревнования')}</h2>
+          <div style={{ display: 'grid', gap: 10 }}>
+            {visibleChallenges.map(c => {
+              const st = challengeStatus(c.startDate, c.endDate);
+              const warn = st.active && st.daysLeft < 3 ? badge(tt(`осталось ${st.daysLeft} дн.`), 'amber') : null;
+              return (
+                <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span>{c.name}</span>
+                        {st.active ? badge(tt('идёт'), 'green') : badge(tt('Ещё не начался'), 'gray')}
+                        {warn ? <span style={{ marginLeft: 6 }}>{warn}</span> : null}
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: 12 }}>
+                        {new Date(c.startDate).toLocaleDateString(localeTag)} → {new Date(c.endDate).toLocaleDateString(localeTag)} · {tt('создатель')}: {c.creator.username}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <Link href={`/challenges/${c.id}`} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
+                        {tt('Открыть')}
+                      </Link>
+                      <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>{tt('Удалить')}</button>
                     </div>
                   </div>
                 </div>
@@ -373,7 +480,7 @@ export default function ChallengesPage() {
 
       {invites.length > 0 ? (
         <section style={card}>
-          <h2 style={{ marginTop: 0 }}>Приглашения</h2>
+          <h2 style={{ marginTop: 0 }}>{tt('Приглашения')}</h2>
           <div style={{ display: 'grid', gap: 10 }}>
             {invites.map(c => (
               <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
@@ -381,16 +488,16 @@ export default function ChallengesPage() {
                   <div>
                     <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                       <span>{c.name}</span>
-                      {badge('Ожидает ответа', 'amber')}
+                      {badge(tt('Ожидает ответа'), 'amber')}
                     </div>
                     <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
-                      {new Date(c.startDate).toLocaleDateString()} → {new Date(c.endDate).toLocaleDateString()} · создатель: {c.creator.username}
+                      {new Date(c.startDate).toLocaleDateString(localeTag)} → {new Date(c.endDate).toLocaleDateString(localeTag)} · {tt('создатель')}: {c.creator.username}
                     </div>
                   </div>
 
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <button type="button" style={btnPrimary} onClick={() => acceptInvite(c.id)}>Принять</button>
-                    <button type="button" style={btnDanger} onClick={() => declineInvite(c.id)}>Отклонить</button>
+                    <button type="button" style={btnPrimary} onClick={() => acceptInvite(c.id)}>{tt('Принять')}</button>
+                    <button type="button" style={btnDanger} onClick={() => declineInvite(c.id)}>{tt('Отклонить')}</button>
                   </div>
                 </div>
               </div>
@@ -400,10 +507,10 @@ export default function ChallengesPage() {
       ) : null}
 
       <section style={card}>
-        <h2 style={{ marginTop: 0 }}>История</h2>
+        <h2 style={{ marginTop: 0 }}>{tt('История')}</h2>
 
         {historyChallenges.length === 0 ? (
-          <p>Пока завершённых соревнований нет.</p>
+          <p>{tt('Пока завершённых соревнований нет.')}</p>
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {historyChallenges.map(c => {
@@ -413,18 +520,18 @@ export default function ChallengesPage() {
                     <div>
                       <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                         <span>{c.name}</span>
-                        {badge('завершён', 'red')}
+                        {badge(tt('завершён'), 'red')}
                       </div>
                       <div style={{ color: '#6b7280', fontSize: 12 }}>
-                        {new Date(c.startDate).toLocaleDateString()} → {new Date(c.endDate).toLocaleDateString()} · создатель: {c.creator.username}
+                        {new Date(c.startDate).toLocaleDateString(localeTag)} → {new Date(c.endDate).toLocaleDateString(localeTag)} · {tt('создатель')}: {c.creator.username}
                       </div>
                     </div>
 
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                       <Link href={`/challenges/${c.id}`} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
-                        Открыть
+                        {tt('Открыть')}
                       </Link>
-                      <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>Удалить</button>
+                      <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>{tt('Удалить')}</button>
                     </div>
                   </div>
                 </div>
