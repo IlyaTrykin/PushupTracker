@@ -53,6 +53,7 @@ export const ruMessages = {
       pullups: 'Подтягивания',
       crunches: 'Скручивания',
       squats: 'Приседания',
+      plank: 'Планка',
     },
   },
   auth: {

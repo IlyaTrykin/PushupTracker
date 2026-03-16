@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { exerciseValuePlural, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 type ExerciseFilter = ExerciseType | 'all';
 
 type Workout = {
@@ -30,7 +31,7 @@ type WeekPoint = {
   byExercise: Record<ExerciseType, number>;
 };
 
-const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats'];
+const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const PERIOD_OPTIONS = [
   { days: 7, label: '7д' },
   { days: 30, label: '30д' },
@@ -39,7 +40,7 @@ const PERIOD_OPTIONS = [
 ] as const;
 
 function emptyByExercise(): Record<ExerciseType, number> {
-  return { pushups: 0, pullups: 0, crunches: 0, squats: 0 };
+  return { pushups: 0, pullups: 0, crunches: 0, squats: 0, plank: 0 };
 }
 
 async function fetchJsonSafe(url: string, init?: RequestInit) {
@@ -59,7 +60,7 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
 }
 
 function toExerciseType(v?: string | null): ExerciseType {
-  if (v === 'pullups' || v === 'crunches' || v === 'squats') return v;
+  if (v === 'pullups' || v === 'crunches' || v === 'squats' || v === 'plank') return v;
   return 'pushups';
 }
 
@@ -67,14 +68,16 @@ function exerciseLabel(type: ExerciseType): string {
   if (type === 'pushups') return 'Отжимания';
   if (type === 'pullups') return 'Подтягивания';
   if (type === 'crunches') return 'Скручивания';
-  return 'Приседания';
+  if (type === 'squats') return 'Приседания';
+  return 'Планка';
 }
 
 function exerciseColor(type: ExerciseType): string {
   if (type === 'pushups') return '#38bdf8';
   if (type === 'pullups') return '#ef4444';
   if (type === 'crunches') return '#22c55e';
-  return '#b8860b';
+  if (type === 'squats') return '#b8860b';
+  return '#14b8a6';
 }
 
 function normalizeDate(d: Date): string {
@@ -184,6 +187,7 @@ function HeroOverview({
   trainingDays,
   periodDays,
   color,
+  metricLabel,
   tt,
 }: {
   currentTotal: number;
@@ -194,6 +198,7 @@ function HeroOverview({
   trainingDays: number;
   periodDays: number;
   color: string;
+  metricLabel: string;
   tt: (input: string) => string;
 }) {
   const isPositive = delta >= 0;
@@ -243,7 +248,7 @@ function HeroOverview({
         <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{tt('Объём за период')}</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
           <div style={{ fontSize: 52, lineHeight: 0.9, fontWeight: 900, color: '#0b1324' }}>{currentTotal}</div>
-          <div style={{ fontSize: 13, color: '#475569', marginBottom: 6 }}>{tt('повторений')}</div>
+          <div style={{ fontSize: 13, color: '#475569', marginBottom: 6 }}>{tt(metricLabel)}</div>
         </div>
       </div>
 
@@ -427,7 +432,17 @@ function ActivityRhythm({ data, color, tt, localeTag }: { data: DayPoint[]; colo
   );
 }
 
-function TrendChart({ data, color, tt }: { data: DayPoint[]; color: string; tt: (input: string) => string }) {
+function TrendChart({
+  data,
+  color,
+  ariaLabel,
+  tt,
+}: {
+  data: DayPoint[];
+  color: string;
+  ariaLabel: string;
+  tt: (input: string) => string;
+}) {
   if (!data.length) return null;
 
   const width = Math.max(390, data.length * 24);
@@ -455,7 +470,7 @@ function TrendChart({ data, color, tt }: { data: DayPoint[]; color: string; tt: 
 
   return (
     <div style={{ overflowX: 'auto', border: '1px solid #dbe4ff', borderRadius: 14, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
-      <svg width={width} height={height} role="img" aria-label={tt('График повторений по дням')}>
+      <svg width={width} height={height} role="img" aria-label={tt(ariaLabel)}>
         <defs>
           <linearGradient id="dayAreaFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={hexToRgba(color, 0.34)} />
@@ -622,6 +637,22 @@ export default function ProgressPage() {
 
   const rangeStart = useMemo(() => addDays(today, -(periodDays - 1)), [today, periodDays]);
   const rangeEnd = today;
+  const metricLabel = useMemo(() => {
+    if (exercise === 'all') return 'объёма';
+    return exerciseValuePlural(exercise);
+  }, [exercise]);
+  const trendAriaLabel = useMemo(() => {
+    if (exercise === 'all') return 'График объёма по дням';
+    return isTimedExercise(exercise) ? 'График секунд по дням' : 'График повторений по дням';
+  }, [exercise]);
+  const formatMetric = (value: number | null | undefined) => (
+    exercise === 'all' ? (value == null ? '—' : String(value)) : formatExerciseValue(value, exercise, true)
+  );
+  const formatSignedMetric = (value: number) => {
+    if (exercise === 'all') return formatSigned(value);
+    if (value < 0) return `-${formatExerciseValue(Math.abs(value), exercise, true)}`;
+    return formatExerciseValue(value, exercise, true);
+  };
 
   const scopedByExercise = useMemo(() => {
     if (exercise === 'all') return workouts;
@@ -885,25 +916,26 @@ export default function ProgressPage() {
         trainingDays={totals.trainingDays}
         periodDays={periodDays}
         color={mainColor}
+        metricLabel={metricLabel}
         tt={tt}
       />
 
       <section style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
         <StatCard
           label={tt('Текущий период')}
-          value={totals.total}
+          value={formatMetric(totals.total)}
           hint={`${rangeStart.toLocaleDateString(localeTag)} - ${rangeEnd.toLocaleDateString(localeTag)}`}
           accentColor={mainColor}
         />
         <StatCard
           label={tt('Прошлый период')}
-          value={previousPeriodStats.total}
+          value={formatMetric(previousPeriodStats.total)}
           hint={`${previousRangeStart.toLocaleDateString(localeTag)} - ${previousRangeEnd.toLocaleDateString(localeTag)}`}
           accentColor="#64748b"
         />
         <StatCard
           label={tt('Разница')}
-          value={formatSigned(comparisonStats.deltaTotal)}
+          value={formatSignedMetric(comparisonStats.deltaTotal)}
           hint={`${deltaPercentLabel} ${tt('к прошлому периоду')}`}
           accentColor={comparisonStats.deltaTotal >= 0 ? '#16a34a' : '#dc2626'}
         />
@@ -915,13 +947,13 @@ export default function ProgressPage() {
         />
         <StatCard
           label={tt('Среднее в день')}
-          value={comparisonStats.dailyCurrent}
+          value={formatMetric(comparisonStats.dailyCurrent)}
           hint={tt(`было ${comparisonStats.dailyPrevious} (${formatSigned(comparisonStats.deltaDaily)})`)}
           accentColor="#0891b2"
         />
         <StatCard
           label={tt('Среднее за тренировку')}
-          value={totals.avgPerTraining}
+          value={formatMetric(totals.avgPerTraining)}
           hint={tt(`было ${previousPeriodStats.avgPerTraining}`)}
           accentColor="#9333ea"
         />
@@ -930,7 +962,7 @@ export default function ProgressPage() {
       <section style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
         <div style={{ border: '1px solid #dbe4ff', borderRadius: 16, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', padding: 12, display: 'grid', gap: 10 }}>
           <div style={{ fontWeight: 900, color: '#111827' }}>{tt('Динамика по дням')}</div>
-          <TrendChart data={daySeries} color={mainColor} tt={tt} />
+          <TrendChart data={daySeries} color={mainColor} ariaLabel={trendAriaLabel} tt={tt} />
           <div style={{ fontSize: 12, color: '#64748b' }}>
             {tt(`Период: ${rangeStart.toLocaleDateString(localeTag)} - ${rangeEnd.toLocaleDateString(localeTag)}`)}
           </div>
@@ -975,25 +1007,25 @@ export default function ProgressPage() {
       >
         <StatCard
           label={tt('Лучший день')}
-          value={records.bestDay ? `${records.bestDay.total}` : '—'}
+          value={records.bestDay ? formatMetric(records.bestDay.total) : '—'}
           hint={records.bestDay ? new Date(`${records.bestDay.key}T00:00:00`).toLocaleDateString(localeTag) : undefined}
           accentColor="#2563eb"
         />
         <StatCard
           label={tt('Лучшая неделя')}
-          value={records.bestWeek ? `${records.bestWeek.total}` : '—'}
+          value={records.bestWeek ? formatMetric(records.bestWeek.total) : '—'}
           hint={records.bestWeek ? formatWeekRange(new Date(`${records.bestWeek.key}T00:00:00`)) : undefined}
           accentColor="#14b8a6"
         />
         <StatCard
           label={tt('Лучший подход')}
-          value={records.bestSet ? records.bestSet.reps : '—'}
+          value={records.bestSet ? formatMetric(records.bestSet.reps) : '—'}
           hint={records.bestSet ? getWorkoutDate(records.bestSet).toLocaleDateString(localeTag) : undefined}
           accentColor="#f97316"
         />
         <StatCard
           label={tt('Последняя тренировка')}
-          value={records.lastWorkout ? records.lastWorkout.reps : '—'}
+          value={records.lastWorkout ? formatMetric(records.lastWorkout.reps) : '—'}
           hint={records.lastWorkout ? getWorkoutDate(records.lastWorkout).toLocaleString(localeTag) : undefined}
           accentColor="#8b5cf6"
         />

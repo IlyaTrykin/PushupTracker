@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 
 type Workout = {
   id: string;
@@ -54,7 +55,7 @@ type ReactionSummaryItem = {
   hasMore: boolean;
 };
 
-const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats'];
+const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
 
 const EXERCISE_LABELS: Record<string, string> = {
@@ -62,6 +63,7 @@ const EXERCISE_LABELS: Record<string, string> = {
   pullups: 'Подтягивания',
   crunches: 'Скручивания',
   squats: 'Приседания',
+  plank: 'Планка',
 };
 
 function toIsoTime(date: string, time: string) {
@@ -234,15 +236,16 @@ function exerciseLabel(type: string | undefined) {
 }
 
 function normalizeExerciseType(type: string | undefined): ExerciseType {
-  if (type === 'pullups' || type === 'crunches' || type === 'squats') return type;
+  if (type === 'pullups' || type === 'crunches' || type === 'squats' || type === 'plank') return type;
   return 'pushups';
 }
 
 function exerciseFeedIcon(type: string | undefined) {
-  const v = '20260304-4';
+  const v = '20260315-2';
   if (type === 'pullups') return `/icons/exercise-types/feed/pullups.svg?v=${v}`;
   if (type === 'crunches') return `/icons/exercise-types/feed/crunches.svg?v=${v}`;
   if (type === 'squats') return `/icons/exercise-types/feed/squats.svg?v=${v}`;
+  if (type === 'plank') return `/icons/exercise-types/feed/plank.svg?v=${v}`;
   return `/icons/exercise-types/feed/pushups.svg?v=${v}`;
 }
 
@@ -282,6 +285,9 @@ export default function DashboardPage() {
   const [time, setTime] = useState<string>(normalizeTime(new Date()));
   const [timeTouched, setTimeTouched] = useState(false);
   const [reps, setReps] = useState<number>(0);
+  const [plankSecondsLeft, setPlankSecondsLeft] = useState(0);
+  const [plankTimerActive, setPlankTimerActive] = useState(false);
+  const [plankTimerStarted, setPlankTimerStarted] = useState(false);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -297,18 +303,23 @@ export default function DashboardPage() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailDay, setDetailDay] = useState<string | null>(null);
   const [workoutReactions, setWorkoutReactions] = useState<Record<string, WorkoutReactionPayload>>({});
+  const isPlankSelected = exerciseType === 'plank';
+  const plankElapsedSeconds = useMemo(
+    () => Math.max(0, Math.max(0, reps) - Math.max(0, plankSecondsLeft)),
+    [reps, plankSecondsLeft],
+  );
 
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem('exerciseType');
-      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats') {
+      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats' || saved === 'plank') {
         setExerciseType(saved);
       }
     } catch {}
 
     const onChanged = (e: any) => {
       const next = String(e?.detail?.exerciseType || window.localStorage.getItem('exerciseType') || 'pushups');
-      if (next === 'pushups' || next === 'pullups' || next === 'crunches' || next === 'squats') {
+      if (next === 'pushups' || next === 'pullups' || next === 'crunches' || next === 'squats' || next === 'plank') {
         setExerciseType(next);
       }
     };
@@ -362,12 +373,33 @@ export default function DashboardPage() {
     return () => window.clearTimeout(t);
   }, [toastMessage]);
 
+  useEffect(() => {
+    if (!isPlankSelected) {
+      setPlankTimerActive(false);
+      setPlankTimerStarted(false);
+      setPlankSecondsLeft(0);
+      return;
+    }
+    if (!plankTimerStarted) {
+      setPlankSecondsLeft(Math.max(0, reps || 0));
+    }
+  }, [isPlankSelected, reps, plankTimerStarted]);
+
+  useEffect(() => {
+    if (!isPlankSelected || !plankTimerActive || plankSecondsLeft <= 0) return;
+    const timerId = window.setInterval(() => {
+      setPlankSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timerId);
+  }, [isPlankSelected, plankTimerActive, plankSecondsLeft]);
+
   const stats = useMemo(() => computeStats(workouts), [workouts]);
   const statsByExercise = useMemo<Record<ExerciseType, Stats>>(() => ({
     pushups: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'pushups')),
     pullups: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'pullups')),
     crunches: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'crunches')),
     squats: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'squats')),
+    plank: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'plank')),
   }), [workouts]);
 
   const breakdownFromStats = (pick: (s: Stats) => number): StatBreakdown => ({
@@ -375,6 +407,7 @@ export default function DashboardPage() {
     pullups: pick(statsByExercise.pullups),
     crunches: pick(statsByExercise.crunches),
     squats: pick(statsByExercise.squats),
+    plank: pick(statsByExercise.plank),
   });
 
   const dayMap = useMemo(() => {
@@ -429,30 +462,86 @@ export default function DashboardPage() {
     return out;
   }, [calendarMonth]);
 
+  const submitWorkout = async (value: number, selectedType: ExerciseType) => {
+    const timeToSend = timeTouched ? time : normalizeTime(new Date());
+    await fetchJsonSafe('/api/workouts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reps: value, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType }),
+    });
+    setInfo(tt('Добавлено'));
+    const toast = value >= 50 ? 'МАШИНА!!!! 💪🎉' : value >= 21 ? '👍👍' : '👍';
+    setToastMessage(toast);
+    setTime(normalizeTime(new Date()));
+    setTimeTouched(false);
+    setReps(0);
+    setPlankSecondsLeft(0);
+    setPlankTimerActive(false);
+    setPlankTimerStarted(false);
+    await loadWorkouts();
+  };
+
   const handleAdd = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setError(null);
     setInfo(null);
-
-    const timeToSend = timeTouched ? time : normalizeTime(new Date());
+    if (!Number.isFinite(reps) || reps <= 0) {
+      setError(isPlankSelected ? tt('Введите корректное количество секунд (> 0)') : 'reps должен быть числом > 0');
+      return;
+    }
 
     try {
-      await fetchJsonSafe('/api/workouts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reps, date, time: toIsoTime(date, timeToSend), exerciseType }),
-      });
-      setInfo(tt('Добавлено'));
-      const toast = reps >= 50 ? 'МАШИНА!!!! 💪🎉' : reps >= 21 ? '👍👍' : '👍';
-      setToastMessage(toast);
-      setTime(normalizeTime(new Date()));
-      setTimeTouched(false);
-      setReps(0);
-      await loadWorkouts();
+      await submitWorkout(reps, exerciseType);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
   };
+
+  const handlePlankStart = () => {
+    setError(null);
+    setInfo(null);
+    const target = Math.max(0, reps || 0);
+    if (!Number.isFinite(target) || target <= 0) {
+      setError(tt('Введите корректное количество секунд (> 0)'));
+      return;
+    }
+    setPlankSecondsLeft(target);
+    setPlankTimerStarted(true);
+    setPlankTimerActive(true);
+  };
+
+  const handlePlankStop = async () => {
+    if (!isPlankSelected) return;
+    const actual = plankElapsedSeconds;
+    if (!Number.isFinite(actual) || actual <= 0) {
+      setPlankTimerActive(false);
+      setPlankTimerStarted(false);
+      setPlankSecondsLeft(Math.max(0, reps || 0));
+      return;
+    }
+    setError(null);
+    setInfo(null);
+    setPlankTimerActive(false);
+    setPlankTimerStarted(false);
+    try {
+      await submitWorkout(actual, 'plank');
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
+  useEffect(() => {
+    if (!isPlankSelected || !plankTimerStarted || plankSecondsLeft !== 0) return;
+    void handlePlankStop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlankSelected, plankTimerStarted, plankSecondsLeft]);
+
+  function formatClock(totalSeconds: number) {
+    const safe = Math.max(0, totalSeconds);
+    const mm = Math.floor(safe / 60);
+    const ss = safe % 60;
+    return `${mm}:${String(ss).padStart(2, '0')}`;
+  }
 
   const startEdit = (w: Workout) => {
     setEditingId(w.id);
@@ -461,7 +550,7 @@ export default function DashboardPage() {
     setEditReps(w.reps || 0);
     const next = String(w.exerciseType || 'pushups');
     setEditExerciseType(
-      next === 'pushups' || next === 'pullups' || next === 'crunches' || next === 'squats' ? next : 'pushups',
+      next === 'pushups' || next === 'pullups' || next === 'crunches' || next === 'squats' || next === 'plank' ? next : 'pushups',
     );
   };
 
@@ -550,6 +639,7 @@ export default function DashboardPage() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, margin: '12px 0 18px' }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: '#475569' }}>{tt(exerciseValueLabel(exerciseType))}</div>
         <div
           style={{
             width: 'min(92vw, 520px)',
@@ -579,35 +669,75 @@ export default function DashboardPage() {
 
         <input
           inputMode="numeric"
-          value={String(reps)}
+          value={isPlankSelected && plankTimerStarted ? formatClock(plankSecondsLeft) : String(reps)}
           onChange={(e) => {
+            if (isPlankSelected && plankTimerStarted) return;
             const v = e.target.value.replace(/[^\d]/g, '');
             setReps(v === '' ? 0 : Math.min(9999, parseInt(v, 10)));
           }}
           placeholder="0"
           style={repsInputStyle}
+          readOnly={isPlankSelected && plankTimerStarted}
         />
 
-        <div style={plusButtonsGrid}>
-          <button
-            type="button"
-            onClick={() => setReps((prev) => Math.min(9999, (prev || 0) + 5))}
-            style={plus5Button}
-          >
-            +5
-          </button>
-          <button
-            type="button"
-            onClick={() => setReps((prev) => Math.min(9999, (prev || 0) + 10))}
-            style={plus10Button}
-          >
-            +10
-          </button>
-        </div>
+        {!plankTimerStarted ? (
+          <>
+            <div style={plusButtonsGrid}>
+              <button
+                type="button"
+                onClick={() => setReps((prev) => Math.min(9999, (prev || 0) + 5))}
+                style={plus5Button}
+              >
+                {isTimedExercise(exerciseType) ? `+5 ${tt('сек')}` : '+5'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setReps((prev) => Math.min(9999, (prev || 0) + 10))}
+                style={plus10Button}
+              >
+                {isTimedExercise(exerciseType) ? `+10 ${tt('сек')}` : '+10'}
+              </button>
+            </div>
 
-        <button type="button" onClick={() => handleAdd()} style={addButton}>
-          {tt('Добавить')}
-        </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (isPlankSelected) {
+                  handlePlankStart();
+                  return;
+                }
+                void handleAdd();
+              }}
+              style={addButton}
+            >
+              {isPlankSelected ? tt('Старт') : tt('Добавить')}
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#475569' }}>
+              {tt('Сделал')}: {formatExerciseValue(plankElapsedSeconds, 'plank', true)}
+            </div>
+            <div style={plusButtonsGrid}>
+              <button
+                type="button"
+                onClick={() => setPlankTimerActive((prev) => !prev)}
+                style={plus5Button}
+              >
+                {plankTimerActive ? tt('Пауза') : tt('Продолжить')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handlePlankStop();
+                }}
+                style={plus10Button}
+              >
+                {tt('Стоп')}
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {error ? <p style={{ color: 'red', marginTop: 10 }}>{error}</p> : null}
@@ -750,6 +880,7 @@ export default function DashboardPage() {
                                 <option value="pullups">{tt('Подтягивания')}</option>
                                 <option value="crunches">{tt('Скручивания')}</option>
                                 <option value="squats">{tt('Приседания')}</option>
+                                <option value="plank">{tt('Планка')}</option>
                               </select>
                             </div>
 
@@ -764,7 +895,7 @@ export default function DashboardPage() {
                             </div>
 
                             <div style={{ display: 'grid', gap: 4 }}>
-                              <label>{tt('Повторы')}</label>
+                              <label>{tt(exerciseValueLabel(editExerciseType))}</label>
                               <input
                                 type="number"
                                 value={editReps}
@@ -788,7 +919,7 @@ export default function DashboardPage() {
                                 <span style={{ fontWeight: 800 }}>{tt(exerciseLabel(w.exerciseType))}</span>
                               </div>
                               <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag)}</b></div>
-                              <div>{tt('Повторы')}: <b>{w.reps}</b></div>
+                              <div>{tt(exerciseValueLabel(w.exerciseType))}: <b>{formatExerciseValue(w.reps, w.exerciseType, true)}</b></div>
                             </div>
 
                             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -835,15 +966,15 @@ export default function DashboardPage() {
 
 const exerciseTypePickerWrap: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-  gap: 8,
-  width: 'min(92vw, 520px)',
+  gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+  gap: 'clamp(4px, 1.5vw, 8px)',
+  width: 'min(92vw, 560px)',
   margin: '6px auto 12px',
 };
 
 function exerciseTypePickerButton(active: boolean): React.CSSProperties {
   return {
-    height: 56,
+    height: 'clamp(46px, 14vw, 56px)',
     borderRadius: 12,
     border: `2px solid ${active ? '#2563eb' : '#d1d5db'}`,
     background: active ? '#eff6ff' : '#fff',
@@ -852,12 +983,14 @@ function exerciseTypePickerButton(active: boolean): React.CSSProperties {
     justifyContent: 'center',
     cursor: 'pointer',
     boxShadow: active ? '0 0 0 1px rgba(37, 99, 235, 0.24)' : 'none',
+    minWidth: 0,
+    padding: 0,
   };
 }
 
 const exerciseTypePickerIcon: React.CSSProperties = {
-  width: 40,
-  height: 40,
+  width: 'clamp(24px, 8vw, 38px)',
+  height: 'clamp(24px, 8vw, 38px)',
   objectFit: 'contain',
   display: 'block',
 };
@@ -919,7 +1052,7 @@ const repsInputStyle: React.CSSProperties = {
 };
 
 const plusButtonsGrid: React.CSSProperties = {
-  width: 'min(75vw, 520px)',
+  width: 'min(92vw, 520px)',
   display: 'grid',
   gridTemplateColumns: '1fr 1fr',
   gap: 12,
@@ -932,9 +1065,15 @@ const plusButtonBase: React.CSSProperties = {
   border: 'none',
   color: '#000',
   fontWeight: 800,
-  fontSize: 'clamp(36px, 10vw, 72px)',
+  fontSize: 'clamp(24px, 7vw, 44px)',
   lineHeight: 1,
   cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  whiteSpace: 'nowrap',
+  fontVariantNumeric: 'tabular-nums',
+  padding: '0 10px',
 };
 
 const plus5Button: React.CSSProperties = {
@@ -948,7 +1087,7 @@ const plus10Button: React.CSSProperties = {
 };
 
 const addButton: React.CSSProperties = {
-  width: 'min(75vw, 520px)',
+  width: 'min(92vw, 520px)',
   padding: '14px 16px',
   borderRadius: 14,
   border: 'none',

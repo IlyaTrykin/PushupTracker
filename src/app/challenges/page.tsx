@@ -4,6 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import {
+  challengeDailyMinLabel,
+  challengeMostLabel,
+  challengeSetsMinLabel,
+  challengeSetsModeLabel,
+  challengeTargetLabel,
+  challengeTargetPromptLabel,
+} from '@/lib/exercise-metrics';
 
 type Friend = {
   friendshipId: string;
@@ -107,7 +115,7 @@ export default function ChallengesPage() {
   const [name, setName] = useState(() => t(locale, 'Соревнование месяца'));
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(endOfMonthISO());
-  const [exerciseType, setExerciseType] = useState<'pushups' | 'pullups' | 'crunches' | 'squats'>('pushups');
+  const [exerciseType, setExerciseType] = useState<'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank'>('pushups');
   const [mode, setMode] = useState<'most' | 'target' | 'daily_min' | 'sets_min'>('most');
   const [targetReps, setTargetReps] = useState<number>(1000);
 
@@ -317,16 +325,16 @@ export default function ChallengesPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label>{tt('Режим')}</label>
                 <select value={mode} onChange={e => setMode(e.target.value as any)} style={input}>
-                  <option value="most">{tt('Кто больше за период')}</option>
-                  <option value="target">{tt('Цель (N повторов)')}</option>
+                  <option value="most">{tt(challengeMostLabel(exerciseType))}</option>
+                  <option value="target">{tt(challengeTargetPromptLabel(exerciseType))}</option>
                   <option value="daily_min">{tt('Зачтённые дни (мин. X в день)')}</option>
-                  <option value="sets_min">{tt('Зачтённые подходы (reps ≥ X)')}</option>
+                  <option value="sets_min">{tt(challengeSetsModeLabel(exerciseType))}</option>
                 </select>
               </div>
 
               {mode === 'target' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label>{tt('Цель (повторы)')}</label>
+                  <label>{tt(challengeTargetLabel(exerciseType))}</label>
                   <input
                     type="number"
                     min={1}
@@ -337,7 +345,7 @@ export default function ChallengesPage() {
                 </div>
               ) : mode === 'daily_min' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label>{tt('Минимум повторов в день (X)')}</label>
+                  <label>{tt(challengeDailyMinLabel(exerciseType))}</label>
                   <input
                     type="number"
                     min={1}
@@ -348,7 +356,7 @@ export default function ChallengesPage() {
                 </div>
               ) : mode === 'sets_min' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label>{tt('Минимум повторов для зачёта подхода (X)')}</label>
+                  <label>{tt(challengeSetsMinLabel(exerciseType))}</label>
                   <input
                     type="number"
                     min={1}
@@ -371,6 +379,7 @@ export default function ChallengesPage() {
                 <option value="pullups">{tt('Подтягивания')}</option>
                 <option value="crunches">{tt('Скручивания')}</option>
                 <option value="squats">{tt('Приседания')}</option>
+                <option value="plank">{tt('Планка')}</option>
               </select>
             </div>
 

@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getLocaleTimerAudio } from '@/i18n/locale';
+import { t } from '@/i18n/translate';
+import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 
 type TrainingSet = {
   id: string;
@@ -58,12 +60,14 @@ function exerciseLabel(
     pullups: string;
     crunches: string;
     squats: string;
+    plank: string;
   },
 ) {
   if (exerciseType === 'pushups') return labels.pushups;
   if (exerciseType === 'pullups') return labels.pullups;
   if (exerciseType === 'crunches') return labels.crunches;
   if (exerciseType === 'squats') return labels.squats;
+  if (exerciseType === 'plank') return labels.plank;
   return exerciseType;
 }
 
@@ -96,6 +100,8 @@ export default function ProgramSessionPage() {
 
   const [currentIdx, setCurrentIdx] = useState(0);
   const [actualRepsInput, setActualRepsInput] = useState('');
+  const [plankSecondsLeft, setPlankSecondsLeft] = useState(0);
+  const [plankActive, setPlankActive] = useState(false);
 
   const [restSeconds, setRestSeconds] = useState(0);
   const [restPaused, setRestPaused] = useState(false);
@@ -114,7 +120,17 @@ export default function ProgramSessionPage() {
     return session.sets[currentIdx] || null;
   }, [session, currentIdx]);
   const isFinalCountdown = restSeconds > 0 && restSeconds <= 5;
+  const isPlank = isTimedExercise(program?.exerciseType);
+  const isPlankFinalCountdown = plankActive && plankSecondsLeft > 0 && plankSecondsLeft <= 3;
   const timerAudio = useMemo(() => getLocaleTimerAudio(locale), [locale]);
+  const metricInputLabel = useMemo(
+    () => exerciseValueLabel(program?.exerciseType),
+    [program?.exerciseType],
+  );
+  const plankElapsedSeconds = useMemo(() => {
+    if (!currentSet || !isPlank) return 0;
+    return Math.max(0, currentSet.targetReps - plankSecondsLeft);
+  }, [currentSet, isPlank, plankSecondsLeft]);
 
   const load = async (forceStartEarly = false) => {
     if (!sessionId) return;
@@ -173,6 +189,22 @@ export default function ProgramSessionPage() {
     const t = window.setInterval(() => setRestSeconds((x) => (x > 0 ? x - 1 : 0)), 1000);
     return () => window.clearInterval(t);
   }, [restSeconds, restPaused]);
+
+  useEffect(() => {
+    if (!isPlank || !currentSet) {
+      setPlankActive(false);
+      setPlankSecondsLeft(0);
+      return;
+    }
+    setPlankActive(false);
+    setPlankSecondsLeft(Math.max(1, currentSet.targetReps));
+  }, [currentSet?.id, currentSet?.targetReps, isPlank]);
+
+  useEffect(() => {
+    if (!isPlank || !plankActive || plankSecondsLeft <= 0 || saving) return;
+    const t = window.setInterval(() => setPlankSecondsLeft((x) => (x > 0 ? x - 1 : 0)), 1000);
+    return () => window.clearInterval(t);
+  }, [isPlank, plankActive, plankSecondsLeft, saving]);
 
   const releaseWakeLock = useCallback(async () => {
     const sentinel = wakeLockRef.current;
@@ -322,17 +354,26 @@ export default function ProgramSessionPage() {
   }, [restSeconds, restPaused, playVoiceAnnouncement, playCountdownBeep]);
 
   useEffect(() => {
-    const shouldKeepAwake = restSeconds > 0 && !restPaused && !done;
+    if (!isPlank || !plankActive || plankSecondsLeft <= 0) {
+      return;
+    }
+    if (plankSecondsLeft <= 3) {
+      playCountdownBeep();
+    }
+  }, [isPlank, plankActive, plankSecondsLeft, playCountdownBeep]);
+
+  useEffect(() => {
+    const shouldKeepAwake = (restSeconds > 0 && !restPaused && !done) || (isPlank && plankActive && plankSecondsLeft > 0 && !done);
     if (shouldKeepAwake) {
       requestWakeLock();
     } else {
       releaseWakeLock();
     }
-  }, [restSeconds, restPaused, done, requestWakeLock, releaseWakeLock]);
+  }, [restSeconds, restPaused, done, requestWakeLock, releaseWakeLock, isPlank, plankActive, plankSecondsLeft]);
 
   useEffect(() => {
     const onVisibility = () => {
-      const shouldKeepAwake = restSeconds > 0 && !restPaused && !done;
+      const shouldKeepAwake = (restSeconds > 0 && !restPaused && !done) || (isPlank && plankActive && plankSecondsLeft > 0 && !done);
       if (!shouldKeepAwake) {
         releaseWakeLock();
         return;
@@ -346,7 +387,7 @@ export default function ProgramSessionPage() {
 
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [restSeconds, restPaused, done, requestWakeLock, releaseWakeLock]);
+  }, [restSeconds, restPaused, done, requestWakeLock, releaseWakeLock, isPlank, plankActive, plankSecondsLeft]);
 
   useEffect(() => {
     return () => {
@@ -372,12 +413,12 @@ export default function ProgramSessionPage() {
     setActualRepsInput(String(next.targetReps));
   }, [restSeconds, session, currentIdx]);
 
-  const saveCurrentSet = async () => {
+  const saveCurrentSet = useCallback(async (actualValue?: number) => {
     if (!session || !currentSet) return;
 
-    const actualReps = sanitizePositiveInt(actualRepsInput);
+    const actualReps = actualValue ?? sanitizePositiveInt(actualRepsInput);
     if (!Number.isFinite(actualReps) || actualReps <= 0) {
-      setError(messages.programSession.errors.invalidReps);
+      setError(isTimedExercise(program?.exerciseType) ? t(locale, 'Введите корректное количество секунд (> 0)') : messages.programSession.errors.invalidReps);
       return;
     }
 
@@ -411,6 +452,7 @@ export default function ProgramSessionPage() {
 
       setRestSeconds(currentSet.restSeconds || 0);
       setRestPaused(false);
+      setPlankActive(false);
       setCurrentIdx((x) => x + 1);
       const nextSet = session.sets[currentIdx + 1];
       if (nextSet) setActualRepsInput(String(nextSet.targetReps));
@@ -420,7 +462,20 @@ export default function ProgramSessionPage() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [session, currentSet, actualRepsInput, program?.exerciseType, locale, messages.programSession.errors.invalidReps, messages.programSession.errors.saveSetFailed, messages.programSession.complete.info, messages.programSession.set.saved, currentIdx]);
+
+  useEffect(() => {
+    if (!isPlank || !plankActive || plankSecondsLeft !== 0 || saving || !currentSet) return;
+    setPlankActive(false);
+    void saveCurrentSet(currentSet.targetReps);
+  }, [isPlank, plankActive, plankSecondsLeft, saving, currentSet, saveCurrentSet]);
+
+  function formatClock(totalSeconds: number): string {
+    const safe = Math.max(0, totalSeconds);
+    const mm = Math.floor(safe / 60);
+    const ss = safe % 60;
+    return `${mm}:${String(ss).padStart(2, '0')}`;
+  }
 
   if (loading) return <div className="app-page" style={{ maxWidth: 760 }}>{messages.common.loading}</div>;
 
@@ -477,44 +532,82 @@ export default function ProgramSessionPage() {
                 })}
               </div>
               <div style={{ textAlign: 'center' }}>
-                {formatText(messages.programSession.set.target, { reps: currentSet.targetReps })}
+                {isTimedExercise(program?.exerciseType)
+                  ? `${t(locale, 'Цель')}: ${formatExerciseValue(currentSet.targetReps, program?.exerciseType, true)}`
+                  : formatText(messages.programSession.set.target, { reps: currentSet.targetReps })}
               </div>
 
-              <div style={setInputWrap}>
-                <input
-                  inputMode="numeric"
-                  value={actualRepsInput}
-                  onChange={(e) => setActualRepsInput(String(sanitizePositiveInt(e.target.value)))}
-                  style={repsInputStyle}
-                />
+              {isPlank ? (
+                <div style={setInputWrap}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: '#475569', textAlign: 'center' }}>{t(locale, 'Осталось')}</div>
+                  <div style={{ ...repsInputStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', ...(isPlankFinalCountdown ? restTimerDanger : null) }}>
+                    {formatClock(plankSecondsLeft)}
+                  </div>
+                  <div style={{ fontSize: 14, color: '#475569', textAlign: 'center', fontWeight: 800 }}>
+                    {t(locale, 'Сделал')}: {formatExerciseValue(plankElapsedSeconds, program?.exerciseType, true)}
+                  </div>
+                  <div style={controlsGrid}>
+                    <button
+                      type="button"
+                      style={minusBtn}
+                      onClick={async () => {
+                        await primeAudioPlayback();
+                        setPlankActive((prev) => !prev);
+                      }}
+                    >
+                      {plankActive ? messages.programSession.rest.pause : plankElapsedSeconds > 0 ? messages.programSession.rest.resume : t(locale, 'Старт')}
+                    </button>
+                    <button
+                      type="button"
+                      style={plusBtn}
+                      onClick={() => {
+                        setPlankActive(false);
+                        void saveCurrentSet(plankElapsedSeconds);
+                      }}
+                      disabled={saving || plankElapsedSeconds <= 0}
+                    >
+                      {saving ? messages.programSession.set.saving : messages.programSession.set.done}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={setInputWrap}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: '#475569', textAlign: 'center' }}>{t(locale, metricInputLabel)}</div>
+                  <input
+                    inputMode="numeric"
+                    value={actualRepsInput}
+                    onChange={(e) => setActualRepsInput(String(sanitizePositiveInt(e.target.value)))}
+                    style={repsInputStyle}
+                  />
 
-                <div style={controlsGrid}>
-                  <button
-                    type="button"
-                    style={minusBtn}
-                    onClick={() => {
-                      const next = Math.max(1, sanitizePositiveInt(actualRepsInput) - 1);
-                      setActualRepsInput(String(next));
-                    }}
-                  >
-                    -
-                  </button>
-                  <button
-                    type="button"
-                    style={plusBtn}
-                    onClick={() => {
-                      const next = Math.min(5000, Math.max(0, sanitizePositiveInt(actualRepsInput)) + 1);
-                      setActualRepsInput(String(next));
-                    }}
-                  >
-                    +
+                  <div style={controlsGrid}>
+                    <button
+                      type="button"
+                      style={minusBtn}
+                      onClick={() => {
+                        const next = Math.max(1, sanitizePositiveInt(actualRepsInput) - 1);
+                        setActualRepsInput(String(next));
+                      }}
+                    >
+                      -
+                    </button>
+                    <button
+                      type="button"
+                      style={plusBtn}
+                      onClick={() => {
+                        const next = Math.min(5000, Math.max(0, sanitizePositiveInt(actualRepsInput)) + 1);
+                        setActualRepsInput(String(next));
+                      }}
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  <button type="button" style={{ ...btnPrimary, width: '100%' }} onClick={() => void saveCurrentSet()} disabled={saving}>
+                    {saving ? messages.programSession.set.saving : messages.programSession.set.done}
                   </button>
                 </div>
-
-                <button type="button" style={{ ...btnPrimary, width: '100%' }} onClick={saveCurrentSet} disabled={saving}>
-                  {saving ? messages.programSession.set.saving : messages.programSession.set.done}
-                </button>
-              </div>
+              )}
             </div>
           )}
         </section>

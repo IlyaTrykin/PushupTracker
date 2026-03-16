@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { t } from '@/i18n/translate';
 
-export type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+export type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 
 const KEY = 'exerciseType';
 
@@ -13,6 +13,7 @@ const OPTIONS: { value: ExerciseType; label: string }[] = [
   { value: 'pullups', label: 'Подтягивания' },
   { value: 'crunches', label: 'Скручивания' },
   { value: 'squats', label: 'Приседания' },
+  { value: 'plank', label: 'Планка' },
 ];
 
 export default function ExerciseTypeDropdown() {
@@ -23,7 +24,9 @@ export default function ExerciseTypeDropdown() {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(KEY);
-      if (saved === 'pushups' || saved === 'pullups') setValue(saved);
+      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats' || saved === 'plank') {
+        setValue(saved);
+      }
     } catch {}
   }, []);
 
