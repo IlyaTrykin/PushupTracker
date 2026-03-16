@@ -9,7 +9,7 @@ import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
 
 type Me = { username: string; isAdmin?: boolean; avatarPath?: string | null; language?: string };
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 
 function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles']) {
   if (!pathname || pathname === '/') return titles.home;
@@ -71,7 +71,8 @@ export default function AppNavClient() {
     if (exerciseType === 'pushups') return messages.nav.exercise.pushups;
     if (exerciseType === 'pullups') return messages.nav.exercise.pullups;
     if (exerciseType === 'crunches') return messages.nav.exercise.crunches;
-    return messages.nav.exercise.squats;
+    if (exerciseType === 'squats') return messages.nav.exercise.squats;
+    return messages.nav.exercise.plank;
   }, [exerciseType, messages.nav.exercise]);
 
   useEffect(() => {
@@ -85,14 +86,14 @@ export default function AppNavClient() {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem('exerciseType');
-      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats') {
+      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats' || saved === 'plank') {
         setExerciseType(saved);
       }
     } catch {}
 
     const onChanged = (e: any) => {
       const t = e?.detail?.exerciseType ?? e?.detail;
-      if (t === 'pushups' || t === 'pullups' || t === 'crunches' || t === 'squats') {
+      if (t === 'pushups' || t === 'pullups' || t === 'crunches' || t === 'squats' || t === 'plank') {
         setExerciseType(t);
       }
     };

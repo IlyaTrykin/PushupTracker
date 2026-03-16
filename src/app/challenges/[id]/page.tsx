@@ -4,6 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import {
+  challengeMostLabel,
+  challengeQualifiedValueLabel,
+  formatExerciseValue,
+  isTimedExercise,
+} from '@/lib/exercise-metrics';
 
 type ProgressRow = { userId: string; username: string; total: number; creditedDays?: number; totalDays?: number; qualifiedSets?: number; qualifiedReps?: number };
 
@@ -142,7 +148,9 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                 {tt('Осталось дней')}: <b>{meta.daysLeft}</b>
               </div>
               <div style={{ marginTop: 6, fontSize: 12 }}>
-                {tt('Режим')}: <b>{challenge.mode === 'most' ? tt('кто больше') : `${tt('цель')} ${challenge.targetReps}`}</b>
+                {tt('Режим')}: <b>{challenge.mode === 'most'
+                  ? tt(challengeMostLabel(challenge.exerciseType))
+                  : `${tt('цель')} ${formatExerciseValue(challenge.targetReps, challenge.exerciseType, true)}`}</b>
               </div>
             </div>
 
@@ -150,7 +158,11 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 12, color: '#6b7280' }}>{tt('Лидер')}</div>
                 <div style={{ fontWeight: 900 }}>{leader.username}</div>
-                <div style={{ fontWeight: 900 }}>{leader.total}</div>
+                <div style={{ fontWeight: 900 }}>
+                  {challenge.mode === 'most' || challenge.mode === 'target'
+                    ? formatExerciseValue(leader.total, challenge.exerciseType, true)
+                    : leader.total}
+                </div>
               </div>
             )}
           </div>
@@ -173,7 +185,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                   <th style={thTiny}>#</th>
                   <th style={thBase}>{tt('Участник')}</th>
                   <th style={thNum}>{challenge?.mode === 'daily_min' ? tt('Дни') : challenge?.mode === 'sets_min' ? tt('Подходы') : tt('Сумма')}</th>
-                  {challenge?.mode === 'sets_min' ? <th style={thNum}>{tt('Повторы (зачт.)')}</th> : null}
+                  {challenge?.mode === 'sets_min' ? <th style={thNum}>{tt(challengeQualifiedValueLabel(challenge.exerciseType))}</th> : null}
                   <th style={thNum}>%</th>
                   <th style={thNum}>{tt('Осталось')}</th>
                   <th style={{ ...thClamp2, textAlign: 'right' }}>{tt('Дельта (я vs он)')}</th>
@@ -191,16 +203,17 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
 
                   // delta = myTotal - hisTotal
                   const delta = isMe ? null : (myTotal - p.total);
-                  const deltaText =
-                    delta === null ? '—' :
-                    delta < 0 ? String(delta) : String(delta); // will format sign below
                   const deltaColor =
                     delta === null ? '#6b7280' :
                     delta < 0 ? '#dc2626' : '#16a34a';
 
                   const deltaShown =
                     delta === null ? '—' :
-                    delta < 0 ? `${delta}` : `${delta}`.replace(/^\+/, '');
+                    challenge?.mode === 'most' || challenge?.mode === 'target'
+                      ? (delta < 0
+                        ? `-${formatExerciseValue(Math.abs(delta), challenge.exerciseType, true)}`
+                        : formatExerciseValue(delta, challenge.exerciseType, true))
+                      : (delta < 0 ? `${delta}` : `${delta}`.replace(/^\+/, ''));
 
                   return (
                     <tr key={p.userId}>
@@ -208,19 +221,19 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                       <td style={tdBase}>
                         <b style={{ color: idx === 0 ? '#d4af37' : (idx === 1 ? '#c0c0c0' : (idx === 2 ? '#cd7f32' : '#000')) }}>{p.username}</b>{isMe ? ` ${tt('(я)')}` : ''}
                       </td>
-                                            <td style={tdNum}>
+                      <td style={tdNum}>
                         {challenge?.mode === 'daily_min'
                           ? `${p.creditedDays ?? p.total}/${p.totalDays ?? ''}`
-                          : p.total}
+                          : formatExerciseValue(p.total, challenge?.mode === 'sets_min' ? null : challenge?.exerciseType, challenge?.mode !== 'sets_min')}
                       </td>
                       {challenge?.mode === 'sets_min' ? (
-                        <td style={tdNum}>{Number(p.qualifiedReps ?? 0)}</td>
+                        <td style={tdNum}>{formatExerciseValue(Number(p.qualifiedReps ?? 0), challenge?.exerciseType, true)}</td>
                       ) : null}
                       <td style={tdNum}>
                         {percent === null ? '—' : `${percent}%`}
                       </td>
                       <td style={tdNum}>
-                        {remaining === null ? '—' : remaining}
+                        {remaining === null ? '—' : formatExerciseValue(remaining, challenge?.exerciseType, true)}
                       </td>
                       <td style={{ ...tdNum, color: deltaColor }}>
                         {deltaShown}
@@ -233,7 +246,9 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
 
             {challenge?.mode === 'target' && typeof challenge.targetReps === 'number' && (
               <p style={{ marginTop: 10, color: '#6b7280', fontSize: 12 }}>
-                {tt('Для режима “цель” % считается как total / targetReps.')}
+                {tt(isTimedExercise(challenge?.exerciseType)
+                  ? 'Для режима “цель” % считается как totalSeconds / targetSeconds.'
+                  : 'Для режима “цель” % считается как total / targetReps.')}
               </p>
             )}
           </div>

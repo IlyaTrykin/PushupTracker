@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { formatExerciseValue } from '@/lib/exercise-metrics';
 
 type TrainingSet = {
   id: string;
@@ -61,6 +62,7 @@ function exerciseLabel(exerciseType: string) {
   if (exerciseType === 'pullups') return 'Подтягивания';
   if (exerciseType === 'crunches') return 'Скручивания';
   if (exerciseType === 'squats') return 'Приседания';
+  if (exerciseType === 'plank') return 'Планка';
   return exerciseType;
 }
 
@@ -74,11 +76,11 @@ function formatSessionDate(iso: string, locale: string) {
   });
 }
 
-function renderSetPlan(session: TrainingSession) {
+function renderSetPlan(session: TrainingSession, exerciseType?: string) {
   return session.sets
     .slice()
     .sort((a, b) => a.setNumber - b.setNumber)
-    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : String(set.targetReps)))
+    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true)))
     .join('-');
 }
 
@@ -143,7 +145,7 @@ export default function ProgramDetailPage() {
           <section style={card}>
             <div style={{ display: 'grid', gap: 4 }}>
               <div>{tt('Упражнение')}: <b>{tt(exerciseLabel(program.exerciseType))}</b></div>
-              <div>{tt('Базовый тест')}: <b>{program.baselineMaxReps}</b> · {tt('Цель')}: <b>{program.targetReps ?? '—'}</b></div>
+              <div>{tt('Базовый тест')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true)}</b></div>
               <div>{tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')} · {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')}</div>
               <div>{tt('Прогресс')}: <b>{program.stats.completedSessions}/{program.stats.totalSessions}</b> ({program.stats.completionPercent}%)</div>
             </div>
@@ -170,7 +172,7 @@ export default function ProgramDetailPage() {
                       {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
                     </div>
                     <div style={{ color: '#111827' }}>
-                      {tt('План подходов')}: <b>{renderSetPlan(session)}</b>
+                      {tt('План подходов')}: <b>{renderSetPlan(session, program.exerciseType)}</b>
                     </div>
                     <div style={{ color: '#111827' }}>
                       {tt('Статус')}: {session.completed ? tt('Выполнено') : tt('Запланировано')}

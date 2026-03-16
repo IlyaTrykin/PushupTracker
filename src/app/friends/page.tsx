@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { formatExerciseValue } from '@/lib/exercise-metrics';
 
 interface Friend {
   friendshipId: string;
@@ -55,7 +56,7 @@ function AvatarCircle({ src, size = 28 }: { src?: string | null; size?: number }
 }
 
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 
 interface Workout {
   id: string;
@@ -121,7 +122,7 @@ type SortKey =
 
 type FeedLimit = 5 | 10 | 30 | 50 | 100;
 
-const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats'];
+const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
 const FEED_LIMIT_OPTIONS: FeedLimit[] = [5, 10, 30, 50, 100];
 
@@ -158,14 +159,16 @@ function exerciseNumberColor(type: ExerciseType): string {
   if (type === 'pushups') return '#38bdf8';
   if (type === 'pullups') return '#ef4444';
   if (type === 'crunches') return '#22c55e';
-  return '#b8860b';
+  if (type === 'squats') return '#b8860b';
+  return '#14b8a6';
 }
 
 function exerciseLabel(type: ExerciseType): string {
   if (type === 'pushups') return 'Отжимания';
   if (type === 'pullups') return 'Подтягивания';
   if (type === 'crunches') return 'Скручивания';
-  return 'Приседания';
+  if (type === 'squats') return 'Приседания';
+  return 'Планка';
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -178,15 +181,16 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 function exerciseFeedIcon(type: ExerciseType): string {
-  const v = '20260304-4';
+  const v = '20260315-2';
   if (type === 'pushups') return `/icons/exercise-types/feed/pushups.svg?v=${v}`;
   if (type === 'pullups') return `/icons/exercise-types/feed/pullups.svg?v=${v}`;
   if (type === 'crunches') return `/icons/exercise-types/feed/crunches.svg?v=${v}`;
-  return `/icons/exercise-types/feed/squats.svg?v=${v}`;
+  if (type === 'squats') return `/icons/exercise-types/feed/squats.svg?v=${v}`;
+  return `/icons/exercise-types/feed/plank.svg?v=${v}`;
 }
 
 function toExerciseType(type: string | undefined): ExerciseType {
-  if (type === 'pullups' || type === 'crunches' || type === 'squats') return type;
+  if (type === 'pullups' || type === 'crunches' || type === 'squats' || type === 'plank') return type;
   return 'pushups';
 }
 
@@ -281,6 +285,7 @@ function calcStatsByExercise(workouts: Workout[]): StatsByExercise {
     pullups: calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === 'pullups')),
     crunches: calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === 'crunches')),
     squats: calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === 'squats')),
+    plank: calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === 'plank')),
   };
 }
 
@@ -1187,7 +1192,7 @@ export default function FriendsPage() {
 
                         <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={feedTypeIcon} />
 
-                        <div style={feedReps}>{w.reps}</div>
+                        <div style={feedReps}>{formatExerciseValue(w.reps, type, true)}</div>
                       </div>
 
                       {summaryItems.length ? (
@@ -1436,7 +1441,7 @@ export default function FriendsPage() {
                           <img src={exerciseFeedIcon(workoutType)} alt={tt(exerciseLabel(workoutType))} style={friendWorkoutTypeIcon} />
                         </div>
                         <div>{formatTimeHHMM(w.time || w.date)}</div>
-                        <div style={{ fontWeight: 900 }}>{w.reps}</div>
+                        <div style={{ fontWeight: 900 }}>{formatExerciseValue(w.reps, workoutType, true)}</div>
                       </div>
 
                       {reaction?.summary?.length ? (

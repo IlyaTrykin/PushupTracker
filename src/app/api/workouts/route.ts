@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { sendWebPushToUsers } from '@/lib/web-push';
+import { formatExerciseValue } from '@/lib/exercise-metrics';
 
 export const dynamic = 'force-dynamic';
 
@@ -229,6 +230,7 @@ export async function POST(request: Request) {
   try {
     const notifications: Array<{ userId: string; type: string; title: string; body: string; link: string }> = [];
     const pushMessages = new Map<string, { title: string; body: string; link: string; tag: string }>();
+    const workoutValue = formatExerciseValue(reps, exerciseType, true);
 
     // Notify followers about each new workout.
     const followers = await prisma.friendFollow.findMany({
@@ -241,12 +243,12 @@ export async function POST(request: Request) {
         userId: f.followerId,
         type: 'friend_workout',
         title: 'Новая тренировка друга',
-        body: `${authUser.username}: ${reps} (${exerciseType})`,
+        body: `${authUser.username}: ${workoutValue} (${exerciseType})`,
         link: '/friends',
       });
       pushMessages.set(`friend_workout:${f.followerId}`, {
         title: 'Новая тренировка друга',
-        body: `${authUser.username}: ${reps} (${exerciseType})`,
+        body: `${authUser.username}: ${workoutValue} (${exerciseType})`,
         link: '/friends',
         tag: `friend-workout-${authUser.id}`,
       });

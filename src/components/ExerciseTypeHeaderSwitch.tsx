@@ -4,11 +4,11 @@ import React, { useEffect, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { t } from '@/i18n/translate';
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 const KEY = 'exerciseType';
 
 function isValid(v: any): v is ExerciseType {
-  return v === 'pushups' || v === 'pullups' || v === 'crunches' || v === 'squats';
+  return v === 'pushups' || v === 'pullups' || v === 'crunches' || v === 'squats' || v === 'plank';
 }
 
 export default function ExerciseTypeHeaderSwitch() {
@@ -52,6 +52,9 @@ export default function ExerciseTypeHeaderSwitch() {
       </button>
       <button type="button" style={pill(exerciseType === 'squats')} onClick={() => setType('squats')}>
         {tt('Приседания')}
+      </button>
+      <button type="button" style={pill(exerciseType === 'plank')} onClick={() => setType('plank')}>
+        {tt('Планка')}
       </button>
     </div>
   );

@@ -54,6 +54,7 @@ export const enMessages: DeepPartial<Messages> = {
       pullups: 'Pull-ups',
       crunches: 'Crunches',
       squats: 'Squats',
+      plank: 'Plank',
     },
   },
   auth: {

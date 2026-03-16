@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import { sendWebPushToUsers } from '@/lib/web-push';
 
-export type ProgramExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats';
+export type ProgramExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 export type ProgramGoalType = 'reach_target';
 
 type GoalTemplate = {
@@ -15,6 +15,7 @@ const EXERCISE_COEFFICIENTS: Record<ProgramExerciseType, number> = {
   pullups: 0.85,
   crunches: 1.1,
   squats: 1.05,
+  plank: 0.9,
 };
 
 const GOAL_TEMPLATE: GoalTemplate = {
@@ -159,6 +160,7 @@ function exerciseTypeLabel(exerciseType: string): string {
   if (exerciseType === 'pullups') return 'подтягивания';
   if (exerciseType === 'crunches') return 'скручивания';
   if (exerciseType === 'squats') return 'приседания';
+  if (exerciseType === 'plank') return 'планка';
   return exerciseType;
 }
 
@@ -320,7 +322,7 @@ function computeSetTarget(args: {
 function normalizeCreateInput(raw: ProgramCreateInput): NormalizedCreateInput {
   const exerciseType = raw.exerciseType;
 
-  if (!['pushups', 'pullups', 'crunches', 'squats'].includes(exerciseType)) {
+  if (!['pushups', 'pullups', 'crunches', 'squats', 'plank'].includes(exerciseType)) {
     throw new ProgramError('Некорректный тип упражнения');
   }
 

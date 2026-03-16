@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 
-const ALLOWED_EXERCISES = new Set(['pushups', 'pullups', 'crunches', 'squats']);
+const ALLOWED_EXERCISES = new Set(['pushups', 'pullups', 'crunches', 'squats', 'plank']);
 
 
 function jsonError(message: string, status: number, details?: string) {
   return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
 }
 
-function getExerciseTypeFromQuery(request: NextRequest): 'pushups' | 'pullups' | 'crunches' | 'squats' | null {
+function getExerciseTypeFromQuery(request: NextRequest): 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank' | null {
   const raw = request.nextUrl.searchParams.get('exerciseType');
   if (!raw) return null;
   const et = raw.trim();

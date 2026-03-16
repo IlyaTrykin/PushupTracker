@@ -4,6 +4,11 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import {
+  formatExerciseValue,
+  programBaselinePromptLabel,
+  programTargetPromptLabel,
+} from '@/lib/exercise-metrics';
 
 type TrainingSet = {
   id: string;
@@ -85,7 +90,7 @@ type ProgramOverview = {
 };
 
 type CreateForm = {
-  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats';
+  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
   baselineMaxReps: number;
   targetReps: number;
   frequencyPerWeek: number;
@@ -130,6 +135,7 @@ function exerciseLabel(exerciseType: string) {
   if (exerciseType === 'pullups') return 'Подтягивания';
   if (exerciseType === 'crunches') return 'Скручивания';
   if (exerciseType === 'squats') return 'Приседания';
+  if (exerciseType === 'plank') return 'Планка';
   return exerciseType;
 }
 
@@ -138,6 +144,7 @@ function exerciseCode(exerciseType: string) {
   if (exerciseType === 'pullups') return 'ПТГ';
   if (exerciseType === 'crunches') return 'СКР';
   if (exerciseType === 'squats') return 'ПРС';
+  if (exerciseType === 'plank') return 'ПЛН';
   return exerciseType.toUpperCase().slice(0, 3);
 }
 
@@ -146,6 +153,7 @@ function exerciseColor(exerciseType: string) {
   if (exerciseType === 'pullups') return '#fee2e2';
   if (exerciseType === 'crunches') return '#dcfce7';
   if (exerciseType === 'squats') return '#fef3c7';
+  if (exerciseType === 'plank') return '#ccfbf1';
   return '#e5e7eb';
 }
 
@@ -154,18 +162,20 @@ function exerciseLegendColor(exerciseType: string) {
   if (exerciseType === 'pullups') return '#ef4444';
   if (exerciseType === 'crunches') return '#22c55e';
   if (exerciseType === 'squats') return '#b8860b';
+  if (exerciseType === 'plank') return '#14b8a6';
   return '#9ca3af';
 }
 
 function exerciseFeedIcon(exerciseType: string) {
-  const v = '20260304-4';
+  const v = '20260315-2';
   if (exerciseType === 'pullups') return `/icons/exercise-types/feed/pullups.svg?v=${v}`;
   if (exerciseType === 'crunches') return `/icons/exercise-types/feed/crunches.svg?v=${v}`;
   if (exerciseType === 'squats') return `/icons/exercise-types/feed/squats.svg?v=${v}`;
+  if (exerciseType === 'plank') return `/icons/exercise-types/feed/plank.svg?v=${v}`;
   return `/icons/exercise-types/feed/pushups.svg?v=${v}`;
 }
 
-const EXERCISE_ORDER = ['pushups', 'pullups', 'crunches', 'squats'] as const;
+const EXERCISE_ORDER = ['pushups', 'pullups', 'crunches', 'squats', 'plank'] as const;
 
 function toDate(iso: string | null | undefined): Date | null {
   if (!iso) return null;
@@ -230,11 +240,11 @@ function formatDayTitle(dayKey: string, locale: string) {
   });
 }
 
-function renderSessionSetPlan(session: TrainingSession) {
+function renderSessionSetPlan(session: TrainingSession, exerciseType?: string) {
   return session.sets
     .slice()
     .sort((a, b) => a.setNumber - b.setNumber)
-    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : String(set.targetReps)))
+    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true)))
     .join('-');
 }
 
@@ -248,7 +258,7 @@ function calendarDayBackground(upcoming: number, completed: number) {
 }
 
 function suggestedFrequencyPerWeek(args: {
-  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats';
+  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
   baselineMaxReps: number;
   targetReps: number;
   ageYears: number;
@@ -273,7 +283,7 @@ function suggestedFrequencyPerWeek(args: {
 }
 
 function suggestedDurationWeeks(args: {
-  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats';
+  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
   baselineMaxReps: number;
   targetReps: number;
   ageYears: number;
@@ -291,6 +301,7 @@ function suggestedDurationWeeks(args: {
     pullups: 0.85,
     crunches: 1.1,
     squats: 1.05,
+    plank: 0.9,
   };
 
   const coef = coefs[args.exerciseType] ?? 1;
@@ -637,7 +648,7 @@ export default function ProgramPage() {
                       style={{ ...nextExerciseDot, background: exerciseLegendColor(nextSession.exerciseType) }}
                       title={exerciseLabel(nextSession.exerciseType)}
                     />
-                    <span style={{ fontWeight: 900 }}>{renderSessionSetPlan(nextSession)}</span>
+                    <span style={{ fontWeight: 900 }}>{renderSessionSetPlan(nextSession, nextSession.exerciseType)}</span>
                   </div>
                   <div style={{ fontSize: 13, color: '#374151' }}>
                     {formatSessionDate(nextSession.scheduledAt, localeTag)}
@@ -774,7 +785,7 @@ export default function ProgramPage() {
                         </div>
                       </div>
                       <div style={{ marginTop: 4, color: '#111827' }}>
-                        {tt('База')}: <b>{program.baselineMaxReps}</b> · {tt('Цель')}: <b>{program.targetReps}</b> · {tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')}
+                        {tt('База')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true)}</b> · {tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')}
                       </div>
                       <div style={{ marginTop: 4, color: '#111827' }}>
                         {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')} · {tt('Прогресс')}: <b>{program.stats.completionPercent}%</b>
@@ -824,7 +835,7 @@ export default function ProgramPage() {
               {history.map((row) => (
                 <div key={row.id} style={historyCard}>
                   <div style={{ fontWeight: 900 }}>
-                    {tt(exerciseLabel(row.exerciseType))} · {tt('цель')}: {row.targetReps ?? '—'}
+                    {tt(exerciseLabel(row.exerciseType))} · {tt('цель')}: {formatExerciseValue(row.targetReps, row.exerciseType, true)}
                   </div>
                   <div style={{ fontSize: 13, color: '#374151', marginTop: 2 }}>
                     {new Date(row.createdAt).toLocaleDateString(localeTag)} · {tt('статус')}: {tt(row.status)}
@@ -876,7 +887,7 @@ export default function ProgramPage() {
                           {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
                         </div>
                         <div style={{ marginTop: 4, color: '#111827' }}>
-                          {tt('План')}: <b>{renderSessionSetPlan(session)}</b>
+                          {tt('План')}: <b>{renderSessionSetPlan(session, session.exerciseType)}</b>
                         </div>
                       </div>
                       {session.completed ? (
@@ -912,13 +923,14 @@ export default function ProgramPage() {
                   <option value="pullups">{tt('Подтягивания')}</option>
                   <option value="crunches">{tt('Скручивания')}</option>
                   <option value="squats">{tt('Приседания')}</option>
+                  <option value="plank">{tt('Планка')}</option>
                 </select>
               </div>
             ) : null}
 
             {step === 2 ? (
               <div style={{ display: 'grid', gap: 8 }}>
-                <label>{tt('2) Базовый тест (AMRAP)')}</label>
+                <label>{tt(programBaselinePromptLabel(form.exerciseType))}</label>
                 <input
                   type="number"
                   min={1}
@@ -932,7 +944,7 @@ export default function ProgramPage() {
 
             {step === 3 ? (
               <div style={{ display: 'grid', gap: 8 }}>
-                <label>{tt('3) Целевое значение повторений в одном подходе')}</label>
+                <label>{tt(programTargetPromptLabel(form.exerciseType))}</label>
                 <input
                   type="number"
                   min={Math.max(1, resolvedForm.baselineMaxReps)}
