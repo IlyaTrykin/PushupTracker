@@ -1,1035 +1,1217 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
+import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
+import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
+import type { Messages } from '@/i18n/messages';
+import type {
+  AnalyticsValue,
+  ExerciseFilter,
+  ExerciseType,
+  HeatmapCell,
+  Insight,
+  KpiCard,
+  PeriodKey,
+  ProgressAnalytics,
+  TrendPoint,
+  WorkoutRecord,
+  WorkoutStructure,
+} from '@/lib/analytics/types';
+import { fillTemplate, toExerciseType } from '@/lib/analytics/utils';
 import { useI18n } from '@/i18n/provider';
-import { getIntlLocale, t } from '@/i18n/translate';
-import { exerciseValuePlural, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
+import { getIntlLocale } from '@/i18n/translate';
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
-type ExerciseFilter = ExerciseType | 'all';
+const EXERCISE_OPTIONS: ExerciseFilter[] = ['all', 'pushups', 'pullups', 'squats', 'crunches', 'plank'];
 
-type Workout = {
-  id: string;
-  reps: number;
-  date: string;
-  time?: string | null;
-  exerciseType?: string;
-};
+const pageStyle: CSSProperties = {
+  '--analytics-accent': '#b45309',
+  '--analytics-accent-soft': 'rgba(180, 83, 9, 0.14)',
+  maxWidth: 1080,
+  margin: '0 auto',
+  display: 'grid',
+  gap: 14,
+} as CSSProperties;
 
-type DayPoint = {
-  key: string;
-  date: Date;
-  total: number;
-  byExercise: Record<ExerciseType, number>;
-};
-
-type WeekPoint = {
-  key: string;
-  start: Date;
-  total: number;
-  byExercise: Record<ExerciseType, number>;
-};
-
-const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
-const PERIOD_OPTIONS = [
-  { days: 7, label: '7д' },
-  { days: 30, label: '30д' },
-  { days: 90, label: '90д' },
-  { days: 365, label: 'Год' },
-] as const;
-
-function emptyByExercise(): Record<ExerciseType, number> {
-  return { pushups: 0, pullups: 0, crunches: 0, squats: 0, plank: 0 };
-}
-
-async function fetchJsonSafe(url: string, init?: RequestInit) {
-  const res = await fetch(url, init);
-  const text = await res.text();
-  let data: any = null;
+async function fetchJsonSafe<T = unknown>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  const text = await response.text();
+  let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
     data = text;
   }
-  if (!res.ok) {
-    const msg = (data && (data.error || data.message)) || text || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-  return data;
-}
 
-function toExerciseType(v?: string | null): ExerciseType {
-  if (v === 'pullups' || v === 'crunches' || v === 'squats' || v === 'plank') return v;
-  return 'pushups';
-}
-
-function exerciseLabel(type: ExerciseType): string {
-  if (type === 'pushups') return 'Отжимания';
-  if (type === 'pullups') return 'Подтягивания';
-  if (type === 'crunches') return 'Скручивания';
-  if (type === 'squats') return 'Приседания';
-  return 'Планка';
-}
-
-function exerciseColor(type: ExerciseType): string {
-  if (type === 'pushups') return '#38bdf8';
-  if (type === 'pullups') return '#ef4444';
-  if (type === 'crunches') return '#22c55e';
-  if (type === 'squats') return '#b8860b';
-  return '#14b8a6';
-}
-
-function normalizeDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
-
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-function addDays(d: Date, n: number): Date {
-  const copy = new Date(d);
-  copy.setDate(copy.getDate() + n);
-  return copy;
-}
-
-function startOfWeekMonday(d: Date): Date {
-  const day = d.getDay(); // 0 sunday
-  const shift = (day + 6) % 7;
-  return addDays(startOfDay(d), -shift);
-}
-
-function getWorkoutDate(w: Workout): Date {
-  return new Date(w.time || w.date);
-}
-
-function sumReps(items: Workout[]): number {
-  return items.reduce((acc, w) => acc + (w.reps || 0), 0);
-}
-
-function calcStreak(items: Workout[]): number {
-  if (!items.length) return 0;
-  const byDay = new Set<string>();
-  for (const w of items) byDay.add(normalizeDate(startOfDay(getWorkoutDate(w))));
-
-  const sortedDesc = Array.from(byDay).sort().reverse();
-  if (!sortedDesc.length) return 0;
-
-  let streak = 0;
-  let cursor = new Date(`${sortedDesc[0]}T00:00:00`);
-  while (true) {
-    const key = normalizeDate(cursor);
-    if (!byDay.has(key)) break;
-    streak += 1;
-    cursor = addDays(cursor, -1);
+  if (!response.ok) {
+    const payload =
+      data && typeof data === 'object'
+        ? data as { error?: string; message?: string }
+        : null;
+    const message = payload?.error || payload?.message || text || `HTTP ${response.status}`;
+    throw new Error(message);
   }
 
-  return streak;
+  return data as T;
 }
 
 function hexToRgba(hex: string, alpha: number): string {
-  const h = hex.replace('#', '');
-  const normalized = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-  const r = parseInt(normalized.slice(0, 2), 16);
-  const g = parseInt(normalized.slice(2, 4), 16);
-  const b = parseInt(normalized.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  const normalized = hex.replace('#', '');
+  const full = normalized.length === 3 ? normalized.split('').map((char) => char + char).join('') : normalized;
+  const red = Number.parseInt(full.slice(0, 2), 16);
+  const green = Number.parseInt(full.slice(2, 4), 16);
+  const blue = Number.parseInt(full.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-function StatCard({
+function exerciseLabel(type: ExerciseType, progress: Messages['progress']): string {
+  if (type === 'pushups') return progress.exercises.pushups;
+  if (type === 'pullups') return progress.exercises.pullups;
+  if (type === 'crunches') return progress.exercises.crunches;
+  if (type === 'squats') return progress.exercises.squats;
+  return progress.exercises.plank;
+}
+
+function filterLabel(filter: ExerciseFilter, progress: Messages['progress']): string {
+  if (filter === 'all') return progress.exercises.all;
+  return exerciseLabel(filter, progress);
+}
+
+function isEnglishLocale(localeTag: string): boolean {
+  return localeTag.toLowerCase().startsWith('en');
+}
+
+function formatCompactDuration(value: number, localeTag: string): string {
+  const isEnglish = isEnglishLocale(localeTag);
+  if (!Number.isFinite(value) || value <= 0) return isEnglish ? '0 sec' : '0 сек';
+  if (value < 60) return `${Math.round(value).toLocaleString(localeTag)} ${isEnglish ? 'sec' : 'сек'}`;
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.round(value % 60);
+  if (!seconds) return `${minutes.toLocaleString(localeTag)} ${isEnglish ? 'min' : 'мин'}`;
+  return `${minutes.toLocaleString(localeTag)} ${isEnglish ? 'min' : 'мин'} ${seconds.toLocaleString(localeTag)} ${isEnglish ? 'sec' : 'сек'}`;
+}
+
+function formatLoadPoints(value: number, localeTag: string): string {
+  const isEnglish = isEnglishLocale(localeTag);
+  const rounded = Math.round(value * 10) / 10;
+  const decimals = Number.isInteger(rounded) ? 0 : 1;
+  const absRounded = Math.abs(rounded);
+  const suffix = isEnglish
+    ? (absRounded === 1 ? 'point' : 'points')
+    : Number.isInteger(rounded)
+      ? (absRounded % 10 === 1 && absRounded % 100 !== 11 ? 'балл' : absRounded % 10 >= 2 && absRounded % 10 <= 4 && (absRounded % 100 < 12 || absRounded % 100 > 14) ? 'балла' : 'баллов')
+      : 'балла';
+  return `${rounded.toLocaleString(localeTag, { maximumFractionDigits: decimals })} ${suffix}`;
+}
+
+function formatLoadNumber(value: number, localeTag: string): string {
+  const rounded = Math.round(value * 10) / 10;
+  const decimals = Number.isInteger(rounded) ? 0 : 1;
+  return rounded.toLocaleString(localeTag, { maximumFractionDigits: decimals });
+}
+
+function formatExerciseMetric(value: number, exercise: ExerciseFilter | ExerciseType, localeTag: string): string {
+  if (exercise === 'plank') return formatCompactDuration(value, localeTag);
+  return Math.round(value).toLocaleString(localeTag);
+}
+
+function getIsoWeekNumber(date: Date): number {
+  const copy = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = copy.getUTCDay() || 7;
+  copy.setUTCDate(copy.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(copy.getUTCFullYear(), 0, 1));
+  return Math.ceil((((copy.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
+function getLastActiveKey<T extends { key: string; value: number }>(items: T[]): string | null {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (items[index].value > 0) return items[index].key;
+  }
+  return items[items.length - 1]?.key ?? null;
+}
+
+function formatMetricValue(
+  metric: AnalyticsValue,
+  localeTag: string,
+  exercise: ExerciseFilter,
+  options?: { signed?: boolean },
+): string {
+  if (metric.value == null) return '—';
+
+  if (metric.kind === 'count') return Math.round(metric.value).toLocaleString(localeTag);
+  if (metric.kind === 'duration') return formatCompactDuration(metric.value, localeTag);
+  if (metric.kind === 'load') return formatLoadPoints(metric.value, localeTag);
+  if (metric.kind === 'percent') {
+    const rounded = Math.round(metric.value);
+    const sign = options?.signed && rounded > 0 ? '+' : '';
+    return `${sign}${rounded.toLocaleString(localeTag)}%`;
+  }
+  if (metric.kind === 'rate') {
+    const rounded = Math.round(metric.value * 10) / 10;
+    return `${rounded.toLocaleString(localeTag, { maximumFractionDigits: 1 })}/${isEnglishLocale(localeTag) ? 'min' : 'мин'}`;
+  }
+
+  if (exercise !== 'all') return formatExerciseMetric(metric.value, exercise, localeTag);
+  return Math.round(metric.value).toLocaleString(localeTag);
+}
+
+function formatSeriesValue(value: number, exercise: ExerciseFilter, localeTag: string): string {
+  if (exercise === 'all') return formatLoadPoints(value, localeTag);
+  return formatExerciseMetric(value, exercise, localeTag);
+}
+
+function resolveInsightTone(tone: Insight['tone']) {
+  if (tone === 'positive') return { border: '#16a34a', background: '#f0fdf4' };
+  if (tone === 'warning') return { border: '#dc2626', background: '#fef2f2' };
+  return { border: '#cbd5e1', background: '#f8fafc' };
+}
+
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      style={{
+        border: '1px solid #e2e8f0',
+        borderRadius: 24,
+        background: 'linear-gradient(180deg, #ffffff 0%, #f7fafc 100%)',
+        padding: 16,
+        display: 'grid',
+        gap: 14,
+        boxShadow: '0 16px 48px rgba(15, 23, 42, 0.05)',
+      }}
+    >
+      <div style={{ display: 'grid', gap: 4 }}>
+        <div style={{ fontSize: 18, fontWeight: 900, color: '#0f172a' }}>{title}</div>
+        {subtitle ? <div style={{ fontSize: 13, color: '#475569' }}>{subtitle}</div> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function EmptyState({ title, body }: { title: string; body: string }) {
+  return (
+    <div
+      style={{
+        border: '1px dashed #cbd5e1',
+        borderRadius: 18,
+        background: '#f8fafc',
+        padding: '18px 16px',
+        display: 'grid',
+        gap: 4,
+      }}
+    >
+      <div style={{ fontWeight: 800, color: '#0f172a' }}>{title}</div>
+      <div style={{ fontSize: 13, color: '#475569' }}>{body}</div>
+    </div>
+  );
+}
+
+function FilterPill({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        borderRadius: 999,
+        border: active ? '1px solid var(--analytics-accent)' : '1px solid #cbd5e1',
+        background: active ? 'var(--analytics-accent-soft)' : '#fff',
+        color: '#0f172a',
+        fontWeight: 800,
+        padding: '10px 14px',
+        cursor: 'pointer',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function KpiGrid({
+  cards,
+  localeTag,
+  exercise,
+}: {
+  cards: KpiCard[];
+  localeTag: string;
+  exercise: ExerciseFilter;
+}) {
+  return (
+    <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+      {cards.map((card) => (
+        <article
+          key={card.id}
+          style={{
+            borderRadius: 20,
+            border: `1px solid ${hexToRgba(card.accent, 0.28)}`,
+            background: `linear-gradient(180deg, ${hexToRgba(card.accent, 0.12)} 0%, #ffffff 70%)`,
+            padding: 14,
+            display: 'grid',
+            gap: 8,
+          }}
+        >
+          <div style={{ fontSize: 12, letterSpacing: 0.3, fontWeight: 800, color: '#475569' }}>{card.label}</div>
+          <div style={{ fontSize: 28, lineHeight: 1, fontWeight: 900, color: '#0f172a' }}>
+            {formatMetricValue(card.metric, localeTag, exercise, { signed: card.id === 'periodProgress' })}
+          </div>
+          {card.comparison?.available && card.id !== 'periodProgress' ? (
+            <div style={{ fontSize: 12, color: card.comparison.delta != null && card.comparison.delta >= 0 ? '#15803d' : '#b91c1c', fontWeight: 800 }}>
+              {card.id === 'totalVolume' ? 'Δ ' : ''}
+              {formatMetricValue({ value: card.comparison.delta, kind: card.metric.kind }, localeTag, exercise, { signed: true })}
+            </div>
+          ) : null}
+          {card.note ? <div style={{ fontSize: 12, color: '#475569' }}>{card.note}</div> : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function MetricBadge({
   label,
   value,
-  hint,
-  accentColor = '#0ea5e9',
+  accent,
 }: {
   label: string;
-  value: string | number;
-  hint?: string;
-  accentColor?: string;
+  value: string;
+  accent: string;
 }) {
   return (
     <div
       style={{
-        border: `1px solid ${hexToRgba(accentColor, 0.26)}`,
         borderRadius: 16,
-        background: `linear-gradient(180deg, ${hexToRgba(accentColor, 0.13)} 0%, #ffffff 68%)`,
-        padding: '14px 14px 13px',
+        border: `1px solid ${hexToRgba(accent, 0.24)}`,
+        background: '#ffffff',
+        padding: '10px 12px',
+        minWidth: 0,
       }}
     >
-      <div style={{ fontSize: 12, fontWeight: 900, color: '#334155', letterSpacing: 0.2 }}>{label}</div>
-      <div style={{ fontSize: 30, lineHeight: 1.1, fontWeight: 900, color: '#0b1324', marginTop: 7 }}>{value}</div>
-      {hint ? <div style={{ fontSize: 12, color: '#475569', marginTop: 7 }}>{hint}</div> : null}
+      <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>{label}</div>
+      <div style={{ fontSize: 17, color: '#0f172a', fontWeight: 900, marginTop: 2 }}>{value}</div>
     </div>
   );
 }
 
-function formatSigned(value: number): string {
-  if (value > 0) return `+${value}`;
-  return String(value);
-}
-
-function formatDeltaPercent(current: number, previous: number): string {
-  if (previous === 0) return current === 0 ? '0%' : 'новый рост';
-  const pct = Math.round(((current - previous) / previous) * 100);
-  return `${pct > 0 ? '+' : ''}${pct}%`;
-}
-
-function HeroOverview({
-  currentTotal,
-  previousTotal,
-  delta,
-  deltaPercent,
-  streak,
-  trainingDays,
-  periodDays,
-  color,
-  metricLabel,
-  tt,
+function InfoHint({
+  label,
+  title,
+  body,
 }: {
-  currentTotal: number;
-  previousTotal: number;
-  delta: number;
-  deltaPercent: string;
-  streak: number;
-  trainingDays: number;
-  periodDays: number;
-  color: string;
-  metricLabel: string;
-  tt: (input: string) => string;
+  label: string;
+  title: string;
+  body: string;
 }) {
-  const isPositive = delta >= 0;
-  const deltaColor = isPositive ? '#16a34a' : '#dc2626';
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const updatePosition = () => {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const tooltipWidth = 240;
+      const viewportPadding = 12;
+      const left = Math.min(
+        Math.max(viewportPadding, rect.right - tooltipWidth),
+        window.innerWidth - tooltipWidth - viewportPadding,
+      );
+      const top = rect.bottom + 8;
+      setPosition({ top, left });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open]);
 
   return (
-    <section
-      style={{
-        position: 'relative',
-        overflow: 'hidden',
-        borderRadius: 20,
-        border: `1px solid ${hexToRgba(color, 0.32)}`,
-        background: `linear-gradient(130deg, ${hexToRgba(color, 0.26)} 0%, #f8fbff 52%, #ffffff 100%)`,
-        padding: 18,
-        display: 'grid',
-        gap: 14,
-      }}
-    >
-      <div
-        aria-hidden="true"
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <button
+        type="button"
+        ref={buttonRef}
+        aria-label={label}
+        onClick={() => setOpen((value) => !value)}
         style={{
-          position: 'absolute',
-          top: -70,
-          right: -60,
-          width: 180,
-          height: 180,
+          width: 18,
+          height: 18,
           borderRadius: 999,
-          background: hexToRgba(color, 0.16),
-          filter: 'blur(6px)',
-        }}
-      />
-      <div
-        aria-hidden="true"
-        style={{
-          position: 'absolute',
-          bottom: -48,
-          left: -22,
-          width: 150,
-          height: 150,
-          borderRadius: 999,
-          background: 'rgba(14, 165, 233, 0.12)',
-          filter: 'blur(6px)',
-        }}
-      />
-
-      <div style={{ position: 'relative', zIndex: 1, display: 'grid', gap: 8 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#334155' }}>{tt('Объём за период')}</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
-          <div style={{ fontSize: 52, lineHeight: 0.9, fontWeight: 900, color: '#0b1324' }}>{currentTotal}</div>
-          <div style={{ fontSize: 13, color: '#475569', marginBottom: 6 }}>{tt(metricLabel)}</div>
-        </div>
-      </div>
-
-      <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            borderRadius: 999,
-            padding: '6px 10px',
-            fontWeight: 800,
-            fontSize: 12,
-            color: '#fff',
-            background: deltaColor,
-          }}
-        >
-          {isPositive ? tt('Рост') : tt('Спад')} {formatSigned(delta)} ({deltaPercent})
-        </span>
-        <span style={{ fontSize: 12, fontWeight: 800, color: '#334155', background: '#fff', border: '1px solid #dbe4f0', borderRadius: 999, padding: '6px 10px' }}>
-          {tt('Было')}: {previousTotal}
-        </span>
-      </div>
-
-      <div
-        style={{
-          position: 'relative',
-          zIndex: 1,
-          display: 'grid',
-          gap: 10,
-          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          border: '1px solid rgba(15, 23, 42, 0.2)',
+          background: '#ffffffcc',
+          color: '#0f172a',
+          fontSize: 11,
+          fontWeight: 900,
+          lineHeight: 1,
+          padding: 0,
+          cursor: 'pointer',
         }}
       >
-        <div style={{ borderRadius: 12, border: '1px solid #dbe4f0', background: '#ffffffd6', padding: '10px 11px' }}>
-          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>{tt('Активность')}</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#0b1324', marginTop: 4 }}>{trainingDays}/{periodDays}</div>
-          <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{tt('дней с тренировками')}</div>
-        </div>
-        <div style={{ borderRadius: 12, border: '1px solid #dbe4f0', background: '#ffffffd6', padding: '10px 11px' }}>
-          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>{tt('Серия')}</div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: '#0b1324', marginTop: 4 }}>{streak}</div>
-          <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{tt('дней подряд')}</div>
-        </div>
-      </div>
-    </section>
+        i
+      </button>
+      {open && position && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              style={{
+                position: 'fixed',
+                top: position.top,
+                left: position.left,
+                zIndex: 99999,
+                width: 240,
+                borderRadius: 14,
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                boxShadow: '0 12px 32px rgba(15, 23, 42, 0.12)',
+                padding: 12,
+                display: 'grid',
+                gap: 6,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 900, color: '#0f172a' }}>{title}</div>
+              <div style={{ fontSize: 12, lineHeight: 1.45, color: '#475569' }}>{body}</div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
   );
 }
 
-function ExerciseShareDonut({
-  totals,
-  periodTotal,
-  tt,
+function VolumeChart({
+  points,
+  accent,
+  exercise,
+  localeTag,
+  labels,
 }: {
-  totals: Record<ExerciseType, number>;
-  periodTotal: number;
-  tt: (input: string) => string;
+  points: TrendPoint[];
+  accent: string;
+  exercise: ExerciseFilter;
+  localeTag: string;
+  labels: {
+    selectedDay: string;
+    volume: string;
+    sets: string;
+  };
 }) {
-  const size = 190;
-  const center = size / 2;
-  const radius = 64;
-  const stroke = 18;
-  const circumference = 2 * Math.PI * radius;
+  const [activeKey, setActiveKey] = useState<string | null>(() => getLastActiveKey(points));
 
-  const segments: Array<{ type: ExerciseType; value: number; ratio: number; length: number; offset: number }> = [];
-  let offset = 0;
-  for (const type of EXERCISE_ORDER) {
-    const value = totals[type];
-    if (periodTotal <= 0 || value <= 0) continue;
-    const ratio = value / periodTotal;
-    const length = ratio * circumference;
-    segments.push({ type, value, ratio, length, offset });
-    offset += length;
-  }
+  if (!points.length) return null;
+
+  const fallbackKey = getLastActiveKey(points);
+  const activePoint = points.find((point) => point.key === activeKey) ?? points.find((point) => point.key === fallbackKey) ?? points[points.length - 1];
+  const maxValue = Math.max(1, ...points.map((point) => point.value));
 
   return (
-    <section
-      style={{
-        border: '1px solid #dbe4ff',
-        borderRadius: 18,
-        background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
-        padding: 14,
-        display: 'grid',
-        gap: 12,
-      }}
-    >
-      <div style={{ fontWeight: 900, color: '#0f172a' }}>{tt('Структура объёма')}</div>
-
-      <div style={{ display: 'grid', justifyItems: 'center', gap: 10 }}>
-        <svg width={size} height={size} role="img" aria-label={tt('Круговая диаграмма структуры упражнений')}>
-          <g transform={`rotate(-90 ${center} ${center})`}>
-            <circle cx={center} cy={center} r={radius} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
-            {segments.map((s) => (
-              <circle
-                key={s.type}
-                cx={center}
-                cy={center}
-                r={radius}
-                fill="none"
-                stroke={exerciseColor(s.type)}
-                strokeWidth={stroke}
-                strokeLinecap="round"
-                strokeDasharray={`${s.length} ${Math.max(circumference - s.length, 0)}`}
-                strokeDashoffset={-s.offset}
-              />
-            ))}
-          </g>
-
-          <text x={center} y={center - 6} textAnchor="middle" fontSize={12} fill="#64748b" fontWeight={800}>{tt('За период')}</text>
-          <text x={center} y={center + 24} textAnchor="middle" fontSize={30} fill="#0b1324" fontWeight={900}>{periodTotal}</text>
-        </svg>
-      </div>
-
-      <div style={{ display: 'grid', gap: 7 }}>
-        {EXERCISE_ORDER.map((type) => {
-          const value = totals[type];
-          const ratio = periodTotal > 0 ? Math.round((value / periodTotal) * 100) : 0;
-          return (
-            <div key={type} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center' }}>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, color: '#0f172a', fontWeight: 800 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 999, background: exerciseColor(type) }} />
-                {tt(exerciseLabel(type))}
-              </div>
-              <div style={{ fontSize: 12, color: '#334155', fontWeight: 800 }}>{value} ({ratio}%)</div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function ActivityRhythm({ data, color, tt, localeTag }: { data: DayPoint[]; color: string; tt: (input: string) => string; localeTag: string }) {
-  if (!data.length) return null;
-
-  const max = Math.max(1, ...data.map((d) => d.total));
-  const active = data.filter((d) => d.total > 0).length;
-
-  return (
-    <section
-      style={{
-        border: '1px solid #dbe4ff',
-        borderRadius: 18,
-        background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
-        padding: 14,
-        display: 'grid',
-        gap: 12,
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ fontWeight: 900, color: '#0f172a' }}>{tt('Ритм активности')}</div>
-        <div style={{ fontSize: 12, color: '#334155', fontWeight: 800 }}>{tt('Активных дней')}: {active}/{data.length}</div>
-      </div>
-
-      <div style={{ overflowX: 'auto', paddingBottom: 2 }}>
-        <div style={{ minWidth: Math.max(350, data.length * 16), display: 'flex', gap: 5, alignItems: 'flex-end' }}>
-          {data.map((d, idx) => {
-            const ratio = d.total / max;
-            const h = d.total > 0 ? 10 + Math.round(ratio * 78) : 6;
-            const showLabel = idx === 0 || idx === data.length - 1 || idx % 5 === 0;
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div
+        style={{
+          overflowX: 'auto',
+          paddingBottom: 4,
+          borderRadius: 18,
+          border: '1px solid #e2e8f0',
+          background: '#ffffff',
+          padding: '12px 10px 10px',
+        }}
+      >
+        <div style={{ minWidth: Math.max(300, points.length * 26), display: 'flex', gap: 6, alignItems: 'flex-end', height: 220 }}>
+          {points.map((point, index) => {
+            const barHeight = point.value > 0 ? Math.max(10, Math.round((point.value / maxValue) * 142)) : 6;
+            const isActive = activePoint.key === point.key;
+            const showLabel = index === 0 || index === points.length - 1 || index % Math.max(1, Math.ceil(points.length / 6)) === 0;
             return (
-              <div key={d.key} style={{ width: 12, display: 'grid', gap: 5, justifyItems: 'center' }}>
-                <div style={{ height: 92, display: 'flex', alignItems: 'flex-end' }}>
+              <button
+                key={point.key}
+                type="button"
+                onClick={() => setActiveKey(point.key)}
+                title={`${point.label}: ${formatSeriesValue(point.value, exercise, localeTag)}`}
+                style={{
+                  width: 20,
+                  minWidth: 20,
+                  height: '100%',
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  display: 'grid',
+                  alignItems: 'end',
+                  justifyItems: 'center',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ height: 170, display: 'flex', alignItems: 'flex-end' }}>
                   <div
-                    title={`${d.date.toLocaleDateString(localeTag)}: ${d.total}`}
                     style={{
-                      width: 10,
-                      height: h,
+                      width: 18,
+                      height: barHeight,
                       borderRadius: 999,
-                      background: d.total > 0 ? `linear-gradient(180deg, ${hexToRgba(color, 0.34)} 0%, ${color} 100%)` : '#dbeafe',
-                      boxShadow: d.total > 0 ? `0 3px 8px ${hexToRgba(color, 0.25)}` : 'none',
+                      background: point.value > 0 ? (isActive ? accent : hexToRgba(accent, 0.78)) : '#e2e8f0',
+                      outline: isActive ? `2px solid ${hexToRgba(accent, 0.35)}` : 'none',
+                      outlineOffset: 2,
+                      transition: 'height 120ms ease-out',
                     }}
                   />
                 </div>
-                <div style={{ fontSize: 9, color: '#64748b', minHeight: 10 }}>{showLabel ? String(d.date.getDate()).padStart(2, '0') : ''}</div>
-              </div>
+                <div style={{ fontSize: 9, color: '#64748b', minHeight: 12 }}>{showLabel ? point.label : ''}</div>
+              </button>
             );
           })}
         </div>
       </div>
-    </section>
+
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        <MetricBadge label={labels.selectedDay} value={activePoint.label} accent={accent} />
+        <MetricBadge label={labels.volume} value={formatSeriesValue(activePoint.value, exercise, localeTag)} accent={accent} />
+        <MetricBadge label={labels.sets} value={activePoint.setCount.toLocaleString(localeTag)} accent={accent} />
+      </div>
+    </div>
   );
 }
 
-function TrendChart({
-  data,
-  color,
-  ariaLabel,
-  tt,
+function TrendLineChart({
+  title,
+  points,
+  accent,
+  localeTag,
+  exercise,
+  seriesKey,
+  emptyBody,
+  detailLabels,
 }: {
-  data: DayPoint[];
-  color: string;
-  ariaLabel: string;
-  tt: (input: string) => string;
+  title: string;
+  points: TrendPoint[];
+  accent: string;
+  localeTag: string;
+  exercise: ExerciseFilter;
+  seriesKey: 'bestSet' | 'averageSet';
+  emptyBody: string;
+  detailLabels: {
+    date: string;
+    value: string;
+    average: string;
+  };
 }) {
-  if (!data.length) return null;
+  const [activeKey, setActiveKey] = useState<string | null>(points[points.length - 1]?.key ?? null);
 
-  const width = Math.max(390, data.length * 24);
-  const height = 220;
-  const padX = 18;
-  const padTop = 16;
-  const padBottom = 40;
-  const chartHeight = height - padTop - padBottom;
-  const maxValue = Math.max(1, ...data.map((d) => d.total));
-  const avgValue = Math.round(data.reduce((acc, d) => acc + d.total, 0) / data.length);
-
-  const xFor = (i: number) => (data.length === 1 ? width / 2 : padX + (i * (width - padX * 2)) / (data.length - 1));
-  const yFor = (v: number) => padTop + chartHeight - (v / maxValue) * chartHeight;
-
-  const points = data.map((d, i) => `${xFor(i)},${yFor(d.total)}`).join(' ');
-  const area = `${xFor(0)},${height - padBottom} ${points} ${xFor(data.length - 1)},${height - padBottom}`;
-  const avgY = yFor(avgValue);
-
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => Math.round(maxValue * k)).filter((v, i, arr) => arr.indexOf(v) === i);
-  let peakIndex = 0;
-  for (let i = 1; i < data.length; i += 1) {
-    if (data[i].total > data[peakIndex].total) peakIndex = i;
+  if (!points.length) {
+    return <EmptyState title={title} body={emptyBody} />;
   }
-  const labelStep = Math.max(1, Math.ceil(data.length / 7));
 
-  return (
-    <div style={{ overflowX: 'auto', border: '1px solid #dbe4ff', borderRadius: 14, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
-      <svg width={width} height={height} role="img" aria-label={tt(ariaLabel)}>
-        <defs>
-          <linearGradient id="dayAreaFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={hexToRgba(color, 0.34)} />
-            <stop offset="100%" stopColor={hexToRgba(color, 0.03)} />
-          </linearGradient>
-        </defs>
-
-        <rect x={0} y={0} width={width} height={height} fill="transparent" rx={12} />
-
-        {ticks.map((t) => {
-          const y = yFor(t);
-          return (
-            <g key={t}>
-              <line x1={padX} x2={width - padX} y1={y} y2={y} stroke="#e2e8f0" strokeWidth={1} />
-              <text x={4} y={y + 4} fontSize={10} fill="#64748b">{t}</text>
-            </g>
-          );
-        })}
-
-        <line x1={padX} x2={width - padX} y1={avgY} y2={avgY} stroke="#94a3b8" strokeDasharray="4 4" strokeWidth={1} />
-        <text x={width - padX - 2} y={avgY - 4} textAnchor="end" fontSize={10} fill="#64748b">{tt(`ср. ${avgValue}`)}</text>
-
-        <polygon points={area} fill="url(#dayAreaFill)" />
-        <polyline points={points} fill="none" stroke={color} strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
-
-        {data.map((d, i) => (
-          <circle key={d.key} cx={xFor(i)} cy={yFor(d.total)} r={i === peakIndex ? 4 : 2.6} fill={color} />
-        ))}
-
-        <text x={xFor(peakIndex)} y={Math.max(14, yFor(data[peakIndex].total) - 8)} textAnchor="middle" fontSize={10} fill="#0f172a" fontWeight={800}>
-          {tt(`пик ${data[peakIndex].total}`)}
-        </text>
-
-        {data.map((d, i) => {
-          if (i !== 0 && i !== data.length - 1 && i % labelStep !== 0) return null;
-          return (
-            <text key={`lab-${d.key}`} x={xFor(i)} y={height - 12} textAnchor="middle" fontSize={9} fill="#64748b">
-              {String(d.date.getDate()).padStart(2, '0')}
-            </text>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
-
-function WeeklyTrendChart({
-  weeks,
-  currentTotals,
-  previousTotals,
-  color,
-  tt,
-}: {
-  weeks: WeekPoint[];
-  currentTotals: number[];
-  previousTotals: number[];
-  color: string;
-  tt: (input: string) => string;
-}) {
-  if (!weeks.length) return null;
-
-  const width = Math.max(380, weeks.length * 72);
-  const height = 230;
-  const padLeft = 38;
-  const padRight = 14;
-  const padTop = 14;
-  const padBottom = 42;
-  const chartWidth = width - padLeft - padRight;
+  const valueFor = (point: TrendPoint) => (seriesKey === 'bestSet' ? point.bestSet ?? 0 : point.averageSet ?? 0);
+  const maxValue = Math.max(1, ...points.map(valueFor));
+  const width = Math.max(340, points.length * 54);
+  const height = 200;
+  const padX = 22;
+  const padTop = 18;
+  const padBottom = 34;
+  const chartWidth = width - padX * 2;
   const chartHeight = height - padTop - padBottom;
-
-  const maxValue = Math.max(1, ...currentTotals, ...previousTotals);
-  const xFor = (i: number) => (weeks.length <= 1 ? padLeft + chartWidth / 2 : padLeft + (i * chartWidth) / (weeks.length - 1));
-  const yFor = (v: number) => padTop + chartHeight - (v / maxValue) * chartHeight;
-
-  const currentPoints = weeks.map((_, i) => `${xFor(i)},${yFor(currentTotals[i] || 0)}`).join(' ');
-  const previousPoints = weeks.map((_, i) => `${xFor(i)},${yFor(previousTotals[i] || 0)}`).join(' ');
-  const currentArea = `${xFor(0)},${height - padBottom} ${currentPoints} ${xFor(weeks.length - 1)},${height - padBottom}`;
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((k) => Math.round(maxValue * k)).filter((v, i, arr) => arr.indexOf(v) === i);
-
-  const labelStep = Math.max(1, Math.ceil(weeks.length / 6));
-  const labelIndexes: number[] = [];
-  for (let i = 0; i < weeks.length; i += labelStep) labelIndexes.push(i);
-  if (!labelIndexes.includes(weeks.length - 1)) labelIndexes.push(weeks.length - 1);
+  const xFor = (index: number) => (points.length === 1 ? width / 2 : padX + (index / (points.length - 1)) * chartWidth);
+  const yFor = (value: number) => padTop + chartHeight - (value / maxValue) * chartHeight;
+  const line = points.map((point, index) => `${xFor(index)},${yFor(valueFor(point))}`).join(' ');
+  const activePoint = points.find((point) => point.key === activeKey) ?? points[points.length - 1];
 
   return (
-    <div style={{ overflowX: 'auto', border: '1px solid #dbe4ff', borderRadius: 14, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)' }}>
-      <svg width={width} height={height} role="img" aria-label={tt('Недельный график: текущий и прошлый период')}>
-        <defs>
-          <linearGradient id="weeklyAreaFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={hexToRgba(color, 0.36)} />
-            <stop offset="100%" stopColor={hexToRgba(color, 0.03)} />
-          </linearGradient>
-        </defs>
-
-        <rect x={0} y={0} width={width} height={height} fill="transparent" rx={14} />
-
-        {yTicks.map((t) => {
-          const y = yFor(t);
-          return (
-            <g key={t}>
-              <line x1={padLeft} x2={width - padRight} y1={y} y2={y} stroke="#e6ecff" strokeWidth={1} />
-              <text x={4} y={y + 4} fontSize={10} fill="#6b7280">{t}</text>
-            </g>
-          );
-        })}
-
-        <polyline points={previousPoints} fill="none" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" strokeLinecap="round" />
-        <polygon points={currentArea} fill="url(#weeklyAreaFill)" />
-        <polyline points={currentPoints} fill="none" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
-
-        {weeks.map((w, i) => (
-          <g key={w.key}>
-            <circle cx={xFor(i)} cy={yFor(currentTotals[i] || 0)} r={3} fill={color} />
-            <title>{`${formatWeekRange(w.start)}: ${currentTotals[i] || 0}`}</title>
-          </g>
-        ))}
-
-        {labelIndexes.map((i) => (
-          <text key={`x-${weeks[i].key}`} x={xFor(i)} y={height - 12} fontSize={10} fill="#4b5563" textAnchor="middle">
-            {formatWeekRange(weeks[i].start)}
-          </text>
-        ))}
-      </svg>
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: '#0f172a' }}>{title}</div>
+      <div style={{ overflowX: 'auto', paddingBottom: 2 }}>
+        <svg width={width} height={height} role="img" aria-label={title}>
+          <defs>
+            <linearGradient id={`${seriesKey}-fill`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={hexToRgba(accent, 0.24)} />
+              <stop offset="100%" stopColor={hexToRgba(accent, 0.02)} />
+            </linearGradient>
+          </defs>
+          {[0, 0.5, 1].map((tick) => {
+            const value = maxValue * tick;
+            const y = yFor(value);
+            return <line key={tick} x1={padX} x2={width - padX} y1={y} y2={y} stroke="#e2e8f0" strokeWidth={1} />;
+          })}
+          <polyline
+            points={`${xFor(0)},${height - padBottom} ${line} ${xFor(points.length - 1)},${height - padBottom}`}
+            fill={`url(#${seriesKey}-fill)`}
+            stroke="none"
+          />
+          <polyline points={line} fill="none" stroke={accent} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          {points.map((point, index) => {
+            const value = valueFor(point);
+            const isActive = point.key === activePoint.key;
+            return (
+              <g key={point.key} onClick={() => setActiveKey(point.key)} style={{ cursor: 'pointer' }}>
+                <circle cx={xFor(index)} cy={yFor(value)} r={isActive ? 5 : 3.5} fill={accent} />
+                <title>{`${point.label}: ${formatSeriesValue(value, exercise, localeTag)}`}</title>
+                {(index === 0 || index === points.length - 1 || index % Math.max(1, Math.ceil(points.length / 4)) === 0) ? (
+                  <text x={xFor(index)} y={height - 10} textAnchor="middle" fontSize={10} fill="#64748b">
+                    {point.label}
+                  </text>
+                ) : null}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        <MetricBadge label={detailLabels.date} value={activePoint.label} accent={accent} />
+        <MetricBadge label={seriesKey === 'bestSet' ? detailLabels.value : detailLabels.average} value={formatSeriesValue(valueFor(activePoint), exercise, localeTag)} accent={accent} />
+      </div>
     </div>
   );
 }
 
-function formatWeekRange(weekStart: Date): string {
-  const end = addDays(weekStart, 6);
-  const a = `${String(weekStart.getDate()).padStart(2, '0')}.${String(weekStart.getMonth() + 1).padStart(2, '0')}`;
-  const b = `${String(end.getDate()).padStart(2, '0')}.${String(end.getMonth() + 1).padStart(2, '0')}`;
-  return `${a}-${b}`;
+function Heatmap({
+  cells,
+  accent,
+  exercise,
+  localeTag,
+  labels,
+}: {
+  cells: HeatmapCell[];
+  accent: string;
+  exercise: ExerciseFilter;
+  localeTag: string;
+  labels: {
+    weekdays: string[];
+    eachSquareDay: string;
+    selectedDay: string;
+    workload: string;
+    less: string;
+    more: string;
+    noData: string;
+  };
+}) {
+  const [activeKey, setActiveKey] = useState<string | null>(() => getLastActiveKey(cells));
+
+  if (!cells.length) return null;
+
+  const weeks = new Map<number, HeatmapCell[]>();
+  for (const cell of cells) {
+    const bucket = weeks.get(cell.weekIndex) ?? [];
+    bucket.push(cell);
+    weeks.set(cell.weekIndex, bucket);
+  }
+
+  const columns = Array.from(weeks.values());
+  const activeCell = cells.find((cell) => cell.key === activeKey) ?? cells.find((cell) => cell.key === getLastActiveKey(cells)) ?? cells[cells.length - 1];
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div style={{ fontSize: 12, color: '#475569' }}>{labels.eachSquareDay}</div>
+      <div style={{ overflowX: 'auto', paddingBottom: 2 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '34px max-content', gap: 8, alignItems: 'start', width: 'max-content' }}>
+          <div style={{ display: 'grid', gap: 6, paddingTop: 20 }}>
+            {labels.weekdays.map((label) => (
+              <div key={label} style={{ height: 16, fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center' }}>
+                {label}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridAutoFlow: 'column', gap: 6 }}>
+              {columns.map((column, columnIndex) => {
+                const topCell = column[0] ?? null;
+                return (
+                  <div key={`month-${columnIndex}`} style={{ width: 16, fontSize: 10, color: '#64748b', textAlign: 'center', minHeight: 12 }}>
+                    {topCell ? getIsoWeekNumber(topCell.date) : ''}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'grid', gridAutoFlow: 'column', gap: 6, width: 'max-content' }}>
+              {columns.map((column, columnIndex) => (
+                <div key={columnIndex} style={{ display: 'grid', gap: 6 }}>
+                  {Array.from({ length: 7 }).map((_, weekday) => {
+                    const cell = column.find((item) => item.weekday === weekday);
+                    const isActive = cell?.key === activeCell.key;
+                    return (
+                      <button
+                        key={weekday}
+                        type="button"
+                        onClick={() => {
+                          if (cell) setActiveKey(cell.key);
+                        }}
+                        title={cell ? `${cell.label}: ${formatSeriesValue(cell.value, exercise, localeTag)}` : labels.noData}
+                        style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: 4,
+                          border: isActive ? `1px solid ${accent}` : '1px solid rgba(148, 163, 184, 0.18)',
+                          background: cell ? hexToRgba(accent, cell.intensity ? 0.14 + cell.intensity * 0.7 : 0.08) : '#f1f5f9',
+                          padding: 0,
+                          boxShadow: isActive ? `0 0 0 2px ${hexToRgba(accent, 0.18)}` : 'none',
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        <MetricBadge label={labels.selectedDay} value={activeCell.label} accent={accent} />
+        <MetricBadge label={labels.workload} value={formatSeriesValue(activeCell.value, exercise, localeTag)} accent={accent} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 11, color: '#64748b', fontWeight: 700 }}>
+          <span>{labels.less}</span>
+          {[0.12, 0.28, 0.46, 0.7, 0.94].map((alpha) => (
+            <span key={alpha} style={{ width: 14, height: 14, borderRadius: 4, background: hexToRgba(accent, alpha) }} />
+          ))}
+          <span>{labels.more}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Distribution({
+  analytics,
+  localeTag,
+  emptyState,
+  progress,
+}: {
+  analytics: ProgressAnalytics;
+  localeTag: string;
+  emptyState: { title: string; body: string };
+  progress: Messages['progress'];
+}) {
+  if (!analytics.distribution.length) {
+    return <EmptyState title={emptyState.title} body={emptyState.body} />;
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div style={{ height: 18, borderRadius: 999, overflow: 'hidden', display: 'flex', background: '#e2e8f0' }}>
+        {analytics.distribution.map((item) => (
+          <div
+            key={item.exercise}
+            style={{
+              width: `${Math.max(item.share * 100, 3)}%`,
+              background: getExerciseAccent(item.exercise),
+            }}
+          />
+        ))}
+      </div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {analytics.distribution.map((item) => (
+          <div key={item.exercise} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 10, alignItems: 'center' }}>
+            <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontWeight: 800, color: '#0f172a' }}>
+              <span style={{ width: 10, height: 10, borderRadius: 999, background: getExerciseAccent(item.exercise) }} />
+              {exerciseLabel(item.exercise, progress)}
+            </div>
+            <div style={{ fontSize: 12, color: '#475569' }}>{`${Math.round(item.share * 100)}%`}</div>
+            <div style={{ fontSize: 12, color: '#0f172a', fontWeight: 800 }}>
+              {formatMetricValue({ value: item.value, kind: 'load' }, localeTag, 'all')}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QualityPanel({
+  analytics,
+  localeTag,
+  exercise,
+  insufficientDataLabel,
+}: {
+  analytics: ProgressAnalytics;
+  localeTag: string;
+  exercise: ExerciseFilter;
+  insufficientDataLabel: string;
+}) {
+  if (exercise === 'all') return null;
+
+  return (
+    <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))' }}>
+      {analytics.qualityMetrics.map((metric) => (
+        <article
+          key={metric.id}
+          style={{
+            borderRadius: 18,
+            border: '1px solid #dbe4f0',
+            background: '#ffffff',
+            padding: 14,
+            display: 'grid',
+            gap: 6,
+          }}
+        >
+          <div style={{ fontSize: 12, color: '#64748b', fontWeight: 800 }}>{metric.label}</div>
+          <div style={{ fontSize: 24, fontWeight: 900, color: '#0f172a' }}>
+            {metric.state === 'ok' ? formatMetricValue(metric.metric, localeTag, exercise, { signed: false }) : insufficientDataLabel}
+          </div>
+          <div style={{ fontSize: 12, color: '#475569' }}>{metric.note}</div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function WorkoutStructurePanel({
+  workouts,
+  selectedWorkoutId,
+  onSelectWorkout,
+  accent,
+  localeTag,
+  exercise,
+  labels,
+}: {
+  workouts: WorkoutStructure[];
+  selectedWorkoutId: string | null;
+  onSelectWorkout: (value: string) => void;
+  accent: string;
+  localeTag: string;
+  exercise: ExerciseFilter;
+  labels: {
+    emptyTitle: string;
+    emptyBody: string;
+    bySession: string;
+    byDay: string;
+    totalVolume: string;
+    sets: string;
+    duration: string;
+    noDuration: string;
+    chartAria: string;
+  };
+}) {
+  const selectedWorkout = workouts.find((workout) => workout.id === selectedWorkoutId) ?? workouts[0] ?? null;
+
+  if (!selectedWorkout) {
+    return <EmptyState title={labels.emptyTitle} body={labels.emptyBody} />;
+  }
+
+  const width = Math.max(320, selectedWorkout.sets.length * 68);
+  const height = 220;
+  const maxValue = Math.max(1, ...selectedWorkout.sets.map((set) => set.value));
+
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select
+          value={selectedWorkout.id}
+          onChange={(event) => onSelectWorkout(event.target.value)}
+          style={{
+            borderRadius: 12,
+            border: '1px solid #cbd5e1',
+            background: '#fff',
+            padding: '10px 12px',
+            fontWeight: 700,
+            color: '#0f172a',
+            minWidth: 220,
+          }}
+        >
+          {workouts.map((workout) => (
+            <option key={workout.id} value={workout.id}>
+              {`${workout.label} · ${workout.sets.length} ${labels.sets.toLowerCase()}`}
+            </option>
+          ))}
+        </select>
+        <div style={{ fontSize: 12, color: '#475569' }}>
+          {selectedWorkout.source === 'session' ? labels.bySession : labels.byDay}
+        </div>
+      </div>
+
+      <div style={{ overflowX: 'auto', paddingBottom: 2 }}>
+        <svg width={width} height={height} role="img" aria-label={labels.chartAria}>
+          <line x1={24} x2={width - 16} y1={170} y2={170} stroke="#cbd5e1" strokeWidth={1} />
+          {selectedWorkout.sets.map((set, index) => {
+            const x = 32 + index * 58;
+            const barHeight = Math.max(10, Math.round((set.value / maxValue) * 124));
+            return (
+              <g key={set.id}>
+                <rect x={x} y={170 - barHeight} width={32} height={barHeight} rx={12} fill={hexToRgba(accent, 0.88)} />
+                <text x={x + 16} y={164 - barHeight} textAnchor="middle" fontSize={10} fill="#0f172a" fontWeight={800}>
+                  {set.value}
+                </text>
+                <text x={x + 16} y={194} textAnchor="middle" fontSize={10} fill="#64748b">
+                  {set.index}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        <MetricBadge label={labels.totalVolume} value={formatSeriesValue(selectedWorkout.total, exercise, localeTag)} accent={accent} />
+        <MetricBadge label={labels.sets} value={selectedWorkout.sets.length.toLocaleString(localeTag)} accent={accent} />
+        <MetricBadge
+          label={labels.duration}
+          value={selectedWorkout.durationSeconds ? formatCompactDuration(selectedWorkout.durationSeconds, localeTag) : labels.noDuration}
+          accent={accent}
+        />
+      </div>
+    </div>
+  );
+}
+
+function InsightsPanel({ insights }: { insights: Insight[] }) {
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      {insights.map((insight) => {
+        const tone = resolveInsightTone(insight.tone);
+        return (
+          <article
+            key={insight.id}
+            style={{
+              borderRadius: 18,
+              border: `1px solid ${tone.border}`,
+              background: tone.background,
+              padding: '13px 14px',
+              color: '#0f172a',
+              fontWeight: 700,
+              lineHeight: 1.45,
+            }}
+          >
+            {insight.text}
+          </article>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function ProgressPage() {
-  const { locale } = useI18n();
+  const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
-  const tt = (input: string) => t(locale, input);
-  const [workouts, setWorkouts] = useState<Workout[]>([]);
+  const progress = messages.progress;
+  const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [periodDays, setPeriodDays] = useState<number>(30);
+  const [period, setPeriod] = useState<PeriodKey>('30d');
   const [exercise, setExercise] = useState<ExerciseFilter>('all');
-
-  const today = useMemo(() => startOfDay(new Date()), []);
+  const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
+      setLoading(true);
       setError(null);
       try {
-        const data = await fetchJsonSafe('/api/workouts');
-        const items = Array.isArray(data) ? data : (data?.items ?? []);
+        const response = await fetchJsonSafe<WorkoutRecord[] | { items?: WorkoutRecord[] }>('/api/workouts');
+        const items = Array.isArray(response) ? response : response?.items ?? [];
         if (!cancelled) setWorkouts(items);
-      } catch (e: any) {
-        if (!cancelled) setError(tt(e?.message || 'Ошибка загрузки'));
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : progress.errorTitle;
+        if (!cancelled) setError(message);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [progress.errorTitle]);
 
-  const rangeStart = useMemo(() => addDays(today, -(periodDays - 1)), [today, periodDays]);
-  const rangeEnd = today;
-  const metricLabel = useMemo(() => {
-    if (exercise === 'all') return 'объёма';
-    return exerciseValuePlural(exercise);
-  }, [exercise]);
-  const trendAriaLabel = useMemo(() => {
-    if (exercise === 'all') return 'График объёма по дням';
-    return isTimedExercise(exercise) ? 'График секунд по дням' : 'График повторений по дням';
-  }, [exercise]);
-  const formatMetric = (value: number | null | undefined) => (
-    exercise === 'all' ? (value == null ? '—' : String(value)) : formatExerciseValue(value, exercise, true)
+  const deferredPeriod = useDeferredValue(period);
+  const deferredExercise = useDeferredValue(exercise);
+  const analytics = useMemo(
+    () => buildProgressAnalytics({ workouts, period: deferredPeriod, exercise: deferredExercise, copy: progress }),
+    [deferredExercise, deferredPeriod, progress, workouts],
   );
-  const formatSignedMetric = (value: number) => {
-    if (exercise === 'all') return formatSigned(value);
-    if (value < 0) return `-${formatExerciseValue(Math.abs(value), exercise, true)}`;
-    return formatExerciseValue(value, exercise, true);
-  };
+  const accent = useMemo(() => getExerciseAccent(deferredExercise), [deferredExercise]);
 
-  const scopedByExercise = useMemo(() => {
-    if (exercise === 'all') return workouts;
-    return workouts.filter((w) => toExerciseType(w.exerciseType) === exercise);
-  }, [workouts, exercise]);
+  useEffect(() => {
+    setSelectedWorkoutId(analytics.selectedWorkoutId);
+  }, [analytics.selectedWorkoutId]);
 
-  const inRange = useMemo(() => {
-    const startMs = rangeStart.getTime();
-    const endMs = rangeEnd.getTime();
-
-    return scopedByExercise.filter((w) => {
-      const d = startOfDay(getWorkoutDate(w)).getTime();
-      return d >= startMs && d <= endMs;
-    });
-  }, [scopedByExercise, rangeStart, rangeEnd]);
-
-  const daySeries = useMemo<DayPoint[]>(() => {
-    const list: DayPoint[] = [];
-    const index = new Map<string, DayPoint>();
-
-    for (let i = 0; i < periodDays; i += 1) {
-      const d = addDays(rangeStart, i);
-      const key = normalizeDate(d);
-      const point: DayPoint = { key, date: d, total: 0, byExercise: emptyByExercise() };
-      list.push(point);
-      index.set(key, point);
-    }
-
-    for (const w of inRange) {
-      const d = startOfDay(getWorkoutDate(w));
-      const key = normalizeDate(d);
-      const row = index.get(key);
-      if (!row) continue;
-      const t = toExerciseType(w.exerciseType);
-      row.byExercise[t] += w.reps || 0;
-      row.total += w.reps || 0;
-    }
-
-    return list;
-  }, [inRange, rangeStart, periodDays]);
-
-  const totals = useMemo(() => {
-    const total = daySeries.reduce((acc, d) => acc + d.total, 0);
-    const trainingDays = daySeries.filter((d) => d.total > 0).length;
-    const avgPerTraining = trainingDays ? Math.round(total / trainingDays) : 0;
-    return { total, trainingDays, avgPerTraining };
-  }, [daySeries]);
-
-  const previousRangeStart = useMemo(() => addDays(rangeStart, -periodDays), [rangeStart, periodDays]);
-  const previousRangeEnd = useMemo(() => addDays(rangeStart, -1), [rangeStart]);
-
-  const previousPeriodStats = useMemo(() => {
-    const startMs = previousRangeStart.getTime();
-    const endMs = previousRangeEnd.getTime();
-
-    const prev = scopedByExercise.filter((w) => {
-      const d = startOfDay(getWorkoutDate(w)).getTime();
-      return d >= startMs && d <= endMs;
-    });
-
-    const total = sumReps(prev);
-    const trainingDays = new Set(prev.map((w) => normalizeDate(startOfDay(getWorkoutDate(w))))).size;
-    const avgPerTraining = trainingDays ? Math.round(total / trainingDays) : 0;
-    return { total, trainingDays, avgPerTraining };
-  }, [scopedByExercise, previousRangeStart, previousRangeEnd]);
-
-  const comparisonStats = useMemo(() => {
-    const deltaTotal = totals.total - previousPeriodStats.total;
-    const deltaTrainingDays = totals.trainingDays - previousPeriodStats.trainingDays;
-    const dailyCurrent = Math.round(totals.total / periodDays);
-    const dailyPrevious = Math.round(previousPeriodStats.total / periodDays);
-    return {
-      deltaTotal,
-      deltaTrainingDays,
-      dailyCurrent,
-      dailyPrevious,
-      deltaDaily: dailyCurrent - dailyPrevious,
-    };
-  }, [totals, previousPeriodStats, periodDays]);
-  const deltaPercentLabel = useMemo(
-    () => tt(formatDeltaPercent(totals.total, previousPeriodStats.total)),
-    [previousPeriodStats.total, totals.total, tt],
-  );
-
-  const streak = useMemo(() => calcStreak(scopedByExercise), [scopedByExercise]);
-
-  const weekSeries = useMemo<WeekPoint[]>(() => {
-    const firstWeek = startOfWeekMonday(rangeStart);
-    const lastWeek = startOfWeekMonday(rangeEnd);
-
-    const list: WeekPoint[] = [];
-    const index = new Map<string, WeekPoint>();
-
-    for (let cur = new Date(firstWeek); cur <= lastWeek; cur = addDays(cur, 7)) {
-      const key = normalizeDate(cur);
-      const row: WeekPoint = { key, start: new Date(cur), total: 0, byExercise: emptyByExercise() };
-      list.push(row);
-      index.set(key, row);
-    }
-
-    for (const w of inRange) {
-      const d = startOfDay(getWorkoutDate(w));
-      const wk = startOfWeekMonday(d);
-      const row = index.get(normalizeDate(wk));
-      if (!row) continue;
-      const t = toExerciseType(w.exerciseType);
-      row.byExercise[t] += w.reps || 0;
-      row.total += w.reps || 0;
-    }
-
-    return list;
-  }, [inRange, rangeStart, rangeEnd]);
-
-  const weeklyTotals = useMemo(() => weekSeries.map((w) => w.total), [weekSeries]);
-
-  const previousWeeklyTotals = useMemo(() => {
-    const firstWeek = startOfWeekMonday(previousRangeStart);
-    const lastWeek = startOfWeekMonday(previousRangeEnd);
-    const weeks: Array<{ key: string; total: number }> = [];
-    const index = new Map<string, number>();
-
-    for (let cur = new Date(firstWeek); cur <= lastWeek; cur = addDays(cur, 7)) {
-      const key = normalizeDate(cur);
-      index.set(key, weeks.length);
-      weeks.push({ key, total: 0 });
-    }
-
-    for (const w of scopedByExercise) {
-      const d = startOfDay(getWorkoutDate(w));
-      if (d < previousRangeStart || d > previousRangeEnd) continue;
-      const wk = normalizeDate(startOfWeekMonday(d));
-      const rowIndex = index.get(wk);
-      if (rowIndex === undefined) continue;
-      weeks[rowIndex].total += w.reps || 0;
-    }
-
-    const raw = weeks.map((w) => w.total);
-    if (raw.length === weekSeries.length) return raw;
-    if (raw.length > weekSeries.length) return raw.slice(raw.length - weekSeries.length);
-    return [...new Array(weekSeries.length - raw.length).fill(0), ...raw];
-  }, [scopedByExercise, previousRangeStart, previousRangeEnd, weekSeries.length]);
-
-  const records = useMemo(() => {
-    const all = scopedByExercise;
-    if (!all.length) {
-      return {
-        bestDay: null as null | { key: string; total: number },
-        bestWeek: null as null | { key: string; total: number },
-        bestSet: null as null | Workout,
-        lastWorkout: null as null | Workout,
-      };
-    }
-
-    const byDay = new Map<string, number>();
-    const byWeek = new Map<string, number>();
-
-    for (const w of all) {
-      const d = startOfDay(getWorkoutDate(w));
-      const dayKey = normalizeDate(d);
-      byDay.set(dayKey, (byDay.get(dayKey) ?? 0) + (w.reps || 0));
-
-      const weekKey = normalizeDate(startOfWeekMonday(d));
-      byWeek.set(weekKey, (byWeek.get(weekKey) ?? 0) + (w.reps || 0));
-    }
-
-    let bestDay: { key: string; total: number } | null = null;
-    for (const [key, total] of byDay.entries()) {
-      if (!bestDay || total > bestDay.total || (total === bestDay.total && key > bestDay.key)) {
-        bestDay = { key, total };
-      }
-    }
-
-    let bestWeek: { key: string; total: number } | null = null;
-    for (const [key, total] of byWeek.entries()) {
-      if (!bestWeek || total > bestWeek.total || (total === bestWeek.total && key > bestWeek.key)) {
-        bestWeek = { key, total };
-      }
-    }
-
-    const bestSet = [...all].sort((a, b) => {
-      if ((b.reps || 0) !== (a.reps || 0)) return (b.reps || 0) - (a.reps || 0);
-      return getWorkoutDate(b).getTime() - getWorkoutDate(a).getTime();
-    })[0];
-
-    const lastWorkout = [...all].sort((a, b) => getWorkoutDate(b).getTime() - getWorkoutDate(a).getTime())[0];
-
-    return { bestDay, bestWeek, bestSet, lastWorkout };
-  }, [scopedByExercise]);
-
-  const mainColor = exercise === 'all' ? '#0ea5e9' : exerciseColor(exercise);
-  const rangeByExerciseTotals = useMemo(() => {
-    const out = emptyByExercise();
-    for (const row of daySeries) {
-      for (const type of EXERCISE_ORDER) out[type] += row.byExercise[type];
-    }
-    return out;
-  }, [daySeries]);
-  const rhythmData = useMemo(() => daySeries.slice(-Math.min(30, daySeries.length)), [daySeries]);
+  const headerLabel = filterLabel(deferredExercise, progress);
+  const bestSetNote = analytics.bestSetRecord
+    ? deferredExercise === 'all'
+      ? fillTemplate(progress.header.mixedRecord, {
+          exercise: exerciseLabel(toExerciseType(analytics.bestSetRecord.exerciseType), progress),
+          value: formatExerciseMetric(analytics.bestSetRecord.reps, toExerciseType(analytics.bestSetRecord.exerciseType), localeTag),
+        })
+      : fillTemplate(progress.header.lastRecord, {
+          value: formatExerciseMetric(analytics.bestSetRecord.reps, deferredExercise, localeTag),
+        })
+    : progress.header.recordWillAppear;
+  const periodLabel =
+    deferredPeriod === '7d'
+      ? progress.periods.d7
+      : deferredPeriod === '90d'
+        ? progress.periods.d90
+        : deferredPeriod === 'all'
+          ? progress.periods.all
+          : progress.periods.d30;
+  const summaryValue = formatMetricValue(analytics.totalValue, localeTag, deferredExercise);
+  const summaryLoadNumber = formatLoadNumber(analytics.totalValue.value ?? 0, localeTag);
 
   return (
-    <div className="app-page" style={{ maxWidth: 980, display: 'grid', gap: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Link href="/dashboard" style={{ textDecoration: 'none' }}>← {tt('На тренировку')}</Link>
-      </div>
-
-      {error ? <p style={{ color: 'red', margin: 0 }}>{error}</p> : null}
-
-      <section style={{ border: '1px solid #e5e7eb', borderRadius: 12, background: '#f9fafb', padding: 12, display: 'grid', gap: 10 }}>
-        <div style={{ fontWeight: 900, color: '#111827' }}>{tt('Фильтры')}</div>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {PERIOD_OPTIONS.map((p) => (
-            <button
-              key={p.days}
-              type="button"
-              onClick={() => setPeriodDays(p.days)}
-              style={{
-                padding: '8px 11px',
-                borderRadius: 10,
-                border: `1px solid ${periodDays === p.days ? '#2563eb' : '#d1d5db'}`,
-                background: periodDays === p.days ? '#eff6ff' : '#fff',
-                color: '#111827',
-                cursor: 'pointer',
-                fontWeight: 800,
-              }}
-            >
-              {tt(p.label)}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#374151' }}>{tt('Упражнение:')}</div>
-          <select
-            value={exercise}
-            onChange={(e) => setExercise(e.target.value as ExerciseFilter)}
-            style={{
-              padding: '8px 10px',
-              borderRadius: 10,
-              border: '1px solid #d1d5db',
-              background: '#fff',
-              color: '#111827',
-              fontWeight: 800,
-              minWidth: 210,
-            }}
-          >
-            <option value="all">{tt('Все упражнения')}</option>
-            {EXERCISE_ORDER.map((t) => (
-              <option key={t} value={t}>{tt(exerciseLabel(t))}</option>
+    <div
+      className="app-page"
+      style={{
+        ...pageStyle,
+        ['--analytics-accent' as string]: accent,
+        ['--analytics-accent-soft' as string]: hexToRgba(accent, 0.12),
+      }}
+    >
+      <Section title={progress.filters}>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {PERIOD_OPTIONS.map((option) => (
+              <FilterPill
+                key={option.key}
+                active={period === option.key}
+                label={
+                  option.key === '7d'
+                    ? progress.periods.d7
+                    : option.key === '90d'
+                      ? progress.periods.d90
+                      : option.key === 'all'
+                        ? progress.periods.all
+                        : progress.periods.d30
+                }
+                onClick={() => startTransition(() => setPeriod(option.key))}
+              />
             ))}
-          </select>
-        </div>
-      </section>
+          </div>
 
-      <HeroOverview
-        currentTotal={totals.total}
-        previousTotal={previousPeriodStats.total}
-        delta={comparisonStats.deltaTotal}
-        deltaPercent={deltaPercentLabel}
-        streak={streak}
-        trainingDays={totals.trainingDays}
-        periodDays={periodDays}
-        color={mainColor}
-        metricLabel={metricLabel}
-        tt={tt}
-      />
-
-      <section style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
-        <StatCard
-          label={tt('Текущий период')}
-          value={formatMetric(totals.total)}
-          hint={`${rangeStart.toLocaleDateString(localeTag)} - ${rangeEnd.toLocaleDateString(localeTag)}`}
-          accentColor={mainColor}
-        />
-        <StatCard
-          label={tt('Прошлый период')}
-          value={formatMetric(previousPeriodStats.total)}
-          hint={`${previousRangeStart.toLocaleDateString(localeTag)} - ${previousRangeEnd.toLocaleDateString(localeTag)}`}
-          accentColor="#64748b"
-        />
-        <StatCard
-          label={tt('Разница')}
-          value={formatSignedMetric(comparisonStats.deltaTotal)}
-          hint={`${deltaPercentLabel} ${tt('к прошлому периоду')}`}
-          accentColor={comparisonStats.deltaTotal >= 0 ? '#16a34a' : '#dc2626'}
-        />
-        <StatCard
-          label={tt('Активные дни')}
-          value={`${totals.trainingDays}/${periodDays}`}
-          hint={tt(`было ${previousPeriodStats.trainingDays}/${periodDays} (${formatSigned(comparisonStats.deltaTrainingDays)})`)}
-          accentColor="#2563eb"
-        />
-        <StatCard
-          label={tt('Среднее в день')}
-          value={formatMetric(comparisonStats.dailyCurrent)}
-          hint={tt(`было ${comparisonStats.dailyPrevious} (${formatSigned(comparisonStats.deltaDaily)})`)}
-          accentColor="#0891b2"
-        />
-        <StatCard
-          label={tt('Среднее за тренировку')}
-          value={formatMetric(totals.avgPerTraining)}
-          hint={tt(`было ${previousPeriodStats.avgPerTraining}`)}
-          accentColor="#9333ea"
-        />
-      </section>
-
-      <section style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-        <div style={{ border: '1px solid #dbe4ff', borderRadius: 16, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', padding: 12, display: 'grid', gap: 10 }}>
-          <div style={{ fontWeight: 900, color: '#111827' }}>{tt('Динамика по дням')}</div>
-          <TrendChart data={daySeries} color={mainColor} ariaLabel={trendAriaLabel} tt={tt} />
-          <div style={{ fontSize: 12, color: '#64748b' }}>
-            {tt(`Период: ${rangeStart.toLocaleDateString(localeTag)} - ${rangeEnd.toLocaleDateString(localeTag)}`)}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {EXERCISE_OPTIONS.map((option) => (
+              <FilterPill
+                key={option}
+                active={exercise === option}
+                label={filterLabel(option, progress)}
+                onClick={() => startTransition(() => setExercise(option))}
+              />
+            ))}
           </div>
         </div>
-        <ExerciseShareDonut totals={rangeByExerciseTotals} periodTotal={totals.total} tt={tt} />
-      </section>
-
-      <section style={{ border: '1px solid #dbe4ff', borderRadius: 16, background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)', padding: 12, display: 'grid', gap: 10 }}>
-        <div style={{ fontWeight: 900, color: '#111827' }}>{tt('Недельный тренд')}</div>
-        <WeeklyTrendChart
-          weeks={weekSeries}
-          currentTotals={weeklyTotals}
-          previousTotals={previousWeeklyTotals}
-          color={mainColor}
-          tt={tt}
-        />
-
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#111827', fontWeight: 700 }}>
-            <span style={{ width: 18, height: 0, borderTop: `3px solid ${mainColor}`, borderRadius: 999 }} />
-            <span>{tt('Текущий период')}</span>
-          </div>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#4b5563', fontWeight: 700 }}>
-            <span style={{ width: 18, height: 0, borderTop: '2px dashed #94a3b8', borderRadius: 999 }} />
-            <span>{tt('Прошлый период')}</span>
-          </div>
-        </div>
-      </section>
-
-      <ActivityRhythm data={rhythmData} color={mainColor} tt={tt} localeTag={localeTag} />
+      </Section>
 
       <section
         style={{
-          border: '1px solid #dbe4ff',
-          borderRadius: 16,
-          background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
-          padding: 12,
+          position: 'relative',
+          overflow: 'hidden',
+          borderRadius: 28,
+          border: `1px solid ${hexToRgba(accent, 0.26)}`,
+          background: `linear-gradient(135deg, ${hexToRgba(accent, 0.18)} 0%, #fff8ef 35%, #ffffff 100%)`,
+          padding: 18,
           display: 'grid',
-          gap: 10,
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: 14,
         }}
       >
-        <StatCard
-          label={tt('Лучший день')}
-          value={records.bestDay ? formatMetric(records.bestDay.total) : '—'}
-          hint={records.bestDay ? new Date(`${records.bestDay.key}T00:00:00`).toLocaleDateString(localeTag) : undefined}
-          accentColor="#2563eb"
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            right: -48,
+            top: -62,
+            width: 180,
+            height: 180,
+            borderRadius: 999,
+            background: hexToRgba(accent, 0.16),
+            filter: 'blur(6px)',
+          }}
         />
-        <StatCard
-          label={tt('Лучшая неделя')}
-          value={records.bestWeek ? formatMetric(records.bestWeek.total) : '—'}
-          hint={records.bestWeek ? formatWeekRange(new Date(`${records.bestWeek.key}T00:00:00`)) : undefined}
-          accentColor="#14b8a6"
-        />
-        <StatCard
-          label={tt('Лучший подход')}
-          value={records.bestSet ? formatMetric(records.bestSet.reps) : '—'}
-          hint={records.bestSet ? getWorkoutDate(records.bestSet).toLocaleDateString(localeTag) : undefined}
-          accentColor="#f97316"
-        />
-        <StatCard
-          label={tt('Последняя тренировка')}
-          value={records.lastWorkout ? formatMetric(records.lastWorkout.reps) : '—'}
-          hint={records.lastWorkout ? getWorkoutDate(records.lastWorkout).toLocaleString(localeTag) : undefined}
-          accentColor="#8b5cf6"
-        />
+        <div style={{ position: 'relative', zIndex: 1, display: 'grid', gap: 6 }}>
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ fontSize: 13, color: '#475569', fontWeight: 800 }}>{progress.title}</div>
+            {deferredExercise === 'all' ? (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 34, lineHeight: 0.95, fontWeight: 900, color: '#0f172a' }}>{summaryLoadNumber}</div>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
+                  <span style={{ fontSize: 13, color: '#334155', fontWeight: 800 }}>{progress.header.loadUnit}</span>
+                  <InfoHint
+                    label={progress.header.loadInfoLabel}
+                    title={progress.header.loadInfoTitle}
+                    body={progress.header.loadInfoBody}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 34, lineHeight: 0.95, fontWeight: 900, color: '#0f172a' }}>{summaryValue}</div>
+            )}
+            <div style={{ fontSize: 13, color: '#334155' }}>
+              {fillTemplate(progress.header.byPeriodAndFilter, {
+                period: periodLabel.toLowerCase(),
+                filter: headerLabel.toLowerCase(),
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ position: 'relative', zIndex: 1, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          <MetricBadge label={progress.header.bestSet} value={formatMetricValue(analytics.kpis.find((card) => card.id === 'bestSet')?.metric ?? { value: null, kind: 'count' }, localeTag, deferredExercise)} accent={accent} />
+          <MetricBadge label={progress.header.activeStreak} value={`${analytics.streakDays.toLocaleString(localeTag)} ${progress.header.daysShort}`} accent={accent} />
+          <MetricBadge label={progress.header.recordNote} value={bestSetNote} accent={accent} />
+        </div>
       </section>
+
+      {loading ? <EmptyState title={progress.loadingTitle} body={progress.loadingBody} /> : null}
+      {error ? <EmptyState title={progress.errorTitle} body={error} /> : null}
+
+      {!loading && !error ? (
+        <>
+          <Section title={progress.sections.overview}>
+            <KpiGrid cards={analytics.kpis} localeTag={localeTag} exercise={deferredExercise} />
+          </Section>
+
+          <Section title={progress.sections.volumeByDay} subtitle={progress.chart.tapDay}>
+            {analytics.hasDataInRange ? (
+              <VolumeChart
+                points={analytics.volumeSeries}
+                accent={accent}
+                exercise={deferredExercise}
+                localeTag={localeTag}
+                labels={{
+                  selectedDay: progress.chart.selectedDay,
+                  volume: progress.chart.volume,
+                  sets: progress.chart.sets,
+                }}
+              />
+            ) : (
+              <EmptyState title={progress.states.noDataPeriodTitle} body={progress.states.noDataPeriodBody} />
+            )}
+          </Section>
+
+          {deferredExercise !== 'all' ? (
+            <Section title={progress.sections.performanceTrend}>
+              <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+                <TrendLineChart
+                  title={progress.header.bestSet}
+                  points={analytics.bestSetSeries}
+                  accent={accent}
+                  localeTag={localeTag}
+                  exercise={deferredExercise}
+                  seriesKey="bestSet"
+                  emptyBody={progress.states.trendInsufficient}
+                  detailLabels={{
+                    date: progress.chart.date,
+                    value: progress.chart.value,
+                    average: progress.chart.average,
+                  }}
+                />
+                <TrendLineChart
+                  title={progress.kpi.averageSet}
+                  points={analytics.averageSetSeries}
+                  accent={accent}
+                  localeTag={localeTag}
+                  exercise={deferredExercise}
+                  seriesKey="averageSet"
+                  emptyBody={progress.states.trendInsufficient}
+                  detailLabels={{
+                    date: progress.chart.date,
+                    value: progress.chart.value,
+                    average: progress.chart.average,
+                  }}
+                />
+              </div>
+            </Section>
+          ) : null}
+
+          <Section title={progress.sections.activityCalendar}>
+            <Heatmap
+              cells={analytics.heatmap}
+              accent={accent}
+              exercise={deferredExercise}
+              localeTag={localeTag}
+              labels={{
+                weekdays: [
+                  progress.weekdays.mon,
+                  progress.weekdays.tue,
+                  progress.weekdays.wed,
+                  progress.weekdays.thu,
+                  progress.weekdays.fri,
+                  progress.weekdays.sat,
+                  progress.weekdays.sun,
+                ],
+                eachSquareDay: progress.chart.eachSquareDay,
+                selectedDay: progress.chart.selectedDay,
+                workload: progress.chart.workload,
+                less: progress.chart.less,
+                more: progress.chart.more,
+                noData: progress.states.noDataPeriodTitle,
+              }}
+            />
+          </Section>
+
+          {deferredExercise === 'all' ? (
+            <Section title={progress.sections.loadDistribution}>
+              <Distribution
+                analytics={analytics}
+                localeTag={localeTag}
+                emptyState={{
+                  title: progress.states.distributionEmptyTitle,
+                  body: progress.states.distributionEmptyBody,
+                }}
+                progress={progress}
+              />
+            </Section>
+          ) : (
+            <Section title={progress.sections.quality}>
+              <QualityPanel
+                analytics={analytics}
+                localeTag={localeTag}
+                exercise={deferredExercise}
+                insufficientDataLabel={progress.states.insufficientData}
+              />
+            </Section>
+          )}
+
+          {deferredExercise !== 'all' ? (
+            <Section title={progress.sections.workoutStructure}>
+              <WorkoutStructurePanel
+                workouts={analytics.workouts}
+                selectedWorkoutId={selectedWorkoutId}
+                onSelectWorkout={setSelectedWorkoutId}
+                accent={accent}
+                localeTag={localeTag}
+                exercise={deferredExercise}
+                labels={{
+                  emptyTitle: progress.states.structureEmptyTitle,
+                  emptyBody: progress.states.structureEmptyBody,
+                  bySession: progress.structure.bySession,
+                  byDay: progress.structure.byDay,
+                  totalVolume: progress.structure.totalVolume,
+                  sets: progress.structure.sets,
+                  duration: progress.structure.duration,
+                  noDuration: progress.states.noDuration,
+                  chartAria: progress.structure.chartAria,
+                }}
+              />
+            </Section>
+          ) : null}
+
+          <Section title={progress.sections.insights}>
+            <InsightsPanel insights={analytics.insights} />
+          </Section>
+        </>
+      ) : null}
     </div>
   );
 }
