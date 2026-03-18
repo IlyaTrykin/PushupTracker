@@ -1,9 +1,8 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import PushNotificationsToggle from '@/components/PushNotificationsToggle';
-import { normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
 
 type Profile = {
@@ -91,7 +90,7 @@ export default function ProfilePage() {
     return p ? p : '';
   }, [profile?.avatarPath]);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -99,24 +98,34 @@ export default function ProfilePage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setProfile(null);
+        setUser(null);
         setError(data.error || messages.profile.errors.load);
       } else {
-        setProfile(data as Profile);
-        setUsername((data as Profile).username || '');
-        setGender(((data as Profile).gender as any) || '');
-        setBirthDate(toDateInputValue((data as Profile).birthDate));
-        setWeightKg((data as Profile).weightKg != null ? String((data as Profile).weightKg) : '');
+        const nextProfile = data as Profile;
+        setProfile(nextProfile);
+        setUser({
+          id: nextProfile.id,
+          email: nextProfile.email,
+          username: nextProfile.username,
+          isAdmin: nextProfile.isAdmin,
+          avatarPath: nextProfile.avatarPath,
+          language: nextProfile.language,
+        });
+        setUsername(nextProfile.username || '');
+        setGender(nextProfile.gender || '');
+        setBirthDate(toDateInputValue(nextProfile.birthDate));
+        setWeightKg(nextProfile.weightKg != null ? String(nextProfile.weightKg) : '');
       }
     } catch {
       setError(messages.profile.errors.network);
     } finally {
       setLoading(false);
     }
-  }
+  }, [messages.profile.errors.load, messages.profile.errors.network, setUser]);
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load]);
 
   async function save() {
     setError('');

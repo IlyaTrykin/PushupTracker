@@ -1,30 +1,17 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useSyncExternalStore } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { t } from '@/i18n/translate';
-
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
-const KEY = 'exerciseType';
-
-function isValid(v: any): v is ExerciseType {
-  return v === 'pushups' || v === 'pullups' || v === 'crunches' || v === 'squats' || v === 'plank';
-}
+import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
 
 export default function ExerciseTypeHeaderSwitch() {
   const { locale } = useI18n();
   const tt = (input: string) => t(locale, input);
-  const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
-
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? window.localStorage.getItem(KEY) : null;
-    if (isValid(saved)) setExerciseType(saved);
-  }, []);
+  const exerciseType = useSyncExternalStore<ExerciseType>(subscribeExerciseType, getStoredExerciseType, () => 'pushups');
 
   const setType = (t: ExerciseType) => {
-    setExerciseType(t);
-    try { window.localStorage.setItem(KEY, t); } catch {}
-    window.dispatchEvent(new CustomEvent('exerciseTypeChanged', { detail: t }));
+    persistExerciseType(t);
   };
 
   const pill = (active: boolean): React.CSSProperties => ({

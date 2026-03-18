@@ -6,6 +6,8 @@ import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
 
+type JsonObject = Record<string, unknown>;
+
 export default function RegisterPage() {
   const { locale, messages, setLocale } = useI18n();
   const router = useRouter();
@@ -32,16 +34,18 @@ export default function RegisterPage() {
         body: JSON.stringify({ email, username, password, language }),
       });
 
-      let data: any = {};
+      let data: JsonObject = {};
       try {
-        data = await res.json();
+        const parsed = await res.json();
+        data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
       } catch {
         // если ответ не JSON — всё равно покажем что-то
       }
 
       if (!res.ok) {
-        const base = data?.error || `${messages.auth.register.defaultError} (код ${res.status})`;
-        const msg = data?.details ? `${base}: ${data.details}` : base;
+        const base = typeof data.error === 'string' ? data.error : `${messages.auth.register.defaultError} (код ${res.status})`;
+        const details = typeof data.details === 'string' ? data.details : '';
+        const msg = details ? `${base}: ${details}` : base;
         setError(msg);
       } else {
         setLocale(language);

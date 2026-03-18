@@ -6,7 +6,7 @@
 const VERSION = 'v5'; // при больших изменениях меняем версию, чтобы сбросить старый cache-first
 const STATIC_CACHE = `pushup-static-${VERSION}`;
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', () => {
   // Новая версия SW активируется сразу
   self.skipWaiting();
 });

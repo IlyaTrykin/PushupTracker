@@ -5,9 +5,16 @@ import { isChannelEnabledForUser } from '@/lib/notification-preferences';
 import { sendChallengeInviteEmail } from '@/lib/notification-email';
 import { sendWebPushToUsers } from '@/lib/web-push';
 
+type JsonObject = Record<string, unknown>;
+
 
 function jsonError(message: string, status: number, details?: string) {
   return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function parseISODateOnly(s: string): Date | null {
@@ -63,9 +70,9 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json(withMyStatus);
-  } catch (e: any) {
+  } catch (e) {
     console.error('CHALLENGES GET ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (GET /api/challenges)', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (GET /api/challenges)', 500, getErrorMessage(e));
   }
 }
 
@@ -80,9 +87,10 @@ export async function POST(request: NextRequest) {
     }
 
     const bodyText = await request.text();
-    let body: any = {};
+    let body: JsonObject = {};
     try {
-      body = bodyText ? JSON.parse(bodyText) : {};
+      const parsed = bodyText ? JSON.parse(bodyText) : {};
+      body = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
     } catch {
       return jsonError('Некорректный JSON', 400);
     }
@@ -110,8 +118,8 @@ export async function POST(request: NextRequest) {
       targetReps = t;
     }
 
-const participantsUsernames: string[] = Array.isArray(body.participantsUsernames)
-      ? body.participantsUsernames.map((x: any) => String(x).trim()).filter(Boolean)
+    const participantsUsernames: string[] = Array.isArray(body.participantsUsernames)
+      ? body.participantsUsernames.map((x) => String(x).trim()).filter(Boolean)
       : [];
 
     const me = await prisma.user.findUnique({
@@ -197,9 +205,9 @@ const participantsUsernames: string[] = Array.isArray(body.participantsUsernames
       console.error('NOTIFY INVITE ERROR:', e);
     }
 
-return NextResponse.json(created);
-  } catch (e: any) {
+    return NextResponse.json(created);
+  } catch (e) {
     console.error('CHALLENGES POST ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (POST /api/challenges)', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (POST /api/challenges)', 500, getErrorMessage(e));
   }
 }

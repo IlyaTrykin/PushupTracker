@@ -4,6 +4,8 @@ import { requireUser, AuthError } from '@/lib/auth';
 import path from 'path';
 import fs from 'fs/promises';
 
+type BlobWithType = Blob & { type?: string };
+
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
@@ -21,8 +23,9 @@ export async function POST(request: Request) {
 
     const file = form.get('file');
     if (!file || !(file instanceof Blob)) return jsonError('file обязателен');
+    const typedFile = file as BlobWithType;
 
-    const contentType = String((file as any).type || '').toLowerCase();
+    const contentType = String(typedFile.type || '').toLowerCase();
     const allowed = new Set(['image/webp', 'image/png', 'image/jpeg', 'image/jpg']);
     if (!allowed.has(contentType)) return jsonError('Разрешены только webp/png/jpeg');
     if (file.size > MAX_FILE_BYTES) return jsonError(`Файл слишком большой (макс. ${Math.round(MAX_FILE_BYTES / 1024)}KB)`, 413);
@@ -56,7 +59,7 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ ok: true, avatarPath });
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) return jsonError(e.message, e.status);
     return jsonError('INTERNAL_ERROR', 500);
   }

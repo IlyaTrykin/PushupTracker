@@ -15,16 +15,23 @@ type NotificationItem = {
   createdAt: string;
 };
 
+type JsonObject = Record<string, unknown>;
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
 async function fetchJsonSafe(url: string, init?: RequestInit) {
   const res = await fetch(url, init);
   const text = await res.text();
-  let data: any = null;
+  let data: JsonObject | null = null;
   if (text) {
-    try { data = JSON.parse(text); } catch {}
+    try { data = JSON.parse(text) as JsonObject; } catch {}
   }
   if (!res.ok) {
-    const base = data?.error || `Ошибка (код ${res.status})`;
-    const details = data?.details || '';
+    const base = typeof data?.error === 'string' ? data.error : `Ошибка (код ${res.status})`;
+    const details = typeof data?.details === 'string' ? data.details : '';
     throw new Error(details ? `${base}: ${details}` : base);
   }
   return data;
@@ -46,10 +53,12 @@ export default function NotificationsPage() {
     setInfo(null);
     try {
       const data = await fetchJsonSafe('/api/notifications');
-      setItems(data.items || []);
-      setUnreadCount(data.unreadCount || 0);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+      const items = Array.isArray(data?.items) ? (data.items as NotificationItem[]) : [];
+      const unreadCount = typeof data?.unreadCount === 'number' ? data.unreadCount : 0;
+      setItems(items);
+      setUnreadCount(unreadCount);
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -67,8 +76,8 @@ export default function NotificationsPage() {
         body: JSON.stringify({ id }),
       });
       await load();
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -83,8 +92,8 @@ export default function NotificationsPage() {
       });
       setInfo(tt('Отмечено как прочитанное'));
       await load();
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     }
   };
 

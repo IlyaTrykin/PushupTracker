@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
@@ -44,13 +45,7 @@ function AvatarCircle({ src, size = 28 }: { src?: string | null; size?: number }
   // src может содержать ?t=... для bust cache — оставляем как есть
   return (
     <span style={base}>
-      <img
-        src={src}
-        alt=""
-        width={size}
-        height={size}
-        style={{ width: size, height: size, objectFit: 'cover', display: 'block' }}
-      />
+      <Image src={src} alt="" width={size} height={size} unoptimized style={{ width: size, height: size, objectFit: 'cover', display: 'block' }} />
     </span>
   );
 }
@@ -121,10 +116,41 @@ type SortKey =
   | 'streak';
 
 type FeedLimit = 5 | 10 | 30 | 50 | 100;
+type JsonObject = Record<string, unknown>;
+type MeSummary = { id: string; username: string; avatarPath: string | null };
+type FriendRequestsPayload = { incoming: PendingRequest[]; outgoing: PendingRequest[] };
+type FriendStatsRow = {
+  friend: Friend;
+  statsAll: Stats;
+  statsByExercise: StatsByExercise;
+};
+type TableRow = {
+  isMe: boolean;
+  friend: Pick<Friend, 'friendshipId' | 'username' | 'avatarPath' | 'isFollowing'>;
+  statsAll: Stats;
+  statsByExercise: StatsByExercise;
+};
 
 const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
 const FEED_LIMIT_OPTIONS: FeedLimit[] = [5, 10, 30, 50, 100];
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
+function getWorkoutDate(value: Pick<Workout, 'time' | 'date'>): Date {
+  return new Date(value.time || value.date);
+}
+
+function getWorkoutTimestamp(value: Pick<Workout, 'time' | 'date'>): number {
+  return getWorkoutDate(value).getTime();
+}
 
 function normalizeDate(d: Date): string {
   const y = d.getFullYear();
@@ -198,7 +224,7 @@ function calcStats(workouts: Workout[]): Stats {
   const byDay = new Map<string, number>();
 
   for (const w of workouts) {
-    const dt = new Date((w.time || w.date) as any);
+    const dt = getWorkoutDate(w);
     const key = normalizeDate(dt);
     byDay.set(key, (byDay.get(key) ?? 0) + (w.reps || 0));
   }
@@ -316,7 +342,7 @@ function AvatarMini({ src }: { src?: string | null }) {
   if (!src) return <span style={miniAvatarPlaceholder} aria-hidden="true" />;
   return (
     <span style={miniAvatarWrap} aria-hidden="true">
-      <img src={src} alt="" width={14} height={14} style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
+      <Image src={src} alt="" width={14} height={14} unoptimized style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
     </span>
   );
 }
@@ -324,7 +350,7 @@ function AvatarMini({ src }: { src?: string | null }) {
 async function fetchJson(url: string) {
   const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
   const text = await res.text();
-  let data: any = null;
+  let data: unknown = null;
 
   if (text) {
     try {
@@ -333,8 +359,8 @@ async function fetchJson(url: string) {
   }
 
   if (!res.ok) {
-    const base = data?.error || `Ошибка (код ${res.status})`;
-    const details = data?.details || '';
+    const base = isJsonObject(data) && typeof data.error === 'string' ? data.error : `Ошибка (код ${res.status})`;
+    const details = isJsonObject(data) && typeof data.details === 'string' ? data.details : '';
     throw new Error(details ? `${base}: ${details}` : base);
   }
 
@@ -344,7 +370,7 @@ async function fetchJson(url: string) {
 export default function FriendsPage() {
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
-  const tt = (input: string) => t(locale, input);
+  const tt = useCallback((input: string) => t(locale, input), [locale]);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<PendingRequest[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<PendingRequest[]>([]);
@@ -375,13 +401,13 @@ export default function FriendsPage() {
   const [feedViewportHeight, setFeedViewportHeight] = useState<number | null>(null);
   const feedListRef = useRef<HTMLDivElement | null>(null);
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     setInfo(null);
 
     try {
-      const meData = (await fetchJson('/api/me')) as { id: string; username: string; avatarPath: string | null };
+      const meData = (await fetchJson('/api/me')) as MeSummary;
       setMe(meData || null);
 
       const mine = (await fetchJson('/api/workouts')) as Workout[];
@@ -390,23 +416,22 @@ export default function FriendsPage() {
       const fr = (await fetchJson('/api/friends')) as Friend[];
       setFriends(fr || []);
 
-      const req = (await fetchJson('/api/friends/requests')) as { incoming: PendingRequest[]; outgoing: PendingRequest[] };
+      const req = (await fetchJson('/api/friends/requests')) as FriendRequestsPayload;
       setIncomingRequests(req?.incoming || []);
       setOutgoingRequests(req?.outgoing || []);
 
       const byUser = (await fetchJson('/api/friends/workouts')) as Record<string, Workout[]>;
       setFriendWorkouts((byUser && typeof byUser === 'object') ? byUser : {});
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e) {
+      setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void loadAll();
+  }, [loadAll]);
 
   const loadFriendWorkoutReactions = useCallback(async (workoutIds: string[]) => {
     const ids = Array.from(new Set(workoutIds.filter(Boolean)));
@@ -419,8 +444,8 @@ export default function FriendsPage() {
       if (data && typeof data === 'object') {
         setFriendWorkoutReactions((prev) => ({ ...prev, ...data }));
       }
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e) {
+      setError(getErrorMessage(e));
     }
   }, []);
 
@@ -432,8 +457,7 @@ export default function FriendsPage() {
     }
     const exists = friends.some((f) => f.username === selectedFriend);
     if (!selectedFriend || !exists) setSelectedFriend(friends[0].username);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [friends]);
+  }, [friends, selectedFriend]);
 
   const handleAddFriend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -455,22 +479,23 @@ export default function FriendsPage() {
       });
 
       const text = await res.text();
-      let data: any = null;
+      let data: unknown = null;
       if (text) {
         try { data = JSON.parse(text); } catch {}
       }
 
       if (!res.ok) {
-        const base = data?.error || `Ошибка добавления друга (код ${res.status})`;
-        const details = data?.details || '';
+        const base = isJsonObject(data) && typeof data.error === 'string' ? data.error : `Ошибка добавления друга (код ${res.status})`;
+        const details = isJsonObject(data) && typeof data.details === 'string' ? data.details : '';
         throw new Error(details ? `${base}: ${details}` : base);
       }
 
       setNewUsername('');
-      setInfo(tt(`Запрос отправлен пользователю ${data.username}`));
+      const responseUsername = isJsonObject(data) && typeof data.username === 'string' ? data.username : username;
+      setInfo(tt(`Запрос отправлен пользователю ${responseUsername}`));
       await loadAll();
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -492,8 +517,8 @@ export default function FriendsPage() {
       }
       setInfo(tt(action === 'accept' ? 'Запрос в друзья принят' : 'Запрос отклонён'));
       await loadAll();
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -517,8 +542,8 @@ export default function FriendsPage() {
       }
       setInfo(tt('Исходящий запрос отменён'));
       await loadAll();
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -539,8 +564,8 @@ export default function FriendsPage() {
         throw new Error(details ? `${base}: ${details}` : base);
       }
       setFriends((prev) => prev.map((f) => (f.friendshipId === row.friendshipId ? { ...f, isFollowing: follow } : f)));
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -560,21 +585,21 @@ export default function FriendsPage() {
       });
 
       const text = await res.text();
-      let data: any = null;
+      let data: unknown = null;
       if (text) {
         try { data = JSON.parse(text); } catch {}
       }
 
       if (!res.ok) {
-        const base = data?.error || `Ошибка удаления друга (код ${res.status})`;
-        const details = data?.details || '';
+        const base = isJsonObject(data) && typeof data.error === 'string' ? data.error : `Ошибка удаления друга (код ${res.status})`;
+        const details = isJsonObject(data) && typeof data.details === 'string' ? data.details : '';
         throw new Error(details ? `${base}: ${details}` : base);
       }
 
       setInfo(tt(`Пользователь ${username} удалён из друзей`));
       await loadAll();
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -591,7 +616,7 @@ export default function FriendsPage() {
       });
 
       const text = await res.text();
-      let data: any = null;
+      let data: unknown = null;
       if (text) {
         try {
           data = JSON.parse(text);
@@ -599,17 +624,17 @@ export default function FriendsPage() {
       }
 
       if (!res.ok) {
-        const base = data?.error || `Ошибка реакции (код ${res.status})`;
+        const base = isJsonObject(data) && typeof data.error === 'string' ? data.error : `Ошибка реакции (код ${res.status})`;
         throw new Error(base);
       }
 
-      if (data?.workoutId === workoutId && data?.reaction) {
+      if (isJsonObject(data) && data.workoutId === workoutId && data.reaction) {
         setFriendWorkoutReactions((prev) => ({ ...prev, [workoutId]: data.reaction as WorkoutReactionPayload }));
       }
       setModalReactionPickerWorkoutId(null);
       setFeedReactionPickerWorkoutId(null);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e) {
+      setError(getErrorMessage(e));
     } finally {
       setReactingWorkoutId(null);
     }
@@ -618,7 +643,7 @@ export default function FriendsPage() {
   const myStatsAll = useMemo(() => calcStats(myWorkouts), [myWorkouts]);
   const myStatsByExercise = useMemo(() => calcStatsByExercise(myWorkouts), [myWorkouts]);
 
-  const friendRows = useMemo(() => {
+  const friendRows = useMemo<FriendStatsRow[]>(() => {
     return friends.map((f) => {
       const raw = friendWorkouts[f.username] || [];
       const statsAll = calcStats(raw);
@@ -627,19 +652,22 @@ export default function FriendsPage() {
     });
   }, [friends, friendWorkouts]);
 
-  const meRow = useMemo(() => {
+  const meRow = useMemo<TableRow>(() => {
     return {
-      key: '__me__',
-      username: 'Ты',
-      friendshipId: '__me__',
+      friend: {
+        username: 'Ты',
+        friendshipId: '__me__',
+        avatarPath: me?.avatarPath ?? null,
+        isFollowing: false,
+      },
       statsAll: myStatsAll,
       statsByExercise: myStatsByExercise,
       isMe: true,
     };
-  }, [myStatsAll, myStatsByExercise]);
+  }, [myStatsAll, myStatsByExercise, me?.avatarPath]);
 
   // Режим по умолчанию: Ты сверху + друзья по алфавиту
-  const defaultSorted = useMemo(() => {
+  const defaultSorted = useMemo<TableRow[]>(() => {
     const sortedFriends = [...friendRows].sort((a, b) =>
       (a.friend.username || '').localeCompare(b.friend.username || '', 'ru', { sensitivity: 'base' })
     );
@@ -651,15 +679,15 @@ export default function FriendsPage() {
   }, [friendRows, meRow]);
 
   // Сортировка по колонке: сортируются ВСЕ строки, включая "Ты"
-  const sortedAll = useMemo(() => {
+  const sortedAll = useMemo<TableRow[]>(() => {
     if (!sortKey) return defaultSorted;
 
-    const all = [
-      { ...meRow, friend: { username: 'Ты', friendshipId: '__me__' } as any, isMe: true },
+    const all: TableRow[] = [
+      meRow,
       ...friendRows.map((x) => ({ ...x, isMe: false })),
     ];
 
-    const getVal = (row: any, key: SortKey): string | number => {
+    const getVal = (row: TableRow, key: SortKey): string | number => {
       const s: Stats = row.statsAll;
       const uname = row.isMe ? 'Ты' : row.friend.username;
 
@@ -749,7 +777,7 @@ export default function FriendsPage() {
         ownerUsername: meLabel,
         ownerAvatarPath: me?.avatarPath ?? null,
         isMe: true,
-        occurredAt: new Date((w.time || w.date) as any).getTime(),
+        occurredAt: getWorkoutTimestamp(w),
       });
     }
 
@@ -761,7 +789,7 @@ export default function FriendsPage() {
           ownerUsername: f.username,
           ownerAvatarPath: f.avatarPath ?? null,
           isMe: false,
-          occurredAt: new Date((w.time || w.date) as any).getTime(),
+          occurredAt: getWorkoutTimestamp(w),
         });
       }
     }
@@ -776,12 +804,12 @@ export default function FriendsPage() {
     });
 
     return unique.slice(0, feedLimit);
-  }, [myWorkouts, me, friends, friendWorkouts, feedLimit]);
+  }, [myWorkouts, me, friends, friendWorkouts, feedLimit, tt]);
 
   const groupedFeedWorkouts = useMemo(
     () =>
       latestFeedWorkouts.reduce<Array<{ dayKey: string; items: FeedWorkoutItem[] }>>((acc, item) => {
-        const dayKey = normalizeDate(new Date((item.time || item.date) as any));
+        const dayKey = normalizeDate(getWorkoutDate(item));
         const last = acc[acc.length - 1];
         if (last && last.dayKey === dayKey) {
           last.items.push(item);
@@ -963,7 +991,7 @@ export default function FriendsPage() {
               </thead>
 
               <tbody>
-                {sortedAll.map((row: any) => {
+                {sortedAll.map((row) => {
                   const isMe = !!row.isMe;
 
                   const sBy: StatsByExercise = row.statsByExercise;
@@ -983,7 +1011,7 @@ export default function FriendsPage() {
                       <td style={{ ...tdCompact, ...stickyExerciseCell }}>
                         <div style={exerciseIconStack}>
                           {EXERCISE_ORDER.map((type) => (
-                            <img key={`${uname}-${type}`} src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={tableExerciseIcon} />
+                            <Image key={`${uname}-${type}`} src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={16} height={16} style={tableExerciseIcon} unoptimized />
                           ))}
                         </div>
                       </td>
@@ -1190,7 +1218,7 @@ export default function FriendsPage() {
                           </div>
                         </div>
 
-                        <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={feedTypeIcon} />
+                        <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={18} height={18} style={feedTypeIcon} unoptimized />
 
                         <div style={feedReps}>{formatExerciseValue(w.reps, type, true)}</div>
                       </div>
@@ -1355,7 +1383,7 @@ export default function FriendsPage() {
                           <div style={friendDayValues}>
                             {exerciseTotals.map(({ type, sum }) => (
                               <span key={type} style={friendTotalValue}>
-                                <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={friendTotalIcon} />
+                                <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={22} height={22} style={friendTotalIcon} unoptimized />
                                 <span>{sum}</span>
                               </span>
                             ))}
@@ -1369,7 +1397,7 @@ export default function FriendsPage() {
                 <div style={legendWrap}>
                   {EXERCISE_ORDER.map((type) => (
                     <div key={type} style={legendItem}>
-                      <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={legendIcon} />
+                      <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={20} height={20} style={legendIcon} unoptimized />
                       <span>{tt(exerciseLabel(type))}</span>
                     </div>
                   ))}
@@ -1438,7 +1466,7 @@ export default function FriendsPage() {
                     >
                       <div style={friendRowMain}>
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <img src={exerciseFeedIcon(workoutType)} alt={tt(exerciseLabel(workoutType))} style={friendWorkoutTypeIcon} />
+                          <Image src={exerciseFeedIcon(workoutType)} alt={tt(exerciseLabel(workoutType))} width={16} height={16} style={friendWorkoutTypeIcon} unoptimized />
                         </div>
                         <div>{formatTimeHHMM(w.time || w.date)}</div>
                         <div style={{ fontWeight: 900 }}>{formatExerciseValue(w.reps, workoutType, true)}</div>

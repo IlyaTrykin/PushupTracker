@@ -1,7 +1,8 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import {
@@ -107,6 +108,21 @@ type CreateNumericField =
   | 'durationWeeks'
   | 'ageYears'
   | 'weightKg';
+type ExerciseType = CreateForm['exerciseType'];
+type JsonObject = Record<string, unknown>;
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function isExerciseType(value: string): value is ExerciseType {
+  return EXERCISE_ORDER.includes(value as ExerciseType);
+}
+
+function isSex(value: string): value is CreateForm['sex'] {
+  return ['male', 'female', 'other', 'unknown'].includes(value);
+}
 
 function parseDraftNumber(raw: string | undefined, fallback: number): number {
   if (raw == null) return fallback;
@@ -120,13 +136,14 @@ function parseDraftNumber(raw: string | undefined, fallback: number): number {
 async function fetchJson(url: string, init?: RequestInit) {
   const res = await fetch(url, { ...init, credentials: 'include', cache: 'no-store' });
   const text = await res.text();
-  let data: any = null;
+  let data: JsonObject | null = null;
   if (text) {
     try {
-      data = JSON.parse(text);
+      const parsed = JSON.parse(text);
+      data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as JsonObject) : null;
     } catch {}
   }
-  if (!res.ok) throw new Error(data?.error || `Ошибка (код ${res.status})`);
+  if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : `Ошибка (код ${res.status})`);
   return data;
 }
 
@@ -328,7 +345,7 @@ function suggestedDurationWeeks(args: {
 export default function ProgramPage() {
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
-  const tt = (input: string) => t(locale, input);
+  const tt = useCallback((input: string) => t(locale, input), [locale]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -357,7 +374,7 @@ export default function ProgramPage() {
     sex: 'unknown',
   });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -370,19 +387,18 @@ export default function ProgramPage() {
         ...prev,
         ageYears: data.profileHints?.ageYears ?? prev.ageYears,
         weightKg: data.profileHints?.weightKg ?? prev.weightKg,
-        sex: (data.profileHints?.sex as any) || prev.sex,
+        sex: data.profileHints?.sex && isSex(data.profileHints.sex) ? data.profileHints.sex : prev.sex,
       }));
-    } catch (e: any) {
-      setError(tt(e?.message || 'Не удалось загрузить программу'));
+    } catch (e) {
+      setError(tt(getErrorMessage(e) || 'Не удалось загрузить программу'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [tt]);
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void load();
+  }, [load]);
 
   const resolvedForm = useMemo(() => ({
     ...form,
@@ -530,8 +546,8 @@ export default function ProgramPage() {
       setFormDrafts({});
       setInfo(tt('Программа создана'));
       await load();
-    } catch (e: any) {
-      setError(tt(e?.message || 'Не удалось создать программу'));
+    } catch (e) {
+      setError(tt(getErrorMessage(e) || 'Не удалось создать программу'));
     } finally {
       setBusy(false);
     }
@@ -548,8 +564,8 @@ export default function ProgramPage() {
       await fetchJson(`/api/program/${programId}/deactivate`, { method: 'POST' });
       setInfo(tt('Программа прервана'));
       await load();
-    } catch (e: any) {
-      setError(tt(e?.message || 'Не удалось деактивировать программу'));
+    } catch (e) {
+      setError(tt(getErrorMessage(e) || 'Не удалось деактивировать программу'));
     } finally {
       setBusy(false);
     }
@@ -711,12 +727,15 @@ export default function ProgramPage() {
                       {exerciseTypes.length ? (
                         <div style={{ display: 'flex', gap: 'clamp(4px, 0.5vw, 8px)', flexWrap: 'wrap', marginLeft: -1 }}>
                           {exerciseTypes.map((exerciseType) => (
-                            <img
+                            <Image
                               key={exerciseType}
                               src={exerciseFeedIcon(exerciseType)}
                               alt={exerciseLabel(exerciseType)}
+                              width={24}
+                              height={24}
                               style={calendarExerciseIcon}
                               title={exerciseLabel(exerciseType)}
+                              unoptimized
                             />
                           ))}
                         </div>
@@ -752,7 +771,7 @@ export default function ProgramPage() {
               <div style={calendarLegendWrap}>
                 {EXERCISE_ORDER.map((exerciseType) => (
                   <div key={exerciseType} style={calendarLegendItem}>
-                    <img src={exerciseFeedIcon(exerciseType)} alt={tt(exerciseLabel(exerciseType))} style={calendarLegendIcon} />
+                    <Image src={exerciseFeedIcon(exerciseType)} alt={tt(exerciseLabel(exerciseType))} width={24} height={24} style={calendarLegendIcon} unoptimized />
                     <span>{tt(exerciseLabel(exerciseType))}</span>
                   </div>
                 ))}
@@ -916,7 +935,11 @@ export default function ProgramPage() {
                 <label>{tt('1) Выберите упражнение')}</label>
                 <select
                   value={form.exerciseType}
-                  onChange={(e) => setForm((f) => ({ ...f, exerciseType: e.target.value as any }))}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    if (!isExerciseType(nextValue)) return;
+                    setForm((f) => ({ ...f, exerciseType: nextValue }));
+                  }}
                   style={inputStyle}
                 >
                   <option value="pushups">{tt('Отжимания')}</option>

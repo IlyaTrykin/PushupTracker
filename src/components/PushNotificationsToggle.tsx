@@ -11,6 +11,10 @@ type PreferenceRow = {
   emailEnabled: boolean;
 };
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function resolveEventLabel(
   eventType: string,
   fallbackLabel: string,
@@ -93,8 +97,8 @@ export default function PushNotificationsToggle() {
       if (!res.ok) throw new Error(data.error || messages.push.saveError);
 
       setRows(Array.isArray(data.items) ? data.items : rows.map((r) => (r.eventType === row.eventType ? { ...r, ...patch } : r)));
-    } catch (e: any) {
-      setMessage(e?.message || messages.push.saveError);
+    } catch (e) {
+      setMessage(getErrorMessage(e, messages.push.saveError));
     } finally {
       setSavingEvent('');
     }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 
+type JsonObject = Record<string, unknown>;
 
 export async function POST(request: NextRequest) {
   let userId: string;
@@ -11,8 +12,11 @@ export async function POST(request: NextRequest) {
   }
 
   const text = await request.text();
-  let body: any = {};
-  try { body = text ? JSON.parse(text) : {}; } catch {}
+  let body: JsonObject = {};
+  try {
+    const parsed = text ? JSON.parse(text) : {};
+    body = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as JsonObject) : {};
+  } catch {}
 
   const id = typeof body.id === 'string' ? body.id : null;
   const all = body.all === true;
@@ -23,6 +27,8 @@ export async function POST(request: NextRequest) {
     await prisma.notification.updateMany({ where: { userId, isRead: false }, data: { isRead: true } });
     return NextResponse.json({ ok: true });
   }
+
+  if (!id) return NextResponse.json({ error: 'Нужно передать id' }, { status: 400 });
 
   const n = await prisma.notification.findUnique({ where: { id } });
   if (!n || n.userId !== userId) return NextResponse.json({ error: 'Не найдено' }, { status: 404 });

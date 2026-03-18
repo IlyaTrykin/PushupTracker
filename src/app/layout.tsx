@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { cookies } from 'next/headers';
 import { Geist, Geist_Mono } from 'next/font/google';
 import Script from 'next/script';
 import './globals.css';
@@ -8,6 +9,7 @@ import RegisterSW from '@/components/RegisterSW';
 import ScreenWakeLock from '@/components/ScreenWakeLock';
 import { LocaleProvider } from '@/i18n/provider';
 import { getRequestLocale } from '@/i18n/server';
+import { getAuthUserFromSessionToken } from '@/lib/auth';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -99,12 +101,14 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const locale = await getRequestLocale();
+  const cookieStore = await cookies();
+  const initialUser = await getAuthUserFromSessionToken(cookieStore.get('session')?.value);
 
   return (
     <html lang={locale}>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <LocaleProvider initialLocale={locale}>
-          <AuthProvider>
+          <AuthProvider initialUser={initialUser}>
             <Script id="sw-recovery" strategy="beforeInteractive">
               {swRecoveryScript}
             </Script>

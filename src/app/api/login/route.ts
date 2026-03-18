@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
-import { setSessionCookie } from '@/lib/auth';
 import crypto from 'crypto';
 import { normalizeLocale } from '@/i18n/locale';
 import { setPreferredLocaleCookie } from '@/i18n/server';
@@ -36,13 +35,6 @@ export async function POST(request: Request) {
     }
 
     if (user.deletedAt) {
-      return NextResponse.json(
-        { error: 'Профиль удалён. Обратитесь к администратору для восстановления.' },
-        { status: 403 },
-      );
-    }
-
-    if ((user as any).deletedAt) {
       return NextResponse.json(
         { error: 'Профиль удалён. Обратитесь к администратору для восстановления.' },
         { status: 403 },

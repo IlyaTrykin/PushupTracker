@@ -20,10 +20,10 @@ const MESSAGE_OVERRIDES: Record<Locale, DeepPartial<Messages>> = {
   en: enMessages,
 };
 
-function mergeMessages<T extends Record<string, any>>(base: T, override?: DeepPartial<T>): T {
+function mergeMessages<T extends Record<string, unknown>>(base: T, override?: DeepPartial<T>): T {
   if (!override) return base;
 
-  const out: Record<string, any> = Array.isArray(base) ? [...base] : { ...base };
+  const out = (Array.isArray(base) ? [...base] : { ...base }) as T;
 
   for (const key of Object.keys(override) as Array<keyof T>) {
     const baseValue = base[key];
@@ -39,12 +39,12 @@ function mergeMessages<T extends Record<string, any>>(base: T, override?: DeepPa
       !Array.isArray(baseValue) &&
       !Array.isArray(overrideValue);
 
-    out[key as string] = isObject
-      ? mergeMessages(baseValue as Record<string, any>, overrideValue as DeepPartial<Record<string, any>>)
+    (out as Record<string, unknown>)[key as string] = isObject
+      ? mergeMessages(baseValue as Record<string, unknown>, overrideValue as DeepPartial<Record<string, unknown>>)
       : overrideValue;
   }
 
-  return out as T;
+  return out;
 }
 
 export function getMessages(locale: Locale): Messages {

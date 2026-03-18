@@ -1,8 +1,18 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError, invalidateSession } from '@/lib/auth';
 import { normalizeLocale } from '@/i18n/locale';
 import { setPreferredLocaleCookie } from '@/i18n/server';
+
+type ProfileHistoryChanges = Record<string, Prisma.InputJsonValue | null>;
+
+function getErrorCode(error: unknown) {
+  if (typeof error === 'object' && error && 'code' in error) {
+    return String((error as { code?: unknown }).code ?? '');
+  }
+  return '';
+}
 
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -50,7 +60,7 @@ export async function GET(request: Request) {
 
     if (!u || u.deletedAt) return jsonError('UNAUTHORIZED', 401);
     return NextResponse.json(u);
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) return jsonError(e.message, e.status);
     return jsonError('INTERNAL_ERROR', 500);
   }
@@ -89,8 +99,8 @@ export async function PATCH(request: Request) {
 
     if (!current || current.deletedAt) return jsonError('UNAUTHORIZED', 401);
 
-    const data: any = {};
-    const changes: any = {};
+    const data: Prisma.UserUpdateInput = {};
+    const changes: ProfileHistoryChanges = {};
 
     if (nextUsername !== undefined) {
       if (!nextUsername) return jsonError('Имя обязательно');
@@ -121,7 +131,7 @@ export async function PATCH(request: Request) {
     if (nextBirthDate !== undefined) {
       const cur = current.birthDate ? current.birthDate.toISOString().slice(0, 10) : null;
       const nxt = nextBirthDate ? nextBirthDate.toISOString().slice(0, 10) : null;
-      if (cur != nxt) {
+      if (cur !== nxt) {
         data.birthDate = nextBirthDate;
         changes.birthDate = { from: cur, to: nxt };
       }
@@ -173,9 +183,9 @@ export async function PATCH(request: Request) {
     const res = NextResponse.json({ ok: true, user: updated });
     setPreferredLocaleCookie(res, normalizeLocale(updated.language), request);
     return res;
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) return jsonError(e.message, e.status);
-    if (String(e?.code || '') === 'P2002') return jsonError('Имя уже занято', 409);
+    if (getErrorCode(e) === 'P2002') return jsonError('Имя уже занято', 409);
     return jsonError('INTERNAL_ERROR', 500);
   }
 }
@@ -202,7 +212,7 @@ export async function DELETE(request: Request) {
     const res = NextResponse.json({ ok: true });
     res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 0 });
     return res;
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) return jsonError(e.message, e.status);
     return jsonError('INTERNAL_ERROR', 500);
   }

@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
+
+type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+type WorkoutResponseItem = {
+  id: string;
+  reps: number;
+  date: string;
+  time: string | null;
+  exerciseType: ExerciseType;
+};
 
 const ALLOWED_EXERCISES = new Set(['pushups', 'pullups', 'crunches', 'squats', 'plank']);
 
@@ -9,12 +19,21 @@ function jsonError(message: string, status: number, details?: string) {
   return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
 }
 
-function getExerciseTypeFromQuery(request: NextRequest): 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank' | null {
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function toIsoString(value: Date | string) {
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function getExerciseTypeFromQuery(request: NextRequest): ExerciseType | null {
   const raw = request.nextUrl.searchParams.get('exerciseType');
   if (!raw) return null;
   const et = raw.trim();
   if (!ALLOWED_EXERCISES.has(et)) return null;
-  return et as any;
+  return et as ExerciseType;
 }
 
 export async function GET(request: NextRequest) {
@@ -48,7 +67,7 @@ export async function GET(request: NextRequest) {
 
     const idToUsername = new Map(users.map((u) => [u.id, u.username]));
 
-    const where: any = { userId: { in: userIds } };
+    const where: Prisma.WorkoutWhereInput = { userId: { in: userIds } };
     if (exerciseType) where.exerciseType = exerciseType;
 
     const workouts = await prisma.workout.findMany({
@@ -57,7 +76,7 @@ export async function GET(request: NextRequest) {
       select: { id: true, userId: true, reps: true, date: true, time: true, exerciseType: true },
     });
 
-    const byUser: Record<string, any[]> = {};
+    const byUser: Record<string, WorkoutResponseItem[]> = {};
     for (const w of workouts) {
       const username = idToUsername.get(w.userId) || w.userId;
       if (!byUser[username]) byUser[username] = [];
@@ -65,15 +84,15 @@ export async function GET(request: NextRequest) {
       byUser[username].push({
         id: w.id,
         reps: w.reps,
-        date: (w.date as any) instanceof Date ? (w.date as any).toISOString() : String(w.date),
-        time: w.time ? ((w.time as any) instanceof Date ? (w.time as any).toISOString() : String(w.time)) : null,
-        exerciseType: w.exerciseType,
+        date: toIsoString(w.date),
+        time: w.time ? toIsoString(w.time) : null,
+        exerciseType: w.exerciseType as ExerciseType,
       });
     }
 
     return NextResponse.json(byUser);
-  } catch (e: any) {
+  } catch (e) {
     console.error('FRIENDS WORKOUTS GET ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (GET /api/friends/workouts)', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (GET /api/friends/workouts)', 500, getErrorMessage(e));
   }
 }

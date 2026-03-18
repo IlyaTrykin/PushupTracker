@@ -35,18 +35,49 @@ type ProgramDetail = {
   sessions: TrainingSession[];
 };
 
+type JsonObject = Record<string, unknown>;
+
+type ApiError = Error & {
+  code?: string;
+  status?: number;
+};
+
+type WakeLockSentinelLike = {
+  release: () => Promise<void>;
+  addEventListener?: (type: 'release', listener: () => void) => void;
+};
+
+type NavigatorWithWakeLock = Navigator & {
+  wakeLock?: {
+    request?: (type: 'screen') => Promise<WakeLockSentinelLike>;
+  };
+};
+
+type WindowWithWebkitAudioContext = Window & {
+  webkitAudioContext?: typeof AudioContext;
+};
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null;
+}
+
 async function fetchJson(url: string, init?: RequestInit) {
   const res = await fetch(url, { ...init, credentials: 'include', cache: 'no-store' });
   const text = await res.text();
-  let data: any = null;
+  let data: JsonObject | null = null;
   if (text) {
     try {
-      data = JSON.parse(text);
+      data = JSON.parse(text) as JsonObject;
     } catch {}
   }
   if (!res.ok) {
-    const err: any = new Error(data?.error || `Ошибка (код ${res.status})`);
-    err.code = data?.code;
+    const err = new Error(typeof data?.error === 'string' ? data.error : `Ошибка (код ${res.status})`) as ApiError;
+    err.code = typeof data?.code === 'string' ? data.code : undefined;
     err.status = res.status;
     throw err;
   }
@@ -110,7 +141,7 @@ export default function ProgramSessionPage() {
   const [done, setDone] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastBeepSecondRef = useRef<number | null>(null);
-  const wakeLockRef = useRef<any>(null);
+  const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
   const prepareAudioRef = useRef<HTMLAudioElement | null>(null);
   const startAudioRef = useRef<HTMLAudioElement | null>(null);
   const prevRestSecondsRef = useRef(0);
@@ -131,6 +162,8 @@ export default function ProgramSessionPage() {
     if (!currentSet || !isPlank) return 0;
     return Math.max(0, currentSet.targetReps - plankSecondsLeft);
   }, [currentSet, isPlank, plankSecondsLeft]);
+  const currentSetId = currentSet?.id ?? null;
+  const currentTargetReps = currentSet?.targetReps ?? 0;
 
   const load = async (forceStartEarly = false) => {
     if (!sessionId) return;
@@ -146,7 +179,8 @@ export default function ProgramSessionPage() {
           }
         : { method: 'POST' };
       const res = await fetchJson(`/api/program/session/${sessionId}/start`, init);
-      const p = (res.program || null) as ProgramDetail | null;
+      const response = isJsonObject(res) ? res : null;
+      const p = response && isJsonObject(response.program) ? (response.program as ProgramDetail) : null;
       setProgram(p);
 
       const s = p?.sessions.find((x) => x.id === sessionId) || null;
@@ -163,17 +197,18 @@ export default function ProgramSessionPage() {
         const target = s.sets[firstIdx]?.targetReps ?? 1;
         setActualRepsInput(String(target));
       }
-    } catch (e: any) {
-      if (e?.code === 'REST_PERIOD_NOT_FINISHED' && !forceStartEarly) {
+    } catch (e: unknown) {
+      const apiError = e as ApiError;
+      if (apiError.code === 'REST_PERIOD_NOT_FINISHED' && !forceStartEarly) {
         const ok = window.confirm(
-          `${e?.message || messages.programSession.confirmStartEarly.title}\n\n${messages.programSession.confirmStartEarly.body}`,
+          `${getErrorMessage(e, messages.programSession.confirmStartEarly.title)}\n\n${messages.programSession.confirmStartEarly.body}`,
         );
         if (ok) {
           await load(true);
           return;
         }
       }
-      setError(e?.message || messages.programSession.errors.openFailed);
+      setError(getErrorMessage(e, messages.programSession.errors.openFailed));
     } finally {
       setLoading(false);
     }
@@ -191,14 +226,14 @@ export default function ProgramSessionPage() {
   }, [restSeconds, restPaused]);
 
   useEffect(() => {
-    if (!isPlank || !currentSet) {
+    if (!isPlank || currentSetId == null) {
       setPlankActive(false);
       setPlankSecondsLeft(0);
       return;
     }
     setPlankActive(false);
-    setPlankSecondsLeft(Math.max(1, currentSet.targetReps));
-  }, [currentSet?.id, currentSet?.targetReps, isPlank]);
+    setPlankSecondsLeft(Math.max(1, currentTargetReps));
+  }, [currentSetId, currentTargetReps, isPlank]);
 
   useEffect(() => {
     if (!isPlank || !plankActive || plankSecondsLeft <= 0 || saving) return;
@@ -220,7 +255,7 @@ export default function ProgramSessionPage() {
     if (document.visibilityState !== 'visible') return;
     if (wakeLockRef.current) return;
 
-    const wakeLockApi = (navigator as any)?.wakeLock;
+    const wakeLockApi = (navigator as NavigatorWithWakeLock).wakeLock;
     if (!wakeLockApi?.request) return;
 
     try {
@@ -277,7 +312,7 @@ export default function ProgramSessionPage() {
 
   const primeAudioPlayback = useCallback(async () => {
     if (typeof window !== 'undefined') {
-      const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
+      const AudioCtor = window.AudioContext || (window as WindowWithWebkitAudioContext).webkitAudioContext;
       if (AudioCtor) {
         if (!audioContextRef.current) audioContextRef.current = new AudioCtor();
         if (audioContextRef.current.state === 'suspended') {
@@ -457,12 +492,12 @@ export default function ProgramSessionPage() {
       const nextSet = session.sets[currentIdx + 1];
       if (nextSet) setActualRepsInput(String(nextSet.targetReps));
       setInfo(formatText(messages.programSession.set.saved, { setNumber: currentSet.setNumber }));
-    } catch (e: any) {
-      setError(e?.message || messages.programSession.errors.saveSetFailed);
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, messages.programSession.errors.saveSetFailed));
     } finally {
       setSaving(false);
     }
-  }, [session, currentSet, actualRepsInput, program?.exerciseType, locale, messages.programSession.errors.invalidReps, messages.programSession.errors.saveSetFailed, messages.programSession.complete.info, messages.programSession.set.saved, currentIdx]);
+  }, [session, currentSet, actualRepsInput, program?.exerciseType, locale, messages.programSession.errors.invalidReps, messages.programSession.errors.saveSetFailed, messages.programSession.complete.info, messages.programSession.set.saved, currentIdx, primeAudioPlayback]);
 
   useEffect(() => {
     if (!isPlank || !plankActive || plankSecondsLeft !== 0 || saving || !currentSet) return;

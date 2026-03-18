@@ -7,6 +7,11 @@ type WakeLockSentinelLike = {
   release: () => Promise<void>;
   addEventListener?: (type: string, listener: () => void) => void;
 };
+type WakeLockNavigator = Navigator & {
+  wakeLock?: {
+    request: (type: 'screen') => Promise<WakeLockSentinelLike>;
+  };
+};
 
 export default function ScreenWakeLock() {
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
@@ -24,7 +29,7 @@ export default function ScreenWakeLock() {
     if (typeof document === 'undefined') return;
     if (document.visibilityState !== 'visible') return;
 
-    const wakeLockApi = (navigator as any)?.wakeLock;
+    const wakeLockApi = (navigator as WakeLockNavigator).wakeLock;
     if (!wakeLockApi?.request) return;
     if (wakeLockRef.current && !wakeLockRef.current.released) return;
 

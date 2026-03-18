@@ -50,23 +50,8 @@ export function LocaleProvider({
   }, []);
 
   useEffect(() => {
-    const preferred = (() => {
-      try {
-        const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
-        if (saved) return normalizeLocale(saved);
-      } catch {}
-
-      return normalizeLocale(navigator.language);
-    })();
-
-    if (preferred !== locale) {
-      setLocaleState(preferred);
-      persistLocale(preferred);
-      return;
-    }
-
     persistLocale(locale);
-  }, []);
+  }, [locale]);
 
   const value = useMemo<LocaleContextValue>(() => ({
     locale,
