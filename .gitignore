@@ -1,17 +1,17 @@
-node_modules
-.next
+node_modules/
+.next/
+.cache/
+logs/
+tmp/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
 .DS_Store
 __MACOSX
-.env
-.env.*
-!.env.example
-*.tar.gz
-*.sql
-*.dump
-*.bak
-*.broken
-*.log
-!prisma/migrations/**/migration.sql
 
 # secrets
 .env
@@ -19,14 +19,17 @@ __MACOSX
 !.env.example
 
 # backups / bundles / archives
+backups/
+*.bak
 *.bak*
-*.tgz
-*.tar.gz
+*.broken
+*.dump
+*.log
 *.sha256
+*.sql
+*.tar.gz
+*.tgz
+!prisma/migrations/**/migration.sql
 
-# node/next artifacts
-node_modules/
-.next/
-.cache/
-logs/
-tmp/
+# local import data
+import/*.xlsx
