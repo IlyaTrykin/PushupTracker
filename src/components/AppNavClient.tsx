@@ -58,6 +58,7 @@ export default function AppNavClient() {
   const { locale, messages, setLocale } = useI18n();
   const { user: me, setUser, refreshUser } = useAuth();
   const pathname = usePathname();
+  const isAuthRoute = pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
   const pageTitle = useMemo(() => resolvePageTitle(pathname, messages.nav.pageTitles), [messages.nav.pageTitles, pathname]);
   const [open, setOpen] = useState(false);
   const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
@@ -146,6 +147,8 @@ export default function AppNavClient() {
     const active = pathname === href || (href !== '/' && pathname?.startsWith(href));
     return `app-drawer__btn${active ? ' app-drawer__btn--active' : ''}`;
   };
+
+  if (isAuthRoute) return null;
 
   return (
     <>

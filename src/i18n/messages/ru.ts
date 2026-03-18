@@ -60,6 +60,7 @@ export const ruMessages = {
     login: {
       username: 'Имя пользователя',
       password: 'Пароль',
+      subtitle: 'Тренировки, прогресс и челленджи с друзьями в одном приложении.',
       forgotPassword: 'Забыли пароль?',
       submit: 'Войти',
       register: 'Регистрация',

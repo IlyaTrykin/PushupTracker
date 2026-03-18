@@ -2,6 +2,7 @@ import type { DeepPartial, Messages } from '@/i18n/messages';
 
 export const enMessages: DeepPartial<Messages> = {
   common: {
+    appName: 'Pushup Tracker',
     guest: 'Guest',
     language: 'Language',
     loading: 'Loading…',
@@ -61,6 +62,7 @@ export const enMessages: DeepPartial<Messages> = {
     login: {
       username: 'Username',
       password: 'Password',
+      subtitle: 'Workouts, progress, and challenges with friends in one app.',
       forgotPassword: 'Forgot password?',
       submit: 'Log in',
       register: 'Register',
