@@ -15,6 +15,13 @@ type Workout = {
   exerciseType?: string;
 };
 
+type WorkoutReward = {
+  id: string;
+  message: string;
+  minPoints: number;
+  earnedPoints: number;
+};
+
 type DayAggregate = {
   items: Workout[];
   byExercise: Map<string, number>;
@@ -70,6 +77,21 @@ const EXERCISE_LABELS: Record<string, string> = {
 
 function toIsoTime(date: string, time: string) {
   return new Date(`${date}T${time}:00`).toISOString();
+}
+
+function readWorkoutReward(data: unknown): WorkoutReward | null {
+  if (!isJsonObject(data) || !isJsonObject(data.reward)) return null;
+  const reward = data.reward;
+  if (typeof reward.message !== 'string') return null;
+  const minPoints = Number(reward.minPoints);
+  const earnedPoints = Number(reward.earnedPoints);
+  if (!Number.isFinite(minPoints) || !Number.isFinite(earnedPoints)) return null;
+  return {
+    id: String(reward.id || ''),
+    message: reward.message,
+    minPoints,
+    earnedPoints,
+  };
 }
 
 function normalizeDate(d: Date) {
@@ -449,14 +471,13 @@ export default function DashboardPage() {
 
   const submitWorkout = useCallback(async (value: number, selectedType: ExerciseType) => {
     const timeToSend = timeTouched ? time : normalizeTime(new Date());
-    await fetchJsonSafe('/api/workouts', {
+    const data = await fetchJsonSafe('/api/workouts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reps: value, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType }),
     });
     setInfo(tt('Добавлено'));
-    const toast = value >= 50 ? 'МАШИНА!!!! 💪🎉' : value >= 21 ? '👍👍' : '👍';
-    setToastMessage(toast);
+    setToastMessage(readWorkoutReward(data)?.message ?? null);
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);

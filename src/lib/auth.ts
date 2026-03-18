@@ -16,6 +16,7 @@ export type AuthUser = {
   username: string;
   email: string | null;
   isAdmin: boolean;
+  avatarPath: string | null;
   language: string;
 };
 
@@ -30,6 +31,7 @@ const authUserSelect = {
   username: true,
   email: true,
   isAdmin: true,
+  avatarPath: true,
   language: true,
   deletedAt: true,
 } as const;
@@ -61,6 +63,7 @@ async function getAuthUserByToken(token: string): Promise<AuthUser | null> {
     username: session.user.username,
     email: session.user.email ?? null,
     isAdmin: session.user.isAdmin,
+    avatarPath: session.user.avatarPath ?? null,
     language: session.user.language || 'ru',
   };
 }

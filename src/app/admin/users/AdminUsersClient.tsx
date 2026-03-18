@@ -17,6 +17,16 @@ type UserRow = {
 
 type RowState = UserRow & { dirty?: boolean; saving?: boolean; sendingReset?: boolean; uploadingAvatar?: boolean };
 
+type RewardRow = {
+  id: string;
+  message: string;
+  minPoints: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type RewardRowState = RewardRow & { dirty?: boolean; saving?: boolean; deleting?: boolean };
+
 function fmtDate(v: string | null | undefined, locale: string): string {
   if (!v) return '—';
   const d = new Date(v);
@@ -65,6 +75,7 @@ export default function AdminUsersClient() {
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
   const [rows, setRows] = useState<RowState[]>([]);
+  const [rewardRows, setRewardRows] = useState<RewardRowState[]>([]);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -72,20 +83,28 @@ export default function AdminUsersClient() {
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newIsAdmin, setNewIsAdmin] = useState(false);
+  const [newRewardMessage, setNewRewardMessage] = useState('');
+  const [newRewardMinPoints, setNewRewardMinPoints] = useState('0.1');
 
   const sorted = useMemo(() => [...rows].sort((a, b) => a.email.localeCompare(b.email, 'ru')), [rows]);
+  const sortedRewards = useMemo(() => [...rewardRows].sort((a, b) => a.minPoints - b.minPoints), [rewardRows]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    const res = await fetch('/api/admin/users', { cache: 'no-store' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(tt(data.error || 'Ошибка загрузки'));
+    const [usersRes, rewardsRes] = await Promise.all([
+      fetch('/api/admin/users', { cache: 'no-store' }),
+      fetch('/api/admin/workout-rewards', { cache: 'no-store' }),
+    ]);
+    const usersData = await usersRes.json().catch(() => ({}));
+    const rewardsData = await rewardsRes.json().catch(() => ({}));
+
+    if (!usersRes.ok) {
+      setError(tt(usersData.error || 'Ошибка загрузки'));
       setRows([]);
     } else {
       setRows(
-        (data.users || []).map((u: UserRow) => ({
+        (usersData.users || []).map((u: UserRow) => ({
           ...u,
           dirty: false,
           saving: false,
@@ -94,6 +113,21 @@ export default function AdminUsersClient() {
         })),
       );
     }
+
+    if (!rewardsRes.ok) {
+      setError((prev) => prev || tt(rewardsData.error || 'Ошибка загрузки поощрений'));
+      setRewardRows([]);
+    } else {
+      setRewardRows(
+        (rewardsData.rewards || []).map((reward: RewardRow) => ({
+          ...reward,
+          dirty: false,
+          saving: false,
+          deleting: false,
+        })),
+      );
+    }
+
     setLoading(false);
   }, [tt]);
 
@@ -103,6 +137,10 @@ export default function AdminUsersClient() {
 
   function updateRow(id: string, patch: Partial<UserRow>) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch, dirty: true } : r)));
+  }
+
+  function updateRewardRow(id: string, patch: Partial<RewardRow>) {
+    setRewardRows((prev) => prev.map((reward) => (reward.id === id ? { ...reward, ...patch, dirty: true } : reward)));
   }
 
   async function createUser() {
@@ -127,6 +165,27 @@ export default function AdminUsersClient() {
     setNewUsername('');
     setNewPassword('');
     setNewIsAdmin(false);
+    await load();
+  }
+
+  async function createReward() {
+    setError('');
+    const res = await fetch('/api/admin/workout-rewards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: newRewardMessage,
+        minPoints: newRewardMinPoints,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(tt(data.error || 'Ошибка создания поощрения'));
+      return;
+    }
+
+    setNewRewardMessage('');
+    setNewRewardMinPoints('0.1');
     await load();
   }
 
@@ -155,6 +214,30 @@ export default function AdminUsersClient() {
     await load();
   }
 
+  async function saveRewardRow(r: RewardRowState) {
+    setError('');
+    setRewardRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, saving: true } : x)));
+
+    const res = await fetch('/api/admin/workout-rewards', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: r.id,
+        message: r.message,
+        minPoints: r.minPoints,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(tt(data.error || 'Ошибка сохранения поощрения'));
+      setRewardRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, saving: false } : x)));
+      return;
+    }
+
+    await load();
+  }
+
   async function deleteRow(id: string) {
     if (!window.confirm(tt('Удалить пользователя?'))) return;
     setError('');
@@ -166,6 +249,24 @@ export default function AdminUsersClient() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       setError(tt(data.error || 'Ошибка удаления'));
+      return;
+    }
+    await load();
+  }
+
+  async function deleteRewardRow(id: string) {
+    if (!window.confirm(tt('Удалить поощрение?'))) return;
+    setError('');
+    setRewardRows((prev) => prev.map((x) => (x.id === id ? { ...x, deleting: true } : x)));
+    const res = await fetch('/api/admin/workout-rewards', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(tt(data.error || 'Ошибка удаления поощрения'));
+      setRewardRows((prev) => prev.map((x) => (x.id === id ? { ...x, deleting: false } : x)));
       return;
     }
     await load();
@@ -243,7 +344,7 @@ export default function AdminUsersClient() {
     <div className="admin-users-wrap">
       <div className="admin-users-head">
         <div>
-          <p>{tt('Управление профилями, правами доступа и паролями.')}</p>
+          <p>{tt('Управление профилями, правами доступа, паролями и поощрениями.')}</p>
           <p className="muted">{tt('На узких экранах таблица прокручивается горизонтально.')}</p>
         </div>
         <button className="btn btn-secondary" onClick={load}>{tt('Обновить')}</button>
@@ -270,6 +371,85 @@ export default function AdminUsersClient() {
         </div>
         <div>
           <button className="btn" onClick={createUser}>{tt('Создать')}</button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>{tt('Поощрения за подход')}</h2>
+        <p>{tt('Поощрение выбирается по максимальному порогу, который не превышает баллы за подход.')}</p>
+        <p className="muted">{tt('Баллы: 1 отжимание = 1, 1 подтягивание = 3, 1 приседание = 0.7, 1 скручивание = 0.5, 10 секунд планки = 1.')}</p>
+
+        <div className="reward-create-grid">
+          <input
+            className="text-input"
+            placeholder={tt('Текст поощрения')}
+            value={newRewardMessage}
+            onChange={(e) => setNewRewardMessage(e.target.value)}
+          />
+          <input
+            className="text-input"
+            type="number"
+            min="0"
+            step="0.1"
+            placeholder={tt('Минимум баллов')}
+            value={newRewardMinPoints}
+            onChange={(e) => setNewRewardMinPoints(e.target.value)}
+          />
+          <button className="btn" onClick={createReward}>{tt('Добавить поощрение')}</button>
+        </div>
+
+        <div className="users-table-wrap">
+          <table className="users-table reward-table">
+            <thead>
+              <tr>
+                <th>{tt('Порог, баллы')}</th>
+                <th>{tt('Текст')}</th>
+                <th>{tt('Обновлено')}</th>
+                <th>{tt('Действия')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRewards.map((reward) => (
+                <tr key={reward.id}>
+                  <td className="reward-points-cell">
+                    <input
+                      className="text-input"
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={String(reward.minPoints)}
+                      onChange={(e) => updateRewardRow(reward.id, { minPoints: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className="text-input"
+                      value={reward.message}
+                      onChange={(e) => updateRewardRow(reward.id, { message: e.target.value })}
+                    />
+                  </td>
+                  <td>{fmtDate(reward.updatedAt, localeTag)}</td>
+                  <td>
+                    <div className="actions-cell">
+                      <button className="btn" disabled={!reward.dirty || !!reward.saving || !!reward.deleting} onClick={() => saveRewardRow(reward)}>
+                        {reward.saving ? tt('Сохранение...') : tt('Сохранить')}
+                      </button>
+                      <button className="btn btn-danger" disabled={!!reward.saving || !!reward.deleting} onClick={() => deleteRewardRow(reward.id)}>
+                        {reward.deleting ? tt('Удаление...') : tt('Удалить')}
+                      </button>
+                    </div>
+                    <div className="muted">ID: {reward.id}</div>
+                  </td>
+                </tr>
+              ))}
+
+              {!sortedRewards.length ? (
+                <tr>
+                  <td colSpan={4} className="empty-row">{tt('Поощрений пока нет.')}</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -402,6 +582,12 @@ export default function AdminUsersClient() {
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 10px;
         }
+        .reward-create-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 2fr) minmax(180px, 220px) auto;
+          gap: 10px;
+          align-items: end;
+        }
         .text-input {
           width: 100%;
           border: 1px solid #d1d5db;
@@ -441,6 +627,9 @@ export default function AdminUsersClient() {
           width: 100%;
           border-collapse: collapse;
           min-width: 1220px;
+        }
+        .reward-table {
+          min-width: 760px;
         }
         th, td {
           border-bottom: 1px solid #e5e7eb;
@@ -507,6 +696,9 @@ export default function AdminUsersClient() {
           gap: 8px;
           margin-bottom: 8px;
         }
+        .reward-points-cell {
+          min-width: 160px;
+        }
         .muted {
           font-size: 12px;
           color: #6b7280;
@@ -525,6 +717,9 @@ export default function AdminUsersClient() {
         }
         @media (max-width: 1024px) {
           .create-grid {
+            grid-template-columns: 1fr;
+          }
+          .reward-create-grid {
             grid-template-columns: 1fr;
           }
         }

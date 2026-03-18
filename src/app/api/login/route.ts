@@ -27,7 +27,16 @@ export async function POST(request: Request) {
 
     const user = await prisma.user.findUnique({
       where: { username },
-      select: { id: true, email: true, username: true, passwordHash: true, isAdmin: true, language: true, deletedAt: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        passwordHash: true,
+        isAdmin: true,
+        avatarPath: true,
+        language: true,
+        deletedAt: true,
+      },
     });
 
     if (!user) {
@@ -62,6 +71,7 @@ export async function POST(request: Request) {
         email: user.email,
         username: user.username,
         isAdmin: user.isAdmin,
+        avatarPath: user.avatarPath ?? null,
         language: user.language,
       },
     });

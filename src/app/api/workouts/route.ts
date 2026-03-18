@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { sendWebPushToUsers } from '@/lib/web-push';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
+import { getWorkoutPoints, matchWorkoutReward } from '@/lib/workout-rewards';
 
 export const dynamic = 'force-dynamic';
 
@@ -204,6 +205,7 @@ export async function POST(request: Request) {
 
   const dateMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const performedAt = (timeStr && timeStr.includes('T')) ? new Date(timeStr) : combineDateAndTime(date, timeStr);
+  const { earnedPoints, earnedPointsTenths } = getWorkoutPoints(reps, exerciseType);
 
   const activeChallenges = await prisma.challengeParticipant.findMany({
     where: {
@@ -236,6 +238,15 @@ export async function POST(request: Request) {
     },
     select: { id: true, reps: true, date: true, time: true, exerciseType: true, trainingSessionId: true },
   });
+
+  const reward = matchWorkoutReward(
+    await prisma.workoutReward.findFirst({
+      where: { minPointsTenths: { lte: earnedPointsTenths } },
+      orderBy: [{ minPointsTenths: 'desc' }, { createdAt: 'asc' }],
+      select: { id: true, message: true, minPointsTenths: true, createdAt: true, updatedAt: true },
+    }),
+    earnedPoints,
+  );
 
   // Fire-and-forget notifications (errors should not break workout creation).
   try {
@@ -316,7 +327,7 @@ export async function POST(request: Request) {
     console.error('WORKOUT NOTIFICATIONS ERROR:', e);
   }
 
-  return NextResponse.json(created);
+  return NextResponse.json({ workout: created, reward });
 }
 
 export async function PUT(request: Request) {
