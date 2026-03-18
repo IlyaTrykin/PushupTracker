@@ -162,7 +162,7 @@ export async function GET(request: Request) {
       ...(exerciseType ? { exerciseType } : {}),
     },
     orderBy: [{ date: 'desc' }, { time: 'desc' }, { id: 'desc' }],
-    select: { id: true, reps: true, date: true, time: true, exerciseType: true },
+    select: { id: true, reps: true, date: true, time: true, exerciseType: true, trainingSessionId: true },
   });
 
   return NextResponse.json(workouts);
@@ -223,7 +223,7 @@ export async function POST(request: Request) {
       date: dateMidnight,
       time: performedAt,
     },
-    select: { id: true, reps: true, date: true, time: true, exerciseType: true },
+    select: { id: true, reps: true, date: true, time: true, exerciseType: true, trainingSessionId: true },
   });
 
   // Fire-and-forget notifications (errors should not break workout creation).

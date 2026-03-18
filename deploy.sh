@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Default to direct SSH access. You can still override via:
-#   SERVER=tracker.trykin.online ./deploy.sh
-#   SERVER=37.230.147.134 ./deploy.sh
-SERVER="${SERVER:-37.230.147.134}"
+# Default to the known working SSH target. You can still override via:
+#   SERVER=ssh.trykin.online ./deploy.sh
+#   SERVER=ilya@37.230.147.134 ./deploy.sh
+SERVER="${SERVER:-ilya@37.230.147.134}"
 REMOTE_DIR="${REMOTE_DIR:-/home/ilya/pushup-tracker}"
-# Optional. If omitted, SSH uses your default keys/agent.
+# Prefer the project key if it exists locally; otherwise fall back to the ssh-agent/default config.
+DEFAULT_SSH_KEY="${HOME}/.ssh/ilyatrykin"
 SSH_KEY="${SSH_KEY:-}"
+if [[ -z "${SSH_KEY}" && -f "${DEFAULT_SSH_KEY}" ]]; then
+  SSH_KEY="${DEFAULT_SSH_KEY}"
+fi
 
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
 if [[ -n "${SSH_KEY}" ]]; then
   SSH_OPTS+=(-i "${SSH_KEY}")
+  SSH_OPTS+=(-o IdentitiesOnly=yes)
 fi
 
 SSH_CMD=(ssh "${SSH_OPTS[@]}")
