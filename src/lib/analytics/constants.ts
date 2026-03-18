@@ -1,14 +1,9 @@
 import type { ExerciseType, PeriodKey } from '@/lib/analytics/types';
+import { EXERCISE_POINT_FACTORS } from '@/lib/exercise-points';
 
 export const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 
-export const EXERCISE_LOAD_FACTORS: Record<ExerciseType, number> = {
-  pushups: 1,
-  pullups: 3,
-  squats: 0.7,
-  crunches: 0.5,
-  plank: 0.1,
-};
+export const EXERCISE_LOAD_FACTORS: Record<ExerciseType, number> = EXERCISE_POINT_FACTORS;
 
 export const EXERCISE_COLORS: Record<ExerciseType, string> = {
   pushups: '#0f766e',

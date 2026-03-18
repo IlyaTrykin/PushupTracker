@@ -1,4 +1,4 @@
-import { EXERCISE_LOAD_FACTORS } from '@/lib/analytics/constants';
+import { calculateExercisePoints } from '@/lib/exercise-points';
 import type {
   ExerciseFilter,
   ExerciseType,
@@ -47,7 +47,7 @@ export function getWorkoutTimestamp(workout: WorkoutRecord): Date {
 }
 
 export function toLoadPoints(reps: number, exerciseType: ExerciseType): number {
-  return reps * EXERCISE_LOAD_FACTORS[exerciseType];
+  return calculateExercisePoints(reps, exerciseType);
 }
 
 export function normalizeWorkouts(workouts: WorkoutRecord[]): NormalizedWorkout[] {
