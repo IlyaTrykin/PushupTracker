@@ -1,12 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useSyncExternalStore } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { t } from '@/i18n/translate';
-
-export type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
-
-const KEY = 'exerciseType';
+import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
 
 const OPTIONS: { value: ExerciseType; label: string }[] = [
   { value: 'pushups', label: 'Отжимания' },
@@ -19,21 +16,10 @@ const OPTIONS: { value: ExerciseType; label: string }[] = [
 export default function ExerciseTypeDropdown() {
   const { locale } = useI18n();
   const tt = (input: string) => t(locale, input);
-  const [value, setValue] = useState<ExerciseType>('pushups');
-
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(KEY);
-      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats' || saved === 'plank') {
-        setValue(saved);
-      }
-    } catch {}
-  }, []);
+  const value = useSyncExternalStore<ExerciseType>(subscribeExerciseType, getStoredExerciseType, () => 'pushups');
 
   const onChange = (v: ExerciseType) => {
-    setValue(v);
-    try { window.localStorage.setItem(KEY, v); } catch {}
-    window.dispatchEvent(new CustomEvent('exerciseTypeChanged', { detail: v }));
+    persistExerciseType(v);
   };
 
   return (

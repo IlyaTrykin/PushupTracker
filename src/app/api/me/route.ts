@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     if (!u) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
 
     return NextResponse.json(u);
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (e instanceof AuthError) {
       return NextResponse.json({ error: e.message }, { status: e.status });
     }

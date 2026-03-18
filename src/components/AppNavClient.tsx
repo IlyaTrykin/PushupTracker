@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -8,8 +9,8 @@ import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
 
-type Me = { username: string; isAdmin?: boolean; avatarPath?: string | null; language?: string };
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+type ExerciseTypeChangedDetail = ExerciseType | { exerciseType?: ExerciseType };
 
 function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles']) {
   if (!pathname || pathname === '/') return titles.home;
@@ -48,8 +49,7 @@ function AvatarCircle({ src, size = 24 }: { src?: string | null; size?: number }
 
   return (
     <span style={base}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      <Image src={src} alt="" width={size} height={size} unoptimized style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
     </span>
   );
 }
@@ -80,10 +80,6 @@ export default function AppNavClient() {
   }, [me?.language, setLocale]);
 
   useEffect(() => {
-    void refreshUser();
-  }, [pathname, refreshUser]);
-
-  useEffect(() => {
     try {
       const saved = window.localStorage.getItem('exerciseType');
       if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats' || saved === 'plank') {
@@ -91,14 +87,16 @@ export default function AppNavClient() {
       }
     } catch {}
 
-    const onChanged = (e: any) => {
-      const t = e?.detail?.exerciseType ?? e?.detail;
+    const onChanged = (event: Event) => {
+      const e = event as CustomEvent<ExerciseTypeChangedDetail>;
+      const detail = e.detail;
+      const t = typeof detail === 'string' ? detail : detail?.exerciseType;
       if (t === 'pushups' || t === 'pullups' || t === 'crunches' || t === 'squats' || t === 'plank') {
         setExerciseType(t);
       }
     };
-    window.addEventListener('exerciseTypeChanged', onChanged as any);
-    return () => window.removeEventListener('exerciseTypeChanged', onChanged as any);
+    window.addEventListener('exerciseTypeChanged', onChanged);
+    return () => window.removeEventListener('exerciseTypeChanged', onChanged);
   }, []);
 
   const logout = async () => {
@@ -193,7 +191,7 @@ export default function AppNavClient() {
                 flex: '0 0 auto',
               }}
             >
-              <img src="/icons/bottom-nav/menu.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
+              <Image src="/icons/bottom-nav/menu.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
             </button>
           </div>
         </div>
@@ -201,27 +199,27 @@ export default function AppNavClient() {
 
       <nav className="bottom-nav" role="navigation" aria-label={messages.nav.menuAria}>
         <Link className={bottomItemClass(navActive('/dashboard'))} href="/dashboard" aria-label={messages.nav.bottom.dashboard}>
-          <img src={`/icons/bottom-nav/training.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" />
+          <Image src={`/icons/bottom-nav/training.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} unoptimized />
           <span className="bottom-nav__label">{messages.nav.bottom.dashboard}</span>
         </Link>
 
         <Link className={bottomItemClass(navActive('/program'))} href="/program" aria-label={messages.nav.bottom.program}>
-          <img src="/icons/bottom-nav/program.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
+          <Image src="/icons/bottom-nav/program.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
           <span className="bottom-nav__label">{messages.nav.bottom.program}</span>
         </Link>
 
         <Link className={bottomItemClass(navActive('/friends'))} href="/friends" aria-label={messages.nav.bottom.friends}>
-          <img src="/icons/bottom-nav/friends.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
+          <Image src="/icons/bottom-nav/friends.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
           <span className="bottom-nav__label">{messages.nav.bottom.friends}</span>
         </Link>
 
         <Link className={bottomItemClass(navActive('/challenges'))} href="/challenges" aria-label={messages.nav.bottom.challenges}>
-          <img src={`/icons/bottom-nav/challenges.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" />
+          <Image src={`/icons/bottom-nav/challenges.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} unoptimized />
           <span className="bottom-nav__label">{messages.nav.bottom.challenges}</span>
         </Link>
 
         <Link className={bottomItemClass(navActive('/progress'))} href="/progress" aria-label={messages.nav.bottom.progress}>
-          <img src="/icons/bottom-nav/summary.svg" className="bottom-nav__icon" alt="" aria-hidden="true" />
+          <Image src="/icons/bottom-nav/summary.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
           <span className="bottom-nav__label">{messages.nav.bottom.progress}</span>
         </Link>
       </nav>

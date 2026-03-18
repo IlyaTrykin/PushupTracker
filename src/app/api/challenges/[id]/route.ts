@@ -2,9 +2,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 
+type ChallengeProgressRow = {
+  userId: string;
+  username: string;
+  total: number;
+  creditedDays?: number;
+  totalDays?: number;
+  qualifiedSets?: number;
+  qualifiedReps?: number;
+};
 
 function jsonError(message: string, status: number, details?: string) {
   return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -67,7 +81,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     // most/target: total reps in period
     // daily_min: credited days with dayTotal >= targetReps
     // sets_min: count of sets with reps >= targetReps (tie-breaker: sum reps of qualified sets)
-    let progress: any[] = [];
+    let progress: ChallengeProgressRow[] = [];
 
     if (challenge.mode === 'daily_min') {
       const threshold = Number(challenge.targetReps ?? 0);
@@ -113,7 +127,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       });
 
       const setsMap = new Map<string, { sets: number; reps: number }>();
-      grouped.forEach((g) => setsMap.set(g.userId, { sets: (g as any)._count._all ?? 0, reps: g._sum.reps ?? 0 }));
+      grouped.forEach((g) => setsMap.set(g.userId, { sets: g._count._all ?? 0, reps: g._sum.reps ?? 0 }));
 
       progress = challenge.participants
         .filter((p) => p.status === 'accepted')
@@ -152,12 +166,12 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
         .sort((a, b) => b.total - a.total);
     }
 
-const myStatus = challenge.participants.find((p) => p.userId === userId)?.status ?? null;
+    const myStatus = challenge.participants.find((p) => p.userId === userId)?.status ?? null;
 
     return NextResponse.json({ challenge, myStatus, progress });
-  } catch (e: any) {
+  } catch (e) {
     console.error('CHALLENGE GET ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (GET /api/challenges/[id])', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (GET /api/challenges/[id])', 500, getErrorMessage(e));
   }
 }
 
@@ -185,8 +199,8 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
     await prisma.challenge.delete({ where: { id } });
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
+  } catch (e) {
     console.error('CHALLENGE DELETE ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (DELETE /api/challenges/[id])', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (DELETE /api/challenges/[id])', 500, getErrorMessage(e));
   }
 }

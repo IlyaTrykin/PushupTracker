@@ -43,6 +43,17 @@ function combineDateAndTime(date: Date, timeHHMM?: string | null): Date {
   return base;
 }
 
+function combineDateWithExistingTime(date: Date, time: Date): Date {
+  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+  next.setHours(
+    time.getHours(),
+    time.getMinutes(),
+    time.getSeconds(),
+    time.getMilliseconds(),
+  );
+  return next;
+}
+
 function getExerciseTypeFromQuery(request: Request): string | null {
   const url = new URL(request.url);
   const t = url.searchParams.get('exerciseType');
@@ -109,7 +120,7 @@ async function getChallengeRankMap(challengeId: string): Promise<Map<string, num
     });
 
     const stats = new Map<string, { sets: number; reps: number }>();
-    grouped.forEach((g) => stats.set(g.userId, { sets: (g as any)._count._all ?? 0, reps: g._sum.reps ?? 0 }));
+    grouped.forEach((g) => stats.set(g.userId, { sets: g._count._all ?? 0, reps: g._sum.reps ?? 0 }));
 
     challenge.participants.forEach((p) => {
       const v = stats.get(p.userId) ?? { sets: 0, reps: 0 };
@@ -327,10 +338,13 @@ export async function PUT(request: Request) {
   const dateStr = body.date !== undefined ? String(body.date) : undefined;
   const timeStr = body.time !== undefined ? String(body.time) : undefined;
 
-  const existing = await prisma.workout.findFirst({ where: { id, userId }, select: { id: true, date: true } });
+  const existing = await prisma.workout.findFirst({
+    where: { id, userId },
+    select: { id: true, date: true, time: true },
+  });
   if (!existing) return jsonError('Запись не найдена', 404);
 
-  const data: any = {};
+  const data: { reps?: number; date?: Date; time?: Date } = {};
 
   if (reps !== undefined) {
     if (!Number.isFinite(reps) || reps <= 0) return jsonError('reps должен быть числом > 0');
@@ -343,6 +357,9 @@ export async function PUT(request: Request) {
     if (!parsed) return jsonError('date должен быть в формате YYYY-MM-DD');
     newDate = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
     data.date = newDate;
+    if (timeStr === undefined) {
+      data.time = combineDateWithExistingTime(newDate, existing.time);
+    }
   }
 
   if (timeStr !== undefined) {

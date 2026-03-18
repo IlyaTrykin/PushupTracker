@@ -17,6 +17,10 @@ function jsonError(message: string, status = 400, code?: string) {
   return NextResponse.json(code ? { error: message, code } : { error: message }, { status });
 }
 
+function isExerciseType(value: string): value is ProgramCreateInput['exerciseType'] {
+  return ['pushups', 'pullups', 'crunches', 'squats', 'plank'].includes(value);
+}
+
 export async function GET(request: Request) {
   try {
     const user = await requireUser(request);
@@ -44,7 +48,8 @@ export async function POST(request: Request) {
     const inferredAge = deriveAgeFromBirthDate(me?.birthDate ?? null) ?? 25;
     const inferredWeight = me?.weightKg ?? 70;
     const inferredSex = String(body.sex || me?.gender || 'unknown').trim().toLowerCase();
-    const exerciseType = String(body.exerciseType || 'pushups') as any;
+    const rawExerciseType = String(body.exerciseType || 'pushups');
+    const exerciseType: ProgramCreateInput['exerciseType'] = isExerciseType(rawExerciseType) ? rawExerciseType : 'pushups';
     const baselineMaxReps = Number(body.baselineMaxReps || 1);
     const targetReps = Number(body.targetReps || baselineMaxReps);
     const ageYears = Number(body.ageYears || inferredAge);

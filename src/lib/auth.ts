@@ -19,15 +19,61 @@ export type AuthUser = {
   language: string;
 };
 
+type RequestWithOptionalCookies = Request & {
+  cookies?: {
+    get?: (name: string) => { value?: string } | undefined;
+  };
+};
+
+const authUserSelect = {
+  id: true,
+  username: true,
+  email: true,
+  isAdmin: true,
+  language: true,
+  deletedAt: true,
+} as const;
+
+async function getAuthUserByToken(token: string): Promise<AuthUser | null> {
+  const session = await prisma.session.findUnique({
+    where: { token },
+    select: {
+      token: true,
+      expiresAt: true,
+      user: { select: authUserSelect },
+    },
+  });
+
+  if (!session?.user) return null;
+
+  if (session.expiresAt && session.expiresAt.getTime() < Date.now()) {
+    await prisma.session.deleteMany({ where: { token } }).catch(() => {});
+    return null;
+  }
+
+  if (session.user.deletedAt) {
+    await prisma.session.deleteMany({ where: { token } }).catch(() => {});
+    return null;
+  }
+
+  return {
+    id: session.user.id,
+    username: session.user.username,
+    email: session.user.email ?? null,
+    isAdmin: session.user.isAdmin,
+    language: session.user.language || 'ru',
+  };
+}
+
 function parseCookieHeader(cookieHeader: string, name: string): string | null {
   const m = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
   return m?.[1] ?? null;
 }
 
 export function getSessionToken(request: Request): string | null {
-  const anyReq: any = request as any;
+  const requestWithCookies = request as RequestWithOptionalCookies;
   try {
-    const v = anyReq?.cookies?.get?.('session')?.value;
+    const v = requestWithCookies.cookies?.get?.('session')?.value;
     if (typeof v === 'string' && v) return v;
   } catch {
     // ignore
@@ -51,36 +97,12 @@ function isHttps(request: Request): boolean {
 export async function getAuthUser(request: Request): Promise<AuthUser | null> {
   const token = getSessionToken(request);
   if (!token) return null;
+  return getAuthUserByToken(token);
+}
 
-  const session = await prisma.session.findUnique({
-    where: { token },
-    select: {
-      token: true,
-      expiresAt: true,
-      user: { select: { id: true, username: true, email: true, isAdmin: true, language: true, deletedAt: true } },
-    },
-  });
-
-  if (!session?.user) return null;
-
-  if (session.expiresAt && session.expiresAt.getTime() < Date.now()) {
-    await prisma.session.deleteMany({ where: { token } }).catch(() => {});
-    return null;
-  }
-
-  // Soft-deleted accounts are treated as logged out.
-  if ((session.user as any).deletedAt) {
-    await prisma.session.deleteMany({ where: { token } }).catch(() => {});
-    return null;
-  }
-
-  return {
-    id: session.user.id,
-    username: session.user.username,
-    email: session.user.email ?? null,
-    isAdmin: Boolean((session.user as any).isAdmin),
-    language: String((session.user as any).language || 'ru'),
-  };
+export async function getAuthUserFromSessionToken(token: string | null | undefined): Promise<AuthUser | null> {
+  if (!token) return null;
+  return getAuthUserByToken(token);
 }
 
 export async function requireUser(request: Request): Promise<AuthUser> {

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireAdmin as requireAdminUser, AuthError } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
@@ -15,8 +16,7 @@ function usernameFromEmail(email: string) {
 
 
 export async function GET(request: Request) {
-  let adminId: string;
-  try { adminId = (await requireAdminUser(request)).id; } catch (e) {
+  try { await requireAdminUser(request); } catch (e) {
     if (e instanceof AuthError) return jsonError('Нет доступа', e.status === 401 ? 401 : 403);
     return jsonError('Внутренняя ошибка сервера', 500);
   }
@@ -31,8 +31,7 @@ export async function GET(request: Request) {
 
 // body: { email, password, isAdmin?, username? }
 export async function POST(request: Request) {
-  let adminId: string;
-  try { adminId = (await requireAdminUser(request)).id; } catch (e) {
+  try { await requireAdminUser(request); } catch (e) {
     if (e instanceof AuthError) return jsonError('Нет доступа', e.status === 401 ? 401 : 403);
     return jsonError('Внутренняя ошибка сервера', 500);
   }
@@ -119,7 +118,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ user });
   }
 
-  const data: any = {};
+  const data: Prisma.UserUpdateInput = {};
   if (body.email !== undefined) data.email = String(body.email || '').trim().toLowerCase();
   if (body.username !== undefined) data.username = String(body.username || '').trim();
   if (body.isAdmin !== undefined) data.isAdmin = Boolean(body.isAdmin);

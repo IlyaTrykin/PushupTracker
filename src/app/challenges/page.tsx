@@ -18,12 +18,14 @@ type Friend = {
   username: string;
   since: string;
 };
+type ChallengeMode = 'most' | 'target' | 'daily_min' | 'sets_min';
+type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 
 type ChallengeListItem = {
   id: string;
   name: string;
   exerciseType: string;
-  mode: 'most' | 'target' | 'daily_min' | 'sets_min';
+  mode: ChallengeMode;
   targetReps: number | null;
   startDate: string;
   endDate: string;
@@ -34,6 +36,13 @@ type ChallengeListItem = {
   participants: { userId?: string; status?: 'pending' | 'accepted' | 'declined'; user: { username: string } }[];
 };
 
+type JsonObject = Record<string, unknown>;
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
 async function fetchJsonSafe(url: string, init?: RequestInit) {
   const res = await fetch(url, {
     cache: 'no-store',
@@ -41,13 +50,13 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
     ...init,
   });
   const text = await res.text();
-  let data: any = null;
+  let data: JsonObject | null = null;
   if (text) {
-    try { data = JSON.parse(text); } catch {}
+    try { data = JSON.parse(text) as JsonObject; } catch {}
   }
   if (!res.ok) {
-    const base = data?.error || `Ошибка (код ${res.status})`;
-    const details = data?.details || '';
+    const base = typeof data?.error === 'string' ? data.error : `Ошибка (код ${res.status})`;
+    const details = typeof data?.details === 'string' ? data.details : '';
     throw new Error(details ? `${base}: ${details}` : base);
   }
   return data;
@@ -84,6 +93,15 @@ function challengeStatus(startISO: string, endISO: string) {
 
   return { active, finished, daysLeft, start, end };
 }
+
+function isChallengeMode(value: string): value is ChallengeMode {
+  return ['most', 'target', 'daily_min', 'sets_min'].includes(value);
+}
+
+function isExerciseType(value: string): value is ExerciseType {
+  return ['pushups', 'pullups', 'crunches', 'squats', 'plank'].includes(value);
+}
+
 function badge(text: string, tone: 'gray' | 'green' | 'amber' | 'red') {
   const bg = tone === 'green' ? '#dcfce7' : tone === 'amber' ? '#fef3c7' : tone === 'red' ? '#fee2e2' : '#f3f4f6';
   const fg = tone === 'green' ? '#166534' : tone === 'amber' ? '#92400e' : tone === 'red' ? '#991b1b' : '#374151';
@@ -105,7 +123,7 @@ function badge(text: string, tone: 'gray' | 'green' | 'amber' | 'red') {
 export default function ChallengesPage() {
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
-  const tt = (input: string) => t(locale, input);
+  const tt = useCallback((input: string) => t(locale, input), [locale]);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [challenges, setChallenges] = useState<ChallengeListItem[]>([]);
   const [meId, setMeId] = useState<string>('');
@@ -115,8 +133,8 @@ export default function ChallengesPage() {
   const [name, setName] = useState(() => t(locale, 'Соревнование месяца'));
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(endOfMonthISO());
-  const [exerciseType, setExerciseType] = useState<'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank'>('pushups');
-  const [mode, setMode] = useState<'most' | 'target' | 'daily_min' | 'sets_min'>('most');
+  const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
+  const [mode, setMode] = useState<ChallengeMode>('most');
   const [targetReps, setTargetReps] = useState<number>(1000);
 
   const [error, setError] = useState<string | null>(null);
@@ -139,11 +157,11 @@ export default function ChallengesPage() {
         fetchJsonSafe('/api/friends'),
         fetchJsonSafe('/api/challenges'),
       ]);
-      setMeId(me?.id || '');
-      setFriends(fr || []);
-      setChallenges(ch || []);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+      setMeId(typeof me?.id === 'string' ? me.id : '');
+      setFriends(Array.isArray(fr) ? (fr as Friend[]) : []);
+      setChallenges(Array.isArray(ch) ? (ch as ChallengeListItem[]) : []);
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -180,7 +198,7 @@ export default function ChallengesPage() {
       }
       return prev;
     });
-  }, [locale]);
+  }, [tt]);
 
   const selectedUsernames = useMemo(() => {
     return friends.filter(f => selected[f.username]).map(f => f.username);
@@ -247,8 +265,8 @@ export default function ChallengesPage() {
       setSelected({});
       setShowCreate(false);
       await loadAll({ showLoading: false, resetInfo: false });
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -263,8 +281,8 @@ export default function ChallengesPage() {
       await fetchJsonSafe(`/api/challenges/${id}`, { method: 'DELETE' });
       setInfo(tt('Удалено'));
       await loadAll({ showLoading: false, resetInfo: false });
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -275,8 +293,8 @@ export default function ChallengesPage() {
       await fetchJsonSafe(`/api/challenges/${id}/accept`, { method: 'POST' });
       setInfo(tt('Приглашение принято'));
       await loadAll({ showLoading: false, resetInfo: false });
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -290,8 +308,8 @@ export default function ChallengesPage() {
       await fetchJsonSafe(`/api/challenges/${id}/decline`, { method: 'POST' });
       setInfo(tt('Приглашение отклонено'));
       await loadAll({ showLoading: false, resetInfo: false });
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(getErrorMessage(e));
     }
   };
 
@@ -324,7 +342,14 @@ export default function ChallengesPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, alignItems: 'end' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label>{tt('Режим')}</label>
-                <select value={mode} onChange={e => setMode(e.target.value as any)} style={input}>
+                <select
+                  value={mode}
+                  onChange={e => {
+                    const nextValue = e.target.value;
+                    if (isChallengeMode(nextValue)) setMode(nextValue);
+                  }}
+                  style={input}
+                >
                   <option value="most">{tt(challengeMostLabel(exerciseType))}</option>
                   <option value="target">{tt(challengeTargetPromptLabel(exerciseType))}</option>
                   <option value="daily_min">{tt('Зачтённые дни (мин. X в день)')}</option>
@@ -374,7 +399,14 @@ export default function ChallengesPage() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <label>{tt('Упражнение')}</label>
-              <select value={exerciseType} onChange={e => setExerciseType(e.target.value as any)} style={input}>
+              <select
+                value={exerciseType}
+                onChange={e => {
+                  const nextValue = e.target.value;
+                  if (isExerciseType(nextValue)) setExerciseType(nextValue);
+                }}
+                style={input}
+              >
                 <option value="pushups">{tt('Отжимания')}</option>
                 <option value="pullups">{tt('Подтягивания')}</option>
                 <option value="crunches">{tt('Скручивания')}</option>

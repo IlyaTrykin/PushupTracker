@@ -5,15 +5,42 @@ import { sendFriendRequestEmail } from '@/lib/notification-email';
 import { isChannelEnabledForUser } from '@/lib/notification-preferences';
 import { sendWebPushToUsers } from '@/lib/web-push';
 
+type JsonObject = Record<string, unknown>;
+type FriendDirectoryUser = {
+  id: string;
+  username: string;
+  email: string | null;
+  avatarPath: string | null;
+  deletedAt: Date | null;
+};
+type FriendListItem = {
+  friendshipId: string;
+  userId: string;
+  username: string;
+  email: string | null;
+  avatarPath: string | null;
+  since: Date;
+  isFollowing: boolean;
+};
+
 function jsonError(message: string, status = 400, details?: string) {
   return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
 }
 
-async function parseBody(request: NextRequest): Promise<any> {
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+async function parseBody(request: NextRequest): Promise<JsonObject> {
   const text = await request.text();
   if (!text) return {};
   try {
-    return JSON.parse(text);
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('BAD_JSON');
+    }
+    return parsed as JsonObject;
   } catch {
     throw new Error('BAD_JSON');
   }
@@ -46,23 +73,22 @@ export async function GET(request: NextRequest) {
     });
 
     const friendIds: string[] = [];
-    const base = friendships
-      .map((f) => {
-        const isInitiator = f.userId === userId;
-        const other = isInitiator ? f.friend : f.user;
-        if ((other as any).deletedAt) return null;
-        friendIds.push(other.id);
-        return {
-          friendshipId: f.id,
-          userId: other.id,
-          username: other.username,
-          email: other.email,
-          avatarPath: (other as any).avatarPath ?? null,
-          since: f.createdAt,
-          isFollowing: false,
-        };
-      })
-      .filter(Boolean) as any[];
+    const base: FriendListItem[] = friendships.reduce<FriendListItem[]>((acc, f) => {
+      const isInitiator = f.userId === userId;
+      const other: FriendDirectoryUser = isInitiator ? f.friend : f.user;
+      if (other.deletedAt) return acc;
+      friendIds.push(other.id);
+      acc.push({
+        friendshipId: f.id,
+        userId: other.id,
+        username: other.username,
+        email: other.email,
+        avatarPath: other.avatarPath ?? null,
+        since: f.createdAt,
+        isFollowing: false,
+      });
+      return acc;
+    }, []);
 
     if (!base.length) return NextResponse.json([]);
 
@@ -73,11 +99,11 @@ export async function GET(request: NextRequest) {
     const following = new Set(follows.map((x) => x.friendId));
 
     return NextResponse.json(base.map((r) => ({ ...r, isFollowing: following.has(r.userId) })));
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
-    if (e?.message === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
+    if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
     console.error('FRIENDS GET ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (GET /api/friends)', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (GET /api/friends)', 500, getErrorMessage(e));
   }
 }
 
@@ -153,12 +179,12 @@ export async function POST(request: NextRequest) {
       since: friendship.createdAt,
       status: 'pending',
     });
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
-    if (e?.message === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
-    if (e?.message === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
+    if (getErrorMessage(e) === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
+    if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
     console.error('FRIENDS POST ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (POST /api/friends)', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (POST /api/friends)', 500, getErrorMessage(e));
   }
 }
 
@@ -224,12 +250,12 @@ export async function PATCH(request: NextRequest) {
     }
 
     return jsonError('Неизвестное действие', 400);
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
-    if (e?.message === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
-    if (e?.message === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
+    if (getErrorMessage(e) === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
+    if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
     console.error('FRIENDS PATCH ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (PATCH /api/friends)', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (PATCH /api/friends)', 500, getErrorMessage(e));
   }
 }
 
@@ -263,11 +289,11 @@ export async function DELETE(request: NextRequest) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
+  } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
-    if (e?.message === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
-    if (e?.message === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
+    if (getErrorMessage(e) === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
+    if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
     console.error('FRIENDS DELETE ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (DELETE /api/friends)', 500, e?.message ?? String(e));
+    return jsonError('Внутренняя ошибка сервера (DELETE /api/friends)', 500, getErrorMessage(e));
   }
 }

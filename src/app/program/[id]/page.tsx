@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
@@ -44,16 +44,25 @@ type ProgramDetail = {
   stats: ProgramStats;
 };
 
+type JsonObject = Record<string, unknown>;
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
 async function fetchJson(url: string) {
   const res = await fetch(url, { credentials: 'include', cache: 'no-store' });
   const text = await res.text();
-  let data: any = null;
+  let data: JsonObject | null = null;
   if (text) {
     try {
-      data = JSON.parse(text);
+      data = JSON.parse(text) as JsonObject;
     } catch {}
   }
-  if (!res.ok) throw new Error(data?.error || `Ошибка (код ${res.status})`);
+  if (!res.ok) {
+    throw new Error(typeof data?.error === 'string' ? data.error : `Ошибка (код ${res.status})`);
+  }
   return data;
 }
 
@@ -88,7 +97,7 @@ export default function ProgramDetailPage() {
   const params = useParams<{ id: string }>();
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
-  const tt = (input: string) => t(locale, input);
+  const tt = useCallback((input: string) => t(locale, input), [locale]);
   const programId = String(params?.id || '');
 
   const [loading, setLoading] = useState(true);
@@ -106,8 +115,8 @@ export default function ProgramDetailPage() {
       try {
         const data = (await fetchJson(`/api/program/${programId}`)) as ProgramDetail;
         if (!cancelled) setProgram(data);
-      } catch (e: any) {
-        if (!cancelled) setError(tt(e?.message || 'Не удалось загрузить программу'));
+      } catch (e: unknown) {
+        if (!cancelled) setError(tt(getErrorMessage(e) || 'Не удалось загрузить программу'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -117,7 +126,7 @@ export default function ProgramDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [programId]);
+  }, [programId, tt]);
 
   const upcomingSessions = useMemo(
     () => (program?.sessions || []).filter((s) => !s.completed),

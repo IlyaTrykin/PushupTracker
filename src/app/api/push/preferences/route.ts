@@ -40,7 +40,7 @@ export async function PATCH(request: NextRequest) {
   if (!isKnownEventType(eventType)) return jsonError('Неизвестный eventType', 400);
   const eventDef = NOTIFICATION_EVENT_DEFS.find((d) => d.eventType === eventType);
 
-  const data: any = {};
+  const data: { pushEnabled?: boolean; emailEnabled?: boolean } = {};
   if (body.pushEnabled !== undefined) data.pushEnabled = Boolean(body.pushEnabled);
   if (body.emailEnabled !== undefined) data.emailEnabled = Boolean(body.emailEnabled);
 

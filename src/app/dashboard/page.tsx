@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
-
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
 
 type Workout = {
   id: string;
@@ -54,6 +54,8 @@ type ReactionSummaryItem = {
   avatars: WorkoutReactionPayload['recent'];
   hasMore: boolean;
 };
+
+type JsonObject = Record<string, unknown>;
 
 const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
@@ -119,18 +121,27 @@ function formatDateWithWeekday(dayKey: string, locale: string) {
   });
 }
 
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
 async function fetchJsonSafe(url: string, init?: RequestInit) {
   const res = await fetch(url, init);
   const text = await res.text();
-  let data: any = null;
+  let data: unknown = null;
   if (text) {
     try {
       data = JSON.parse(text);
     } catch {}
   }
   if (!res.ok) {
-    const base = data?.error || `Ошибка (код ${res.status})`;
-    const details = data?.details || '';
+    const base = isJsonObject(data) && typeof data.error === 'string' ? data.error : `Ошибка (код ${res.status})`;
+    const details = isJsonObject(data) && typeof data.details === 'string' ? data.details : '';
     throw new Error(details ? `${base}: ${details}` : base);
   }
   return data;
@@ -221,7 +232,7 @@ function Stat({ label, value, breakdown }: { label: string; value: number | stri
         <div style={statBreakdownWrap}>
           {EXERCISE_ORDER.map((type) => (
             <span key={`${label}-${type}`} style={statBreakdownItem}>
-              <img src={exerciseFeedIcon(type)} alt="" aria-hidden="true" style={statBreakdownIcon} />
+              <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={20} height={20} style={statBreakdownIcon} unoptimized />
               <span style={statBreakdownValue}>{breakdown[type]}</span>
             </span>
           ))}
@@ -269,7 +280,7 @@ function AvatarMini({ src }: { src?: string | null }) {
   if (!src) return <span style={miniAvatarPlaceholder} aria-hidden="true" />;
   return (
     <span style={miniAvatarWrap} aria-hidden="true">
-      <img src={src} alt="" width={14} height={14} style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
+      <Image src={src} alt="" width={14} height={14} unoptimized style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
     </span>
   );
 }
@@ -277,8 +288,8 @@ function AvatarMini({ src }: { src?: string | null }) {
 export default function DashboardPage() {
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
-  const tt = (input: string) => t(locale, input);
-  const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
+  const tt = useCallback((input: string) => t(locale, input), [locale]);
+  const exerciseType = useSyncExternalStore<ExerciseType>(subscribeExerciseType, getStoredExerciseType, () => 'pushups');
   const [workouts, setWorkouts] = useState<Workout[]>([]);
 
   const [date, setDate] = useState<string>(normalizeDate(new Date()));
@@ -303,6 +314,9 @@ export default function DashboardPage() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailDay, setDetailDay] = useState<string | null>(null);
   const [workoutReactions, setWorkoutReactions] = useState<Record<string, WorkoutReactionPayload>>({});
+  const calendarMonthInitializedRef = useRef(false);
+  const repsRef = useRef(reps);
+  const plankSecondsLeftRef = useRef(plankSecondsLeft);
   const isPlankSelected = exerciseType === 'plank';
   const plankElapsedSeconds = useMemo(
     () => Math.max(0, Math.max(0, reps) - Math.max(0, plankSecondsLeft)),
@@ -310,88 +324,74 @@ export default function DashboardPage() {
   );
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem('exerciseType');
-      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats' || saved === 'plank') {
-        setExerciseType(saved);
-      }
-    } catch {}
-
-    const onChanged = (e: any) => {
-      const next = String(e?.detail?.exerciseType || window.localStorage.getItem('exerciseType') || 'pushups');
-      if (next === 'pushups' || next === 'pullups' || next === 'crunches' || next === 'squats' || next === 'plank') {
-        setExerciseType(next);
-      }
-    };
-
-    window.addEventListener('exerciseTypeChanged', onChanged as any);
-    return () => window.removeEventListener('exerciseTypeChanged', onChanged as any);
-  }, []);
+    repsRef.current = reps;
+    plankSecondsLeftRef.current = plankSecondsLeft;
+  }, [reps, plankSecondsLeft]);
 
   const handleExerciseTypeChange = (next: ExerciseType) => {
-    setExerciseType(next);
-    try {
-      window.localStorage.setItem('exerciseType', next);
-    } catch {}
-    try {
-      window.dispatchEvent(new CustomEvent('exerciseTypeChanged', { detail: { exerciseType: next } }));
-    } catch {}
+    if (next !== 'plank') {
+      setPlankTimerActive(false);
+      setPlankTimerStarted(false);
+      setPlankSecondsLeft(0);
+    }
+    persistExerciseType(next);
   };
 
-  const loadWorkouts = async () => {
+  const applyLoadedWorkouts = useCallback((items: Workout[]) => {
+    setWorkouts(items);
+    if (calendarMonthInitializedRef.current) return;
+    const first = items[0];
+    const firstDate = toDate(first?.time || first?.date);
+    if (!firstDate) return;
+    calendarMonthInitializedRef.current = true;
+    setCalendarMonth(monthStart(firstDate));
+  }, []);
+
+  const loadWorkouts = useCallback(async () => {
     setError(null);
     try {
       const data = await fetchJsonSafe('/api/workouts');
-      setWorkouts(Array.isArray(data) ? data : (data?.items ?? []));
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+      const items = Array.isArray(data)
+        ? (data as Workout[])
+        : isJsonObject(data) && Array.isArray(data.items)
+          ? (data.items as Workout[])
+          : [];
+      applyLoadedWorkouts(items);
+    } catch (error: unknown) {
+      setError(getErrorMessage(error));
     }
-  };
-
-  const loadWorkoutReactions = async (workoutIds: string[]) => {
-    const ids = Array.from(new Set(workoutIds.filter(Boolean)));
-    if (!ids.length) {
-      setWorkoutReactions({});
-      return;
-    }
-    try {
-      const data = await fetchJsonSafe(`/api/workout-reactions?ids=${encodeURIComponent(ids.join(','))}`);
-      setWorkoutReactions(data && typeof data === 'object' ? data : {});
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
-    }
-  };
+  }, [applyLoadedWorkouts]);
 
   useEffect(() => {
-    loadWorkouts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let cancelled = false;
+
+    const loadInitialWorkouts = async () => {
+      try {
+        const data = await fetchJsonSafe('/api/workouts');
+        const items = Array.isArray(data)
+          ? (data as Workout[])
+          : isJsonObject(data) && Array.isArray(data.items)
+            ? (data.items as Workout[])
+            : [];
+        if (cancelled) return;
+        applyLoadedWorkouts(items);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        setError(getErrorMessage(error));
+      }
+    };
+
+    void loadInitialWorkouts();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyLoadedWorkouts]);
 
   useEffect(() => {
     if (!toastMessage) return;
     const t = window.setTimeout(() => setToastMessage(null), 1000);
     return () => window.clearTimeout(t);
   }, [toastMessage]);
-
-  useEffect(() => {
-    if (!isPlankSelected) {
-      setPlankTimerActive(false);
-      setPlankTimerStarted(false);
-      setPlankSecondsLeft(0);
-      return;
-    }
-    if (!plankTimerStarted) {
-      setPlankSecondsLeft(Math.max(0, reps || 0));
-    }
-  }, [isPlankSelected, reps, plankTimerStarted]);
-
-  useEffect(() => {
-    if (!isPlankSelected || !plankTimerActive || plankSecondsLeft <= 0) return;
-    const timerId = window.setInterval(() => {
-      setPlankSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => window.clearInterval(timerId);
-  }, [isPlankSelected, plankTimerActive, plankSecondsLeft]);
 
   const stats = useMemo(() => computeStats(workouts), [workouts]);
   const statsByExercise = useMemo<Record<ExerciseType, Stats>>(() => ({
@@ -429,21 +429,6 @@ export default function DashboardPage() {
     return map;
   }, [workouts]);
 
-  useEffect(() => {
-    const first = workouts[0];
-    const d = toDate(first?.time || first?.date);
-    if (!d) return;
-    setCalendarMonth(monthStart(d));
-  }, [workouts]);
-
-  useEffect(() => {
-    if (!detailsOpen || !detailDay) return;
-    if (dayMap.has(detailDay)) return;
-    setDetailsOpen(false);
-    setDetailDay(null);
-    setEditingId(null);
-  }, [dayMap, detailsOpen, detailDay]);
-
   const calendarCells = useMemo(() => {
     const year = calendarMonth.getFullYear();
     const month = calendarMonth.getMonth();
@@ -462,7 +447,7 @@ export default function DashboardPage() {
     return out;
   }, [calendarMonth]);
 
-  const submitWorkout = async (value: number, selectedType: ExerciseType) => {
+  const submitWorkout = useCallback(async (value: number, selectedType: ExerciseType) => {
     const timeToSend = timeTouched ? time : normalizeTime(new Date());
     await fetchJsonSafe('/api/workouts', {
       method: 'POST',
@@ -479,7 +464,7 @@ export default function DashboardPage() {
     setPlankTimerActive(false);
     setPlankTimerStarted(false);
     await loadWorkouts();
-  };
+  }, [date, loadWorkouts, time, timeTouched, tt]);
 
   const handleAdd = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -492,8 +477,8 @@ export default function DashboardPage() {
 
     try {
       await submitWorkout(reps, exerciseType);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (error: unknown) {
+      setError(getErrorMessage(error));
     }
   };
 
@@ -510,13 +495,11 @@ export default function DashboardPage() {
     setPlankTimerActive(true);
   };
 
-  const handlePlankStop = async () => {
-    if (!isPlankSelected) return;
-    const actual = plankElapsedSeconds;
+  const stopPlankWithActual = useCallback(async (actual: number) => {
     if (!Number.isFinite(actual) || actual <= 0) {
       setPlankTimerActive(false);
       setPlankTimerStarted(false);
-      setPlankSecondsLeft(Math.max(0, reps || 0));
+      setPlankSecondsLeft(0);
       return;
     }
     setError(null);
@@ -525,16 +508,30 @@ export default function DashboardPage() {
     setPlankTimerStarted(false);
     try {
       await submitWorkout(actual, 'plank');
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (error: unknown) {
+      setError(getErrorMessage(error));
     }
-  };
+  }, [submitWorkout]);
+
+  const handlePlankStop = useCallback(async () => {
+    if (!isPlankSelected) return;
+    await stopPlankWithActual(plankElapsedSeconds);
+  }, [isPlankSelected, plankElapsedSeconds, stopPlankWithActual]);
 
   useEffect(() => {
-    if (!isPlankSelected || !plankTimerStarted || plankSecondsLeft !== 0) return;
-    void handlePlankStop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlankSelected, plankTimerStarted, plankSecondsLeft]);
+    if (!isPlankSelected || !plankTimerActive || !plankTimerStarted) return;
+    const timerId = window.setInterval(() => {
+      const currentLeft = plankSecondsLeftRef.current;
+      if (currentLeft <= 1) {
+        window.clearInterval(timerId);
+        setPlankSecondsLeft(0);
+        void stopPlankWithActual(repsRef.current);
+        return;
+      }
+      setPlankSecondsLeft(currentLeft - 1);
+    }, 1000);
+    return () => window.clearInterval(timerId);
+  }, [isPlankSelected, plankTimerActive, plankTimerStarted, stopPlankWithActual]);
 
   function formatClock(totalSeconds: number) {
     const safe = Math.max(0, totalSeconds);
@@ -578,8 +575,8 @@ export default function DashboardPage() {
       setEditingId(null);
       setInfo(tt('Изменения сохранены'));
       await loadWorkouts();
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (error: unknown) {
+      setError(getErrorMessage(error));
     }
   };
 
@@ -596,24 +593,44 @@ export default function DashboardPage() {
       });
       setInfo(tt('Запись удалена'));
       await loadWorkouts();
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (error: unknown) {
+      setError(getErrorMessage(error));
     }
   };
 
   const selectedDayData = detailDay ? dayMap.get(detailDay) ?? null : null;
   const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
   const todayKey = normalizeDate(new Date());
+  const detailsVisible = detailsOpen && Boolean(detailDay && selectedDayData);
+
+  const closeDetails = useCallback(() => {
+    setDetailsOpen(false);
+    setEditingId(null);
+    setWorkoutReactions({});
+  }, []);
 
   useEffect(() => {
-    if (!detailsOpen || !selectedDayData?.items?.length) {
-      setWorkoutReactions({});
-      return;
-    }
-    const ids = selectedDayData.items.map((w) => w.id);
-    loadWorkoutReactions(ids);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailsOpen, selectedDayData]);
+    if (!detailsVisible || !selectedDayData?.items?.length) return;
+    let cancelled = false;
+
+    const loadReactions = async () => {
+      const ids = Array.from(new Set(selectedDayData.items.map((w) => w.id).filter(Boolean)));
+      if (!ids.length) return;
+      try {
+        const data = await fetchJsonSafe(`/api/workout-reactions?ids=${encodeURIComponent(ids.join(','))}`);
+        if (cancelled) return;
+        setWorkoutReactions(isJsonObject(data) ? (data as Record<string, WorkoutReactionPayload>) : {});
+      } catch (error: unknown) {
+        if (cancelled) return;
+        setError(getErrorMessage(error));
+      }
+    };
+
+    void loadReactions();
+    return () => {
+      cancelled = true;
+    };
+  }, [detailsVisible, selectedDayData]);
 
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
@@ -632,7 +649,7 @@ export default function DashboardPage() {
               aria-label={tt(exerciseLabel(type))}
               aria-pressed={active}
             >
-              <img src={exerciseFeedIcon(type)} alt="" aria-hidden="true" style={exerciseTypePickerIcon} />
+              <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={38} height={38} style={exerciseTypePickerIcon} unoptimized />
             </button>
           );
         })}
@@ -811,7 +828,7 @@ export default function DashboardPage() {
                 <div style={exerciseNumbersRow}>
                   {exerciseTotals.map(({ type, sum }) => (
                     <span key={type} style={exerciseNumberItem}>
-                      <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={exerciseNumberIcon} />
+                      <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={22} height={22} style={exerciseNumberIcon} unoptimized />
                       <span style={exerciseNumber}>{sum}</span>
                     </span>
                   ))}
@@ -824,20 +841,17 @@ export default function DashboardPage() {
         <div style={legendWrap}>
           {EXERCISE_ORDER.map((type) => (
             <div key={type} style={legendItem}>
-              <img src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} style={legendIcon} />
+              <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={20} height={20} style={legendIcon} unoptimized />
               <span>{tt(exerciseLabel(type))}</span>
             </div>
           ))}
         </div>
       </section>
 
-      {detailsOpen ? (
+      {detailsVisible ? (
         <div
           style={modalBackdrop}
-          onClick={() => {
-            setDetailsOpen(false);
-            setEditingId(null);
-          }}
+          onClick={closeDetails}
         >
           <section style={modalCard} onClick={(e) => e.stopPropagation()}>
             <div style={modalTop}>
@@ -845,10 +859,7 @@ export default function DashboardPage() {
               <button
                 type="button"
                 style={btnSecondary}
-                onClick={() => {
-                  setDetailsOpen(false);
-                  setEditingId(null);
-                }}
+                onClick={closeDetails}
               >
                 {tt('Закрыть')}
               </button>
@@ -915,7 +926,7 @@ export default function DashboardPage() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>
                             <div style={{ display: 'grid', gap: 4 }}>
                               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                                <img src={exerciseFeedIcon(w.exerciseType)} alt={tt(exerciseLabel(w.exerciseType))} style={detailsExerciseIcon} />
+                                <Image src={exerciseFeedIcon(w.exerciseType)} alt={tt(exerciseLabel(w.exerciseType))} width={16} height={16} style={detailsExerciseIcon} unoptimized />
                                 <span style={{ fontWeight: 800 }}>{tt(exerciseLabel(w.exerciseType))}</span>
                               </div>
                               <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag)}</b></div>

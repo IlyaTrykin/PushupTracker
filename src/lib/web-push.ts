@@ -26,6 +26,18 @@ export function isPushConfigured(): boolean {
   return Boolean(c.publicKey && c.privateKey);
 }
 
+function getStatusCode(error: unknown) {
+  if (typeof error === 'object' && error && 'statusCode' in error) {
+    return Number((error as { statusCode?: unknown }).statusCode ?? 0);
+  }
+  return 0;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 export async function sendWebPushToUsers(
   userIds: string[],
   payload: PushPayload,
@@ -68,12 +80,12 @@ export async function sendWebPushToUsers(
         },
         body,
       );
-    } catch (e: any) {
-      const code = Number(e?.statusCode || 0);
+    } catch (e) {
+      const code = getStatusCode(e);
       if (code === 404 || code === 410) {
         await prisma.pushSubscription.deleteMany({ where: { id: sub.id } }).catch(() => {});
       } else {
-        console.error('WEB PUSH SEND ERROR:', e?.message ?? e);
+        console.error('WEB PUSH SEND ERROR:', getErrorMessage(e));
       }
     }
   }

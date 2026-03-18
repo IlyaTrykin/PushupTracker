@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
@@ -26,16 +26,26 @@ type Challenge = {
   participants: { userId: string; user: { username: string } }[];
 };
 
+type JsonObject = Record<string, unknown>;
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 async function fetchJsonSafe(url: string, init?: RequestInit) {
   const res = await fetch(url, init);
   const text = await res.text();
-  let data: any = null;
+  let data: JsonObject | null = null;
   if (text) {
-    try { data = JSON.parse(text); } catch {}
+    try {
+      const parsed = JSON.parse(text);
+      data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as JsonObject) : null;
+    } catch {}
   }
   if (!res.ok) {
-    const base = data?.error || `Ошибка (код ${res.status})`;
-    const details = data?.details || '';
+    const base = typeof data?.error === 'string' ? data.error : `Ошибка (код ${res.status})`;
+    const details = typeof data?.details === 'string' ? data.details : '';
     throw new Error(details ? `${base}: ${details}` : base);
   }
   return data;
@@ -80,7 +90,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
     return () => { mounted = false; };
   }, [params]);
 
-  const load = async (challengeId: string) => {
+  const load = useCallback(async (challengeId: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -89,20 +99,20 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
         fetchJsonSafe(`/api/challenges/${challengeId}`),
       ]);
       // /api/me returns user fields at the root level
-      setMe(meData?.id ? { id: meData.id, username: meData.username } : null);
-      setChallenge(chData.challenge);
-      setProgress(chData.progress || []);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+      setMe(typeof meData?.id === 'string' && typeof meData.username === 'string' ? { id: meData.id, username: meData.username } : null);
+      setChallenge((chData?.challenge as Challenge | undefined) ?? null);
+      setProgress(Array.isArray(chData?.progress) ? (chData.progress as ProgressRow[]) : []);
+    } catch (e) {
+      setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (!id) return;
-    load(id);
-  }, [id]);
+    void load(id);
+  }, [id, load]);
 
   const meta = useMemo(() => {
     if (!challenge) return null;
@@ -123,7 +133,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
   const myTotal = useMemo(() => {
     if (!me) return 0;
     return progressSorted.find(p => p.userId === me.id)?.total ?? 0;
-  }, [me, progress]);
+  }, [me, progressSorted]);
 
   return (
     <div className="app-page" style={{ maxWidth: 900 }}>

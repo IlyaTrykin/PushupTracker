@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 
@@ -62,7 +63,7 @@ async function resizeToWebp256(file: File): Promise<Blob> {
 export default function AdminUsersClient() {
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
-  const tt = (input: string) => t(locale, input);
+  const tt = useCallback((input: string) => t(locale, input), [locale]);
   const [rows, setRows] = useState<RowState[]>([]);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
@@ -74,7 +75,7 @@ export default function AdminUsersClient() {
 
   const sorted = useMemo(() => [...rows].sort((a, b) => a.email.localeCompare(b.email, 'ru')), [rows]);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError('');
     const res = await fetch('/api/admin/users', { cache: 'no-store' });
@@ -94,11 +95,11 @@ export default function AdminUsersClient() {
       );
     }
     setLoading(false);
-  }
+  }, [tt]);
 
   useEffect(() => {
-    load();
-  }, []);
+    void load();
+  }, [load]);
 
   function updateRow(id: string, patch: Partial<UserRow>) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch, dirty: true } : r)));
@@ -298,7 +299,7 @@ export default function AdminUsersClient() {
                   <td className="avatar-cell">
                     <div className="avatar-box">
                       {r.avatarPath ? (
-                        <img className="avatar-preview" src={r.avatarPath} alt={`${tt('Аватар')} ${r.username}`} />
+                        <Image className="avatar-preview" src={r.avatarPath} alt={`${tt('Аватар')} ${r.username}`} width={42} height={42} unoptimized />
                       ) : (
                         <span className="avatar-preview avatar-fallback">{(r.username || 'U').slice(0, 1).toUpperCase()}</span>
                       )}

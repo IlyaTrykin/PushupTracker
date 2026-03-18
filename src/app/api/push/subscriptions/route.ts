@@ -3,13 +3,24 @@ import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
 import { isPushConfigured } from '@/lib/web-push';
 
+type JsonObject = Record<string, unknown>;
+type PushSubscriptionBody = JsonObject & {
+  endpoint?: unknown;
+  keys?: {
+    p256dh?: unknown;
+    auth?: unknown;
+  };
+};
+
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
-function readBodySafe(text: string): any {
+function readBodySafe(text: string): JsonObject {
   try {
-    return text ? JSON.parse(text) : {};
+    const parsed = text ? JSON.parse(text) : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed as JsonObject;
   } catch {
     throw new Error('BAD_JSON');
   }
@@ -38,16 +49,16 @@ export async function POST(request: NextRequest) {
   }
 
   const text = await request.text();
-  let body: any;
+  let body: PushSubscriptionBody;
   try {
     body = readBodySafe(text);
   } catch {
     return jsonError('Некорректный JSON', 400);
   }
 
-  const endpoint = String(body?.endpoint || '').trim();
-  const p256dh = String(body?.keys?.p256dh || '').trim();
-  const auth = String(body?.keys?.auth || '').trim();
+  const endpoint = String(body.endpoint || '').trim();
+  const p256dh = String(body.keys?.p256dh || '').trim();
+  const auth = String(body.keys?.auth || '').trim();
 
   if (!endpoint || !p256dh || !auth) return jsonError('Некорректная push-подписка', 400);
 
@@ -83,14 +94,14 @@ export async function DELETE(request: NextRequest) {
   }
 
   const text = await request.text();
-  let body: any;
+  let body: PushSubscriptionBody;
   try {
     body = readBodySafe(text);
   } catch {
     return jsonError('Некорректный JSON', 400);
   }
 
-  const endpoint = String(body?.endpoint || '').trim();
+  const endpoint = String(body.endpoint || '').trim();
 
   if (endpoint) {
     await prisma.pushSubscription.deleteMany({ where: { userId, endpoint } });

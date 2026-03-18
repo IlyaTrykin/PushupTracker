@@ -7,6 +7,11 @@ import { filterUsersByChannel } from '@/lib/notification-preferences';
 import { sendWebPushToUsers } from '@/lib/web-push';
 import { sendAdminNewUserRegisteredEmail } from '@/lib/notification-email';
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -111,13 +116,9 @@ export async function POST(request: Request) {
     });
     setPreferredLocaleCookie(res, language, request);
     return res;
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('REGISTER ERROR:', e);
-
-    const message =
-      e && typeof e === 'object' && 'message' in e
-        ? (e as any).message
-        : String(e);
+    const message = getErrorMessage(e);
 
     return NextResponse.json(
       {

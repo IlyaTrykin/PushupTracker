@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     let userId: string;
@@ -44,8 +49,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     }
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
+  } catch (e) {
     console.error('DECLINE ERROR:', e);
-    return NextResponse.json({ error: 'INTERNAL_ERROR', details: e?.message ?? String(e) }, { status: 500 });
+    return NextResponse.json({ error: 'INTERNAL_ERROR', details: getErrorMessage(e) }, { status: 500 });
   }
 }
