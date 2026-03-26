@@ -2,8 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useI18n } from '@/i18n/provider';
 import { t } from '@/i18n/translate';
+import styles from '../login/login.module.css';
 
 export default function ForgotPasswordPage() {
   const { locale } = useI18n();
@@ -44,32 +46,60 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: '40px auto', padding: 16 }}>
-      <p style={{ color: '#4b5563' }}>{tt('Введите email из профиля, мы отправим ссылку для смены пароля.')}</p>
+    <main className={styles.page}>
+      <div className={styles.logoBackdrop} aria-hidden="true" />
+      <div className={styles.glow} aria-hidden="true" />
 
-      <form onSubmit={submit} style={{ display: 'grid', gap: 10 }}>
-        <input
+      <div className={styles.shell}>
+        <section className={styles.hero}>
+          <div className={styles.brandBadge}>{tt('Восстановление доступа')}</div>
+          <h1 className={styles.title}>{tt('Сброс пароля')}</h1>
+          <p className={styles.subtitle}>{tt('Введите email из профиля, мы отправим ссылку для смены пароля.')}</p>
+          <div className={styles.heroLogoWrap}>
+            <Image
+              src="/icons/icon-512.png"
+              alt="Pushup Tracker"
+              width={180}
+              height={180}
+              priority
+              className={styles.heroLogo}
+            />
+          </div>
+        </section>
+
+        <section className={styles.card}>
+          <form onSubmit={submit} className={styles.form}>
+            <input
           type="email"
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+              className={styles.input}
         />
-        <button
+            <button
           type="submit"
           disabled={sending}
-          style={{ padding: '10px 12px', borderRadius: 10, border: 'none', background: '#2563eb', color: '#fff', fontWeight: 800 }}
+              className={styles.primaryButton}
         >
           {sending ? tt('Отправка...') : tt('Отправить ссылку')}
         </button>
-      </form>
-
-      {error ? <p style={{ color: '#b91c1c' }}>{error}</p> : null}
-      {message ? <p style={{ color: '#065f46' }}>{message}</p> : null}
-
-      <div style={{ marginTop: 12 }}>
-        <Link href="/login">{tt('Назад ко входу')}</Link>
+            {error ? <p className={styles.error}>{error}</p> : null}
+            {message ? <p style={successStyle}>{message}</p> : null}
+            <Link href="/login" className={styles.inlineLink}>{tt('Назад ко входу')}</Link>
+          </form>
+        </section>
       </div>
-    </div>
+    </main>
   );
 }
+
+const successStyle: React.CSSProperties = {
+  margin: 0,
+  padding: '14px 16px',
+  borderRadius: 18,
+  background: 'rgba(220, 252, 231, 0.92)',
+  border: '1px solid rgba(34, 197, 94, 0.24)',
+  color: '#166534',
+  fontSize: 14,
+  fontWeight: 700,
+};

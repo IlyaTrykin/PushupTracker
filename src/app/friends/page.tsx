@@ -926,9 +926,9 @@ export default function FriendsPage() {
 
   return (
     <div className="app-page">
-      {error ? <p style={{ color: 'red', marginTop: 12 }}>{error}</p> : null}
-      {info ? <p style={{ color: 'green', marginTop: 12 }}>{info}</p> : null}
-      {loading ? <p style={{ marginTop: 12 }}>{tt('Загрузка…')}</p> : null}
+      {error ? <p style={errorBanner}>{error}</p> : null}
+      {info ? <p style={infoBanner}>{info}</p> : null}
+      {loading ? <p style={loadingBanner}>{tt('Загрузка…')}</p> : null}
 
       <section style={accentCard}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', overflowX: 'auto' }}>
@@ -951,7 +951,7 @@ export default function FriendsPage() {
               <input
                 value={newUsername}
                 onChange={(e) => setNewUsername(e.target.value)}
-                style={{ padding: 8, borderRadius: 8, border: '1px solid #ccc', width: 260 }}
+                style={{ ...fieldInput, width: 260 }}
               />
             </div>
 
@@ -1303,11 +1303,9 @@ export default function FriendsPage() {
                     value={selectedFriend}
                     onChange={(e) => setSelectedFriend(e.target.value)}
                     style={{
-                      padding: 8,
-                      borderRadius: 8,
-                      border: `1px solid ${hexToRgba(accentColor, 0.45)}`,
+                      ...fieldInput,
+                      border: `1px solid ${hexToRgba(accentColor, 0.28)}`,
                       width: 220,
-                      background: '#fff',
                     }}
                   >
                     {friends
@@ -1532,10 +1530,11 @@ export default function FriendsPage() {
 }
 
 const card: React.CSSProperties = {
-  padding: 14,
-  border: '1px solid #e5e7eb',
-  borderRadius: 10,
-  background: '#f9fafb',
+  padding: 18,
+  border: '1px solid rgba(255, 255, 255, 0.86)',
+  borderRadius: 28,
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.88) 100%)',
+  boxShadow: '0 22px 56px rgba(15, 23, 42, 0.08)',
   marginBottom: 16,
 };
 
@@ -1545,10 +1544,11 @@ const requestRow: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 10,
   flexWrap: 'wrap',
-  border: '1px solid #e5e7eb',
-  borderRadius: 10,
-  padding: 8,
-  background: '#fff',
+  border: '1px solid rgba(226, 232, 240, 0.95)',
+  borderRadius: 20,
+  padding: 12,
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.88) 100%)',
+  boxShadow: '0 14px 30px rgba(15, 23, 42, 0.05)',
 };
 
 const calendarNavWrap: React.CSSProperties = {
@@ -1572,28 +1572,31 @@ const calendarGrid: React.CSSProperties = {
 const calendarWeekdayCell: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 800,
-  color: '#000',
+  color: '#64748b',
   textAlign: 'center',
   padding: '4px 0',
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
 };
 
 const calendarEmptyCell: React.CSSProperties = {
   minHeight: 'clamp(82px, 10.5vw, 120px)',
-  border: '1px dashed #f3f4f6',
-  borderRadius: 10,
-  background: '#fff',
+  border: '1px dashed rgba(226, 232, 240, 0.92)',
+  borderRadius: 18,
+  background: 'rgba(255, 255, 255, 0.74)',
 };
 
 const calendarDayCell: React.CSSProperties = {
   minHeight: 'clamp(82px, 10.5vw, 120px)',
-  border: '1px solid #e5e7eb',
-  borderRadius: 10,
+  border: '1px solid rgba(226, 232, 240, 0.95)',
+  borderRadius: 18,
   padding: '6px 6px 6px 3px',
   display: 'grid',
   gap: 4,
   alignContent: 'start',
   cursor: 'pointer',
   textAlign: 'left',
+  boxShadow: '0 12px 24px rgba(15, 23, 42, 0.04)',
 };
 
 const friendTotalValue: React.CSSProperties = {
@@ -1629,7 +1632,7 @@ const legendItem: React.CSSProperties = {
   gap: 'clamp(6px, 0.4vw, 8px)',
   fontSize: 'clamp(12px, 0.8vw, 14px)',
   fontWeight: 800,
-  color: '#000',
+  color: '#334155',
 };
 
 const legendIcon: React.CSSProperties = {
@@ -1674,9 +1677,9 @@ const feedLimitToggleRow: React.CSSProperties = {
 const feedLimitToggleBtn: React.CSSProperties = {
   minWidth: 34,
   height: 30,
-  borderRadius: 8,
-  border: '1px solid #cbd5e1',
-  background: '#fff',
+  borderRadius: 10,
+  border: '1px solid rgba(148, 163, 184, 0.28)',
+  background: 'rgba(255, 255, 255, 0.82)',
   color: '#0f172a',
   fontSize: 13,
   fontWeight: 900,
@@ -1686,8 +1689,8 @@ const feedLimitToggleBtn: React.CSSProperties = {
 };
 
 const feedLimitToggleBtnActive: React.CSSProperties = {
-  border: '1px solid #2563eb',
-  background: '#2563eb',
+  border: '1px solid rgba(249, 115, 22, 0.2)',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
   color: '#fff',
 };
 
@@ -1712,9 +1715,10 @@ const feedTypeIcon: React.CSSProperties = {
 };
 
 const feedRowCard: React.CSSProperties = {
-  borderRadius: 12,
-  padding: '8px 10px',
+  borderRadius: 20,
+  padding: '10px 12px',
   cursor: 'pointer',
+  boxShadow: '0 14px 30px rgba(15, 23, 42, 0.06)',
 };
 
 const feedRowGrid: React.CSSProperties = {
@@ -1758,8 +1762,8 @@ const feedReactionRow: React.CSSProperties = {
 
 const feedReactionChip: React.CSSProperties = {
   borderRadius: 999,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.84)',
   minWidth: 32,
   minHeight: 24,
   padding: '0 6px',
@@ -1779,10 +1783,10 @@ const feedPopupShell: React.CSSProperties = {
 };
 
 const feedPopupPanel: React.CSSProperties = {
-  borderRadius: 12,
-  border: '1px solid #d1d5db',
-  background: '#ffffff',
-  boxShadow: '0 10px 18px rgba(15, 23, 42, 0.16)',
+  borderRadius: 16,
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.94)',
+  boxShadow: '0 18px 34px rgba(15, 23, 42, 0.12)',
   padding: '8px 10px',
   display: 'inline-flex',
   gap: 8,
@@ -1803,10 +1807,11 @@ const modalCard: React.CSSProperties = {
   width: 'min(560px, 100%)',
   maxHeight: '88vh',
   overflowY: 'auto',
-  border: '1px solid #e5e7eb',
-  borderRadius: 12,
-  background: '#f9fafb',
-  padding: 14,
+  border: '1px solid rgba(255, 255, 255, 0.82)',
+  borderRadius: 28,
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.88) 100%)',
+  padding: 18,
+  boxShadow: '0 28px 64px rgba(15, 23, 42, 0.18)',
 };
 
 const modalTop: React.CSSProperties = {
@@ -1819,12 +1824,13 @@ const modalTop: React.CSSProperties = {
 };
 
 const friendRowCard: React.CSSProperties = {
-  border: '1px solid #e5e7eb',
-  borderRadius: 10,
-  background: '#fff',
-  padding: '8px 10px',
+  border: '1px solid rgba(226, 232, 240, 0.95)',
+  borderRadius: 20,
+  background: 'rgba(255, 255, 255, 0.86)',
+  padding: '10px 12px',
   display: 'grid',
   gap: 8,
+  boxShadow: '0 14px 30px rgba(15, 23, 42, 0.06)',
 };
 
 const friendRowMain: React.CSSProperties = {
@@ -1842,8 +1848,8 @@ const reactionSummaryRow: React.CSSProperties = {
 
 const reactionSummaryChip: React.CSSProperties = {
   borderRadius: 999,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.86)',
   minWidth: 36,
   minHeight: 30,
   padding: '0 8px',
@@ -1870,7 +1876,7 @@ const miniAvatarWrap: React.CSSProperties = {
   width: 14,
   height: 14,
   borderRadius: 999,
-  border: '1px solid #d1d5db',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
   overflow: 'hidden',
   display: 'inline-flex',
   alignItems: 'center',
@@ -1890,8 +1896,8 @@ const reactionMoreMark: React.CSSProperties = {
   width: 14,
   height: 14,
   borderRadius: 999,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.88)',
   fontSize: 11,
   fontWeight: 900,
   color: '#475569',
@@ -1906,8 +1912,8 @@ const reactionPickerRow: React.CSSProperties = {
 
 const reactionButton: React.CSSProperties = {
   borderRadius: 999,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.88)',
   minWidth: 36,
   height: 30,
   padding: '0 8px',
@@ -1927,10 +1933,11 @@ const reactionCount: React.CSSProperties = {
 };
 
 const btnPrimary: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 10,
+  padding: '10px 14px',
+  borderRadius: 14,
   border: 'none',
-  backgroundColor: '#2563eb',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+  boxShadow: '0 16px 30px rgba(234, 88, 12, 0.24)',
   color: '#fff',
   fontWeight: 900,
   cursor: 'pointer',
@@ -1939,9 +1946,10 @@ const btnPrimary: React.CSSProperties = {
 const btnPlusPrimary: React.CSSProperties = {
   width: 34,
   height: 34,
-  borderRadius: 10,
+  borderRadius: 14,
   border: 'none',
-  backgroundColor: '#2563eb',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+  boxShadow: '0 14px 24px rgba(234, 88, 12, 0.22)',
   color: '#fff',
   fontWeight: 900,
   fontSize: 20,
@@ -1954,23 +1962,63 @@ const btnPlusPrimary: React.CSSProperties = {
 };
 
 const btnSecondary: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 10,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  padding: '10px 14px',
+  borderRadius: 14,
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.82)',
   cursor: 'pointer',
   fontWeight: 800,
-  color: '#000',
+  color: '#0f172a',
 };
 
 const btnDanger: React.CSSProperties = {
-  padding: '8px 10px',
-  borderRadius: 10,
-  border: '1px solid #dc2626',
-  background: '#fff',
-  color: '#dc2626',
+  padding: '10px 14px',
+  borderRadius: 14,
+  border: '1px solid rgba(239, 68, 68, 0.22)',
+  background: 'rgba(255, 255, 255, 0.86)',
+  color: '#b91c1c',
   fontWeight: 900,
   cursor: 'pointer',
+};
+
+const fieldInput: React.CSSProperties = {
+  minHeight: 46,
+  padding: '0 14px',
+  borderRadius: 14,
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.88)',
+  color: '#0f172a',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.7)',
+};
+
+const errorBanner: React.CSSProperties = {
+  margin: '0 0 12px',
+  padding: '14px 16px',
+  borderRadius: 18,
+  background: 'rgba(254, 226, 226, 0.92)',
+  border: '1px solid rgba(248, 113, 113, 0.34)',
+  color: '#b91c1c',
+  fontWeight: 700,
+};
+
+const infoBanner: React.CSSProperties = {
+  margin: '0 0 12px',
+  padding: '14px 16px',
+  borderRadius: 18,
+  background: 'rgba(220, 252, 231, 0.92)',
+  border: '1px solid rgba(34, 197, 94, 0.24)',
+  color: '#166534',
+  fontWeight: 700,
+};
+
+const loadingBanner: React.CSSProperties = {
+  margin: '0 0 12px',
+  padding: '14px 16px',
+  borderRadius: 18,
+  border: '1px solid rgba(226, 232, 240, 0.92)',
+  background: 'rgba(255, 255, 255, 0.8)',
+  color: '#475569',
+  fontWeight: 700,
 };
 
 const th: React.CSSProperties = {
