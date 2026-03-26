@@ -6,6 +6,7 @@ import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
+import styles from './dashboard.module.css';
 
 type Workout = {
   id: string;
@@ -308,7 +309,7 @@ function AvatarMini({ src }: { src?: string | null }) {
 }
 
 export default function DashboardPage() {
-  const { locale } = useI18n();
+  const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
   const exerciseType = useSyncExternalStore<ExerciseType>(subscribeExerciseType, getStoredExerciseType, () => 'pushups');
@@ -431,6 +432,7 @@ export default function DashboardPage() {
     squats: pick(statsByExercise.squats),
     plank: pick(statsByExercise.plank),
   });
+  const selectedStats = statsByExercise[exerciseType];
 
   const dayMap = useMemo(() => {
     const map = new Map<string, DayAggregate>();
@@ -654,134 +656,169 @@ export default function DashboardPage() {
   }, [detailsVisible, selectedDayData]);
 
   return (
-    <div className="app-page" style={{ maxWidth: 920 }}>
+    <div className={`app-page ${styles.page}`}>
       {toastMessage ? <div className="app-toast">{toastMessage}</div> : null}
 
-      <div style={exerciseTypePickerWrap} role="tablist" aria-label={tt('Упражнение')}>
-        {EXERCISE_ORDER.map((type) => {
-          const active = exerciseType === type;
-          return (
-            <button
-              key={type}
-              type="button"
-              onClick={() => handleExerciseTypeChange(type)}
-              style={exerciseTypePickerButton(active)}
-              title={tt(exerciseLabel(type))}
-              aria-label={tt(exerciseLabel(type))}
-              aria-pressed={active}
-            >
-              <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={38} height={38} style={exerciseTypePickerIcon} unoptimized />
-            </button>
-          );
-        })}
-      </div>
+      <section className={styles.hero}>
+        <div className={styles.entryCard}>
+          <div className={styles.entryHeader}>
+            <div className={styles.entryTitle}>{tt('Добавить')}</div>
+            <div className={styles.entryValueLabel}>{tt(exerciseValueLabel(exerciseType))}</div>
+          </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, margin: '12px 0 18px' }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#475569' }}>{tt(exerciseValueLabel(exerciseType))}</div>
-        <div
-          style={{
-            width: 'min(92vw, 520px)',
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: 10,
-          }}
-        >
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            style={smallInput}
-            aria-label={tt('Дата')}
-          />
-          <input
-            type="time"
-            value={time}
-            onChange={(e) => {
-              setTime(e.target.value);
-              setTimeTouched(true);
-            }}
-            style={smallInput}
-            aria-label={tt('Время')}
-          />
+          <div className={styles.entryBody}>
+            <div style={exerciseTypePickerWrap} role="tablist" aria-label={tt('Упражнение')}>
+              {EXERCISE_ORDER.map((type) => {
+                const active = exerciseType === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => handleExerciseTypeChange(type)}
+                    style={exerciseTypePickerButton(active)}
+                    title={tt(exerciseLabel(type))}
+                    aria-label={tt(exerciseLabel(type))}
+                    aria-pressed={active}
+                  >
+                    <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={38} height={38} style={exerciseTypePickerIcon} unoptimized />
+                  </button>
+                );
+              })}
+            </div>
+
+            <div
+              style={{
+                width: 'min(92vw, 520px)',
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: 10,
+              }}
+            >
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                style={smallInput}
+                aria-label={tt('Дата')}
+              />
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => {
+                  setTime(e.target.value);
+                  setTimeTouched(true);
+                }}
+                style={smallInput}
+                aria-label={tt('Время')}
+              />
+            </div>
+
+            <input
+              inputMode="numeric"
+              value={isPlankSelected && plankTimerStarted ? formatClock(plankSecondsLeft) : String(reps)}
+              onChange={(e) => {
+                if (isPlankSelected && plankTimerStarted) return;
+                const v = e.target.value.replace(/[^\d]/g, '');
+                setReps(v === '' ? 0 : Math.min(9999, parseInt(v, 10)));
+              }}
+              placeholder="0"
+              style={repsInputStyle}
+              readOnly={isPlankSelected && plankTimerStarted}
+            />
+
+            {!plankTimerStarted ? (
+              <>
+                <div style={plusButtonsGrid}>
+                  <button
+                    type="button"
+                    onClick={() => setReps((prev) => Math.min(9999, (prev || 0) + 5))}
+                    style={plus5Button}
+                  >
+                    {isTimedExercise(exerciseType) ? `+5 ${tt('сек')}` : '+5'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReps((prev) => Math.min(9999, (prev || 0) + 10))}
+                    style={plus10Button}
+                  >
+                    {isTimedExercise(exerciseType) ? `+10 ${tt('сек')}` : '+10'}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isPlankSelected) {
+                      handlePlankStart();
+                      return;
+                    }
+                    void handleAdd();
+                  }}
+                  style={addButton}
+                >
+                  {isPlankSelected ? tt('Старт') : tt('Добавить')}
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 14, fontWeight: 800, color: '#475569' }}>
+                  {tt('Сделал')}: {formatExerciseValue(plankElapsedSeconds, 'plank', true)}
+                </div>
+                <div style={plusButtonsGrid}>
+                  <button
+                    type="button"
+                    onClick={() => setPlankTimerActive((prev) => !prev)}
+                    style={plus5Button}
+                  >
+                    {plankTimerActive ? tt('Пауза') : tt('Продолжить')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handlePlankStop();
+                    }}
+                    style={plus10Button}
+                  >
+                    {tt('Стоп')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {(error || info) ? (
+            <div className={styles.statusStack}>
+              {error ? <p className={styles.statusError}>{error}</p> : null}
+              {info ? <p className={styles.statusInfo}>{info}</p> : null}
+            </div>
+          ) : null}
         </div>
 
-        <input
-          inputMode="numeric"
-          value={isPlankSelected && plankTimerStarted ? formatClock(plankSecondsLeft) : String(reps)}
-          onChange={(e) => {
-            if (isPlankSelected && plankTimerStarted) return;
-            const v = e.target.value.replace(/[^\d]/g, '');
-            setReps(v === '' ? 0 : Math.min(9999, parseInt(v, 10)));
-          }}
-          placeholder="0"
-          style={repsInputStyle}
-          readOnly={isPlankSelected && plankTimerStarted}
-        />
+        <div className={styles.heroStats}>
+          <div className={styles.heroStat}>
+            <div className={styles.heroStatLabel}>{tt('Сегодня')}</div>
+            <div className={styles.heroStatValue}>{formatExerciseValue(selectedStats.totalToday, exerciseType, true)}</div>
+          </div>
+          <div className={styles.heroStat}>
+            <div className={styles.heroStatLabel}>{tt('Текущая неделя')}</div>
+            <div className={styles.heroStatValue}>{formatExerciseValue(selectedStats.totalWeek, exerciseType, true)}</div>
+          </div>
+          <div className={styles.heroStat}>
+            <div className={styles.heroStatLabel}>{tt('Серия дней подряд')}</div>
+            <div className={styles.heroStatValue}>{stats.streak}</div>
+          </div>
+        </div>
+      </section>
 
-        {!plankTimerStarted ? (
-          <>
-            <div style={plusButtonsGrid}>
-              <button
-                type="button"
-                onClick={() => setReps((prev) => Math.min(9999, (prev || 0) + 5))}
-                style={plus5Button}
-              >
-                {isTimedExercise(exerciseType) ? `+5 ${tt('сек')}` : '+5'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setReps((prev) => Math.min(9999, (prev || 0) + 10))}
-                style={plus10Button}
-              >
-                {isTimedExercise(exerciseType) ? `+10 ${tt('сек')}` : '+10'}
-              </button>
-            </div>
+      <section className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionTitleBlock}>
+            <div className={styles.sectionEyebrow}>{messages.common.appName}</div>
+            <h2 className={styles.sectionTitle}>{tt('Всего')}</h2>
+          </div>
+        </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                if (isPlankSelected) {
-                  handlePlankStart();
-                  return;
-                }
-                void handleAdd();
-              }}
-              style={addButton}
-            >
-              {isPlankSelected ? tt('Старт') : tt('Добавить')}
-            </button>
-          </>
-        ) : (
-          <>
-            <div style={{ fontSize: 14, fontWeight: 800, color: '#475569' }}>
-              {tt('Сделал')}: {formatExerciseValue(plankElapsedSeconds, 'plank', true)}
-            </div>
-            <div style={plusButtonsGrid}>
-              <button
-                type="button"
-                onClick={() => setPlankTimerActive((prev) => !prev)}
-                style={plus5Button}
-              >
-                {plankTimerActive ? tt('Пауза') : tt('Продолжить')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handlePlankStop();
-                }}
-                style={plus10Button}
-              >
-                {tt('Стоп')}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-
-      {error ? <p style={{ color: 'red', marginTop: 10 }}>{error}</p> : null}
-      {info ? <p style={{ color: 'green', marginTop: 6 }}>{info}</p> : null}
-
-      <section className="app-tiles" style={{ marginBottom: 20 }}>
+        <section className="app-tiles">
         <Stat label={tt('Сегодня')} value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} />
         <Stat label={tt('Всего')} value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} />
         <Stat label={tt('Текущий год')} value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} />
@@ -791,10 +828,16 @@ export default function DashboardPage() {
         <Stat label={tt('Среднее/день (год)')} value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} />
         <Stat label={tt('Среднее/день (всего)')} value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} />
         <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={breakdownFromStats((s) => s.streak)} />
+        </section>
       </section>
 
-      <section style={card}>
-        <h2 style={{ marginTop: 0 }}>{tt('Календарь записей')}</h2>
+      <section style={card} className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>
+          <div className={styles.sectionTitleBlock}>
+            <div className={styles.sectionEyebrow}>{messages.common.appName}</div>
+            <h2 className={styles.sectionTitle}>{tt('Календарь записей')}</h2>
+          </div>
+        </div>
         <div style={calendarNavWrap}>
           <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(calendarMonth, localeTag)}</div>
           <div style={calendarNavButtons}>
@@ -999,22 +1042,23 @@ export default function DashboardPage() {
 const exerciseTypePickerWrap: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-  gap: 'clamp(4px, 1.5vw, 8px)',
+  gap: 'clamp(6px, 1.6vw, 10px)',
   width: 'min(92vw, 560px)',
-  margin: '6px auto 12px',
 };
 
 function exerciseTypePickerButton(active: boolean): React.CSSProperties {
   return {
-    height: 'clamp(46px, 14vw, 56px)',
-    borderRadius: 12,
-    border: `2px solid ${active ? '#2563eb' : '#d1d5db'}`,
-    background: active ? '#eff6ff' : '#fff',
+    height: 'clamp(52px, 14vw, 62px)',
+    borderRadius: 18,
+    border: `1px solid ${active ? 'rgba(249, 115, 22, 0.34)' : 'rgba(148, 163, 184, 0.24)'}`,
+    background: active
+      ? 'linear-gradient(180deg, rgba(255, 237, 213, 0.98) 0%, rgba(255, 247, 237, 0.92) 100%)'
+      : 'linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.92) 100%)',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer',
-    boxShadow: active ? '0 0 0 1px rgba(37, 99, 235, 0.24)' : 'none',
+    boxShadow: active ? '0 16px 28px rgba(249, 115, 22, 0.18)' : '0 10px 20px rgba(15, 23, 42, 0.05)',
     minWidth: 0,
     padding: 0,
   };
@@ -1055,18 +1099,21 @@ const statBreakdownIcon: React.CSSProperties = {
 const statBreakdownValue: React.CSSProperties = {
   fontSize: 'clamp(11px, 0.9vw, 15px)',
   fontWeight: 900,
-  color: '#111827',
+  color: '#0f172a',
   lineHeight: 1,
   fontVariantNumeric: 'tabular-nums',
 };
 
 const smallInput: React.CSSProperties = {
-  padding: '10px 12px',
-  borderRadius: 12,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  minHeight: 52,
+  padding: '10px 14px',
+  borderRadius: 18,
+  border: '1px solid rgba(148, 163, 184, 0.28)',
+  background: 'rgba(255, 255, 255, 0.86)',
   textAlign: 'center',
   fontWeight: 700,
+  color: '#0f172a',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.76)',
 };
 
 const repsInputStyle: React.CSSProperties = {
@@ -1075,12 +1122,13 @@ const repsInputStyle: React.CSSProperties = {
   fontWeight: 800,
   fontSize: 'clamp(84px, 20vw, 180px)',
   lineHeight: 1.05,
-  padding: '12px 14px',
-  borderRadius: 16,
-  border: '2px solid #e5e7eb',
+  padding: '18px 14px',
+  borderRadius: 28,
+  border: '1px solid rgba(148, 163, 184, 0.26)',
   outline: 'none',
-  color: '#000',
-  background: '#fff',
+  color: '#0f172a',
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.9) 100%)',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 18px 36px rgba(15, 23, 42, 0.08)',
 };
 
 const plusButtonsGrid: React.CSSProperties = {
@@ -1093,9 +1141,9 @@ const plusButtonsGrid: React.CSSProperties = {
 const plusButtonBase: React.CSSProperties = {
   height: 'clamp(72px, 18vw, 130px)',
   width: '100%',
-  borderRadius: 14,
-  border: 'none',
-  color: '#000',
+  borderRadius: 22,
+  border: '1px solid rgba(255, 255, 255, 0.44)',
+  color: '#0f172a',
   fontWeight: 800,
   fontSize: 'clamp(24px, 7vw, 44px)',
   lineHeight: 1,
@@ -1106,36 +1154,39 @@ const plusButtonBase: React.CSSProperties = {
   whiteSpace: 'nowrap',
   fontVariantNumeric: 'tabular-nums',
   padding: '0 10px',
+  boxShadow: '0 18px 32px rgba(15, 23, 42, 0.08)',
 };
 
 const plus5Button: React.CSSProperties = {
   ...plusButtonBase,
-  background: '#facc15',
+  background: 'linear-gradient(135deg, #fde68a 0%, #fbbf24 100%)',
 };
 
 const plus10Button: React.CSSProperties = {
   ...plusButtonBase,
-  background: '#22c55e',
+  background: 'linear-gradient(135deg, #bbf7d0 0%, #4ade80 100%)',
 };
 
 const addButton: React.CSSProperties = {
   width: 'min(92vw, 520px)',
+  minHeight: 60,
   padding: '14px 16px',
-  borderRadius: 14,
+  borderRadius: 20,
   border: 'none',
-  background: '#2563eb',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
   color: '#fff',
   fontWeight: 800,
   fontSize: 20,
   cursor: 'pointer',
+  boxShadow: '0 20px 36px rgba(234, 88, 12, 0.24)',
 };
 
 const card: React.CSSProperties = {
-  marginTop: 14,
-  border: '1px solid #e5e7eb',
-  borderRadius: 12,
-  background: '#f9fafb',
-  padding: 14,
+  border: '1px solid rgba(226, 232, 240, 0.86)',
+  borderRadius: 30,
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.86) 100%)',
+  padding: 'clamp(16px, 3vw, 22px)',
+  boxShadow: '0 22px 56px rgba(15, 23, 42, 0.08)',
 };
 
 const calendarNavWrap: React.CSSProperties = {
@@ -1153,7 +1204,7 @@ const calendarGrid: React.CSSProperties = {
   marginTop: 10,
   display: 'grid',
   gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-  gap: 6,
+  gap: 8,
 };
 
 const calendarWeekdayCell: React.CSSProperties = {
@@ -1166,21 +1217,22 @@ const calendarWeekdayCell: React.CSSProperties = {
 
 const calendarEmptyCell: React.CSSProperties = {
   minHeight: 88,
-  border: '1px dashed #f3f4f6',
-  borderRadius: 10,
-  background: '#fff',
+  border: '1px dashed rgba(226, 232, 240, 0.9)',
+  borderRadius: 16,
+  background: 'rgba(255, 255, 255, 0.72)',
 };
 
 const calendarDayCell: React.CSSProperties = {
   minHeight: 'clamp(88px, 11vw, 122px)',
-  border: '1px solid #e5e7eb',
-  borderRadius: 10,
-  padding: '6px 6px 6px 3px',
+  border: '1px solid rgba(226, 232, 240, 0.9)',
+  borderRadius: 18,
+  padding: '10px 8px 8px 8px',
   display: 'grid',
-  gap: 4,
+  gap: 6,
   alignContent: 'start',
   cursor: 'pointer',
   textAlign: 'left',
+  boxShadow: '0 12px 24px rgba(15, 23, 42, 0.04)',
 };
 
 const exerciseNumbersRow: React.CSSProperties = {
@@ -1274,8 +1326,8 @@ const reactionSummaryRow: React.CSSProperties = {
 
 const reactionSummaryChip: React.CSSProperties = {
   borderRadius: 999,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  border: '1px solid rgba(148, 163, 184, 0.26)',
+  background: 'rgba(255, 255, 255, 0.88)',
   minHeight: 24,
   padding: '0 8px',
   display: 'inline-flex',
@@ -1319,10 +1371,11 @@ const reactionMoreMark: React.CSSProperties = {
 };
 
 const rowCard: React.CSSProperties = {
-  border: '1px solid #e5e7eb',
-  borderRadius: 10,
-  background: '#fff',
-  padding: 10,
+  border: '1px solid rgba(226, 232, 240, 0.92)',
+  borderRadius: 18,
+  background: 'rgba(255, 255, 255, 0.92)',
+  padding: 12,
+  boxShadow: '0 14px 32px rgba(15, 23, 42, 0.05)',
 };
 
 const modalBackdrop: React.CSSProperties = {
@@ -1340,10 +1393,11 @@ const modalCard: React.CSSProperties = {
   width: 'min(820px, 100%)',
   maxHeight: '88vh',
   overflowY: 'auto',
-  border: '1px solid #e5e7eb',
-  borderRadius: 12,
-  background: '#f9fafb',
-  padding: 14,
+  border: '1px solid rgba(226, 232, 240, 0.92)',
+  borderRadius: 24,
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.94) 100%)',
+  padding: 18,
+  boxShadow: '0 30px 80px rgba(15, 23, 42, 0.18)',
 };
 
 const modalTop: React.CSSProperties = {
@@ -1362,36 +1416,39 @@ const editGrid: React.CSSProperties = {
 };
 
 const editInput: React.CSSProperties = {
-  padding: 8,
-  borderRadius: 8,
-  border: '1px solid #d1d5db',
+  minHeight: 44,
+  padding: '8px 10px',
+  borderRadius: 12,
+  border: '1px solid rgba(148, 163, 184, 0.3)',
   background: '#fff',
 };
 
 const btnPrimary: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 8,
+  padding: '11px 14px',
+  borderRadius: 14,
   border: 'none',
-  backgroundColor: '#2563eb',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
   color: '#fff',
   fontWeight: 800,
   cursor: 'pointer',
+  boxShadow: '0 16px 28px rgba(234, 88, 12, 0.22)',
 };
 
 const btnSecondary: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 8,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  padding: '11px 14px',
+  borderRadius: 14,
+  border: '1px solid rgba(148, 163, 184, 0.28)',
+  background: 'rgba(255, 255, 255, 0.88)',
   cursor: 'pointer',
   fontWeight: 800,
+  color: '#0f172a',
 };
 
 const btnDanger: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 8,
+  padding: '11px 14px',
+  borderRadius: 14,
   border: 'none',
-  backgroundColor: '#dc2626',
+  background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
   color: '#fff',
   fontWeight: 800,
   cursor: 'pointer',

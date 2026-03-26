@@ -314,12 +314,19 @@ export default function ChallengesPage() {
   };
 
   return (
-    <div className="app-page" style={{ maxWidth: 900 }}>
-      <div style={{ marginBottom: 12 }}>
-        <button type="button" style={btnPrimary} onClick={() => setShowCreate(v => !v)}>
-          {showCreate ? tt('Скрыть') : tt('Создать соревнование')}
-        </button>
-      </div>
+    <div className="app-page" style={page}>
+      <section style={heroCard}>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div style={eyebrow}>{tt('Соревновательный режим')}</div>
+          <h1 style={heroTitle}>{tt('Челленджи')}</h1>
+          <p style={heroText}>{tt('Запускай соревнования, управляй приглашениями и отслеживай завершённые дуэли в одном месте.')}</p>
+        </div>
+        <div>
+          <button type="button" style={btnPrimary} onClick={() => setShowCreate(v => !v)}>
+            {showCreate ? tt('Скрыть') : tt('Создать соревнование')}
+          </button>
+        </div>
+      </section>
 
       {showCreate ? (
         <section style={card}>
@@ -418,11 +425,11 @@ export default function ChallengesPage() {
             <div>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>{tt('Участники (друзья)')}</div>
               {friends.length === 0 ? (
-                <div style={{ color: '#6b7280' }}>{tt('Друзей пока нет.')}</div>
+                <div style={mutedText}>{tt('Друзей пока нет.')}</div>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                   {friends.map(f => (
-                    <label key={f.friendshipId} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <label key={f.friendshipId} style={checkboxChip}>
                       <input
                         type="checkbox"
                         checked={!!selected[f.username]}
@@ -443,9 +450,9 @@ export default function ChallengesPage() {
         </section>
       ) : null}
 
-      {error && <p style={{ color: 'red', marginTop: 12 }}>{error}</p>}
-      {info && <p style={{ color: 'green', marginTop: 12 }}>{info}</p>}
-      {loading && <p style={{ marginTop: 12 }}>{tt('Загрузка…')}</p>}
+      {error ? <p style={errorBanner}>{error}</p> : null}
+      {info ? <p style={infoBanner}>{info}</p> : null}
+      {loading ? <p style={loadingBanner}>{tt('Загрузка…')}</p> : null}
 
       {pendingConfirmationChallenges.length > 0 ? (
         <section style={card}>
@@ -455,7 +462,7 @@ export default function ChallengesPage() {
               const acceptedCount = c.participants.filter((p) => p.status === 'accepted').length;
               const pendingCount = c.participants.filter((p) => p.userId !== meId && p.status === 'pending').length;
               return (
-                <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
+                <div key={c.id} style={itemCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -492,7 +499,7 @@ export default function ChallengesPage() {
               const st = challengeStatus(c.startDate, c.endDate);
               const warn = st.active && st.daysLeft < 3 ? badge(tt(`осталось ${st.daysLeft} дн.`), 'amber') : null;
               return (
-                <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
+                <div key={c.id} style={itemCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -524,7 +531,7 @@ export default function ChallengesPage() {
           <h2 style={{ marginTop: 0 }}>{tt('Приглашения')}</h2>
           <div style={{ display: 'grid', gap: 10 }}>
             {invites.map(c => (
-              <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
+              <div key={c.id} style={itemCard}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -556,7 +563,7 @@ export default function ChallengesPage() {
           <div style={{ display: 'grid', gap: 10 }}>
             {historyChallenges.map(c => {
               return (
-                <div key={c.id} style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, background: '#fff' }}>
+                <div key={c.id} style={itemCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -585,48 +592,149 @@ export default function ChallengesPage() {
   );
 }
 
+const page: React.CSSProperties = {
+  maxWidth: 980,
+  display: 'grid',
+  gap: 18,
+};
+
+const heroCard: React.CSSProperties = {
+  display: 'grid',
+  gap: 16,
+  padding: 'clamp(18px, 3vw, 28px)',
+  borderRadius: 30,
+  border: '1px solid rgba(251, 146, 60, 0.24)',
+  background:
+    'radial-gradient(circle at top right, rgba(251, 146, 60, 0.16), transparent 28%), linear-gradient(145deg, rgba(255, 250, 243, 0.96) 0%, rgba(255, 255, 255, 0.92) 54%, rgba(239, 246, 255, 0.9) 100%)',
+  boxShadow: '0 28px 80px rgba(15, 23, 42, 0.12)',
+};
+
+const eyebrow: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  textTransform: 'uppercase',
+  letterSpacing: '0.12em',
+  color: '#c2410c',
+};
+
+const heroTitle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 'clamp(30px, 4vw, 42px)',
+  lineHeight: 0.98,
+  fontWeight: 900,
+  letterSpacing: '-0.05em',
+  color: '#0f172a',
+};
+
+const heroText: React.CSSProperties = {
+  margin: 0,
+  maxWidth: 680,
+  color: '#475569',
+  lineHeight: 1.6,
+};
+
 const card: React.CSSProperties = {
-  padding: 14,
-  border: '1px solid #e5e7eb',
-  borderRadius: 10,
-  background: '#f9fafb',
-  marginBottom: 16,
+  padding: 18,
+  border: '1px solid rgba(255, 255, 255, 0.86)',
+  borderRadius: 28,
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.88) 100%)',
+  boxShadow: '0 22px 56px rgba(15, 23, 42, 0.08)',
 };
 
 const input: React.CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   minWidth: 0,
-  padding: 8,
-  borderRadius: 6,
-  border: '1px solid #ccc',
+  minHeight: 48,
+  padding: '0 14px',
+  borderRadius: 16,
+  border: '1px solid rgba(148, 163, 184, 0.28)',
+  background: 'rgba(255, 255, 255, 0.88)',
+  color: '#0f172a',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.7)',
 };
 
 const btnPrimary: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 8,
+  padding: '10px 14px',
+  borderRadius: 14,
   border: 'none',
-  backgroundColor: '#2563eb',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+  boxShadow: '0 16px 30px rgba(234, 88, 12, 0.24)',
   color: '#fff',
-  fontWeight: 700,
+  fontWeight: 800,
   cursor: 'pointer',
 };
 
 const btnSecondary: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 8,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+  padding: '10px 14px',
+  borderRadius: 14,
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.82)',
+  color: '#0f172a',
   cursor: 'pointer',
-  fontWeight: 700,
+  fontWeight: 800,
 };
 
 const btnDanger: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 8,
-  border: 'none',
-  backgroundColor: '#dc2626',
-  color: '#fff',
-  fontWeight: 700,
+  padding: '10px 14px',
+  borderRadius: 14,
+  border: '1px solid rgba(239, 68, 68, 0.22)',
+  background: 'rgba(255, 255, 255, 0.86)',
+  color: '#b91c1c',
+  fontWeight: 800,
   cursor: 'pointer',
+};
+
+const itemCard: React.CSSProperties = {
+  padding: 14,
+  border: '1px solid rgba(226, 232, 240, 0.95)',
+  borderRadius: 22,
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.88) 100%)',
+  boxShadow: '0 16px 34px rgba(15, 23, 42, 0.06)',
+};
+
+const mutedText: React.CSSProperties = {
+  color: '#64748b',
+};
+
+const checkboxChip: React.CSSProperties = {
+  display: 'flex',
+  gap: 8,
+  alignItems: 'center',
+  padding: '10px 12px',
+  borderRadius: 14,
+  border: '1px solid rgba(148, 163, 184, 0.2)',
+  background: 'rgba(255, 255, 255, 0.74)',
+  fontWeight: 700,
+  color: '#334155',
+};
+
+const errorBanner: React.CSSProperties = {
+  margin: 0,
+  padding: '14px 16px',
+  borderRadius: 18,
+  background: 'rgba(254, 226, 226, 0.92)',
+  border: '1px solid rgba(248, 113, 113, 0.34)',
+  color: '#b91c1c',
+  fontWeight: 700,
+};
+
+const infoBanner: React.CSSProperties = {
+  margin: 0,
+  padding: '14px 16px',
+  borderRadius: 18,
+  background: 'rgba(220, 252, 231, 0.92)',
+  border: '1px solid rgba(34, 197, 94, 0.24)',
+  color: '#166534',
+  fontWeight: 700,
+};
+
+const loadingBanner: React.CSSProperties = {
+  margin: 0,
+  padding: '14px 16px',
+  borderRadius: 18,
+  border: '1px solid rgba(226, 232, 240, 0.92)',
+  background: 'rgba(255, 255, 255, 0.8)',
+  color: '#475569',
+  fontWeight: 700,
 };

@@ -246,29 +246,49 @@ export default function ProfilePage() {
     }
   }
 
-  if (loading) return <div style={{ padding: 16 }}>{messages.common.loading}</div>;
+  if (loading) return <div style={{ padding: 16, color: '#475569' }}>{messages.common.loading}</div>;
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', padding: 16 }}>
+    <div className="app-page" style={profilePage}>
       {error ? (
-        <div style={{ background: '#fee2e2', color: '#991b1b', padding: 10, borderRadius: 10, marginBottom: 12 }}>
+        <div style={errorBox}>
           {error}
         </div>
       ) : null}
 
-      <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 16 }}>
+      <section style={heroCard}>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div
+            style={{
+              ...avatarCircle,
+              width: 84,
+              height: 84,
+              fontSize: 28,
+            }}
+          >
+            {avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <span>{(profile?.username || 'U').slice(0, 1).toUpperCase()}</span>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+            <div style={eyebrow}>{messages.nav.pageTitles.profile}</div>
+            <h1 style={heroTitle}>{profile?.username || messages.profile.fields.username}</h1>
+            <div style={heroMeta}>{profile?.email}</div>
+          </div>
+        </div>
+      </section>
+
+      <section style={panelCard}>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
         <div
           style={{
+            ...avatarCircle,
             width: 72,
             height: 72,
-            borderRadius: 999,
-            background: '#e5e7eb',
-            overflow: 'hidden',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 900,
-            color: '#111827',
           }}
         >
           {avatarUrl ? (
@@ -286,14 +306,10 @@ export default function ProfilePage() {
           </div>
           <label
             style={{
+              ...buttonSecondary,
               display: 'inline-block',
-              padding: '8px 12px',
-              borderRadius: 10,
-              border: '1px solid #d1d5db',
-              background: '#fff',
               cursor: uploading ? 'not-allowed' : 'pointer',
               opacity: uploading ? 0.6 : 1,
-              fontWeight: 800,
             }}
           >
             {uploading ? messages.profile.avatar.uploading : messages.profile.avatar.upload}
@@ -312,23 +328,23 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gap: 12 }}>
+      <div style={{ display: 'grid', gap: 14 }}>
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={{ fontWeight: 800 }}>{messages.profile.fields.username}</div>
+          <div style={fieldLabel}>{messages.profile.fields.username}</div>
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+            style={fieldInput}
           />
-          <div style={{ fontSize: 12, color: '#6b7280' }}>{messages.profile.fields.usernameHint}</div>
+          <div style={fieldHint}>{messages.profile.fields.usernameHint}</div>
         </div>
 
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={{ fontWeight: 800 }}>{messages.profile.fields.gender}</div>
+          <div style={fieldLabel}>{messages.profile.fields.gender}</div>
           <select
             value={gender}
             onChange={(e) => setGender(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+            style={fieldInput}
           >
             <option value="">{messages.profile.fields.notSpecified}</option>
             <option value="male">{messages.profile.fields.male}</option>
@@ -338,24 +354,24 @@ export default function ProfilePage() {
         </div>
 
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={{ fontWeight: 800 }}>{messages.profile.fields.birthDate}</div>
+          <div style={fieldLabel}>{messages.profile.fields.birthDate}</div>
           <input
             type="date"
             value={birthDate}
             onChange={(e) => setBirthDate(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+            style={fieldInput}
           />
         </div>
 
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={{ fontWeight: 800 }}>{messages.profile.fields.weightKg}</div>
+          <div style={fieldLabel}>{messages.profile.fields.weightKg}</div>
           <input
             type="number"
             min={30}
             max={250}
             value={weightKg}
             onChange={(e) => setWeightKg(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+            style={fieldInput}
           />
         </div>
 
@@ -363,96 +379,216 @@ export default function ProfilePage() {
           <button
             onClick={save}
             disabled={saving}
-            style={{
-              padding: '10px 14px',
-              borderRadius: 10,
-              border: 'none',
-              background: '#2563eb',
-              color: '#fff',
-              fontWeight: 900,
-              cursor: saving ? 'not-allowed' : 'pointer',
-              opacity: saving ? 0.6 : 1,
-            }}
+            style={{ ...buttonPrimary, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
           >
             {saving ? messages.common.saving : messages.common.save}
           </button>
         </div>
+      </div>
+      </section>
 
-        <div style={{ marginTop: 20, borderTop: '1px solid #e5e7eb', paddingTop: 16, display: 'grid', gap: 8 }}>
-          <div style={{ fontWeight: 900, fontSize: 16 }}>{messages.profile.sections.password}</div>
+      <section style={panelCard}>
+        <div style={sectionTitle}>{messages.profile.sections.password}</div>
+        <div style={{ display: 'grid', gap: 10 }}>
           <input
             type="password"
             placeholder={messages.profile.password.current}
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+            style={fieldInput}
           />
           <input
             type="password"
             placeholder={messages.profile.password.next}
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+            style={fieldInput}
           />
           <input
             type="password"
             placeholder={messages.profile.password.confirm}
             value={confirmNewPassword}
             onChange={(e) => setConfirmNewPassword(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: '1px solid #d1d5db' }}
+            style={fieldInput}
           />
           <div>
             <button
               type="button"
               onClick={changePassword}
               disabled={changingPassword}
-              style={{
-                padding: '10px 14px',
-                borderRadius: 10,
-                border: '1px solid #1d4ed8',
-                background: '#fff',
-                color: '#1d4ed8',
-                fontWeight: 900,
-                cursor: changingPassword ? 'not-allowed' : 'pointer',
-                opacity: changingPassword ? 0.6 : 1,
-              }}
+              style={{ ...buttonSecondary, cursor: changingPassword ? 'not-allowed' : 'pointer', opacity: changingPassword ? 0.6 : 1 }}
             >
               {changingPassword ? messages.profile.password.submitting : messages.profile.password.submit}
             </button>
           </div>
         </div>
+      </section>
 
-        <div style={{ marginTop: 20, borderTop: '1px solid #e5e7eb', paddingTop: 16, display: 'grid', gap: 8 }}>
-          <div style={{ fontWeight: 900, fontSize: 16 }}>{messages.profile.sections.notifications}</div>
-          <div style={{ fontSize: 13, color: '#4b5563' }}>
+      <section style={panelCard}>
+        <div style={sectionTitle}>{messages.profile.sections.notifications}</div>
+        <div style={fieldHint}>
             {messages.profile.notifications.summary}
-          </div>
-          {profile?.isAdmin ? (
-            <div style={{ fontSize: 13, color: '#4b5563' }}>
-              {messages.profile.notifications.adminSummary}
-            </div>
-          ) : null}
-          <PushNotificationsToggle />
         </div>
+        {profile?.isAdmin ? (
+          <div style={fieldHint}>
+            {messages.profile.notifications.adminSummary}
+          </div>
+        ) : null}
+        <PushNotificationsToggle />
+      </section>
 
-        <div style={{ marginTop: 8 }}>
+      <section style={dangerCard}>
+        <div style={sectionTitle}>{messages.profile.delete.button}</div>
+        <div style={fieldHint}>{messages.profile.delete.confirm}</div>
+        <div>
           <button
             type="button"
             onClick={deleteProfile}
-            style={{
-              padding: '10px 14px',
-              borderRadius: 10,
-              border: '1px solid #ef4444',
-              background: '#fff',
-              color: '#b91c1c',
-              fontWeight: 900,
-              cursor: 'pointer',
-            }}
+            style={buttonDanger}
           >
             {messages.profile.delete.button}
           </button>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
+
+const profilePage: React.CSSProperties = {
+  maxWidth: 860,
+  display: 'grid',
+  gap: 18,
+};
+
+const heroCard: React.CSSProperties = {
+  display: 'grid',
+  gap: 14,
+  padding: 'clamp(18px, 3vw, 28px)',
+  borderRadius: 30,
+  border: '1px solid rgba(251, 146, 60, 0.24)',
+  background:
+    'radial-gradient(circle at top right, rgba(251, 146, 60, 0.16), transparent 28%), linear-gradient(145deg, rgba(255, 250, 243, 0.96) 0%, rgba(255, 255, 255, 0.92) 54%, rgba(239, 246, 255, 0.9) 100%)',
+  boxShadow: '0 28px 80px rgba(15, 23, 42, 0.12)',
+};
+
+const panelCard: React.CSSProperties = {
+  display: 'grid',
+  gap: 16,
+  padding: 'clamp(18px, 3vw, 24px)',
+  borderRadius: 28,
+  border: '1px solid rgba(255, 255, 255, 0.86)',
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.88) 100%)',
+  boxShadow: '0 20px 52px rgba(15, 23, 42, 0.08)',
+};
+
+const dangerCard: React.CSSProperties = {
+  ...panelCard,
+  border: '1px solid rgba(248, 113, 113, 0.26)',
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(254, 242, 242, 0.88) 100%)',
+};
+
+const avatarCircle: React.CSSProperties = {
+  borderRadius: 999,
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(226, 232, 240, 0.92) 100%)',
+  border: '1px solid rgba(255, 255, 255, 0.86)',
+  overflow: 'hidden',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontWeight: 900,
+  color: '#111827',
+  boxShadow: '0 16px 34px rgba(15, 23, 42, 0.1)',
+};
+
+const eyebrow: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  letterSpacing: '0.12em',
+  textTransform: 'uppercase',
+  color: '#c2410c',
+};
+
+const heroTitle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 'clamp(28px, 4vw, 40px)',
+  lineHeight: 0.98,
+  fontWeight: 900,
+  letterSpacing: '-0.05em',
+  color: '#0f172a',
+};
+
+const heroMeta: React.CSSProperties = {
+  color: '#475569',
+  fontSize: 14,
+  fontWeight: 700,
+};
+
+const sectionTitle: React.CSSProperties = {
+  fontSize: 18,
+  fontWeight: 900,
+  color: '#0f172a',
+};
+
+const fieldLabel: React.CSSProperties = {
+  fontWeight: 800,
+  color: '#0f172a',
+};
+
+const fieldHint: React.CSSProperties = {
+  fontSize: 13,
+  color: '#64748b',
+  lineHeight: 1.5,
+};
+
+const fieldInput: React.CSSProperties = {
+  width: '100%',
+  minHeight: 50,
+  padding: '0 14px',
+  borderRadius: 16,
+  border: '1px solid rgba(148, 163, 184, 0.28)',
+  background: 'rgba(255, 255, 255, 0.88)',
+  color: '#0f172a',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.7)',
+};
+
+const buttonPrimary: React.CSSProperties = {
+  minHeight: 48,
+  padding: '10px 16px',
+  borderRadius: 14,
+  border: 'none',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+  boxShadow: '0 16px 30px rgba(234, 88, 12, 0.24)',
+  color: '#fff',
+  fontWeight: 900,
+};
+
+const buttonSecondary: React.CSSProperties = {
+  minHeight: 48,
+  padding: '10px 16px',
+  borderRadius: 14,
+  border: '1px solid rgba(148, 163, 184, 0.28)',
+  background: 'rgba(255, 255, 255, 0.82)',
+  color: '#0f172a',
+  fontWeight: 900,
+};
+
+const buttonDanger: React.CSSProperties = {
+  minHeight: 48,
+  padding: '10px 16px',
+  borderRadius: 14,
+  border: '1px solid rgba(239, 68, 68, 0.22)',
+  background: 'rgba(255, 255, 255, 0.86)',
+  color: '#b91c1c',
+  fontWeight: 900,
+  cursor: 'pointer',
+};
+
+const errorBox: React.CSSProperties = {
+  margin: 0,
+  padding: '14px 16px',
+  borderRadius: 18,
+  background: 'rgba(254, 226, 226, 0.92)',
+  border: '1px solid rgba(248, 113, 113, 0.34)',
+  color: '#b91c1c',
+  fontWeight: 700,
+};

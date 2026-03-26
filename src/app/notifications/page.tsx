@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { type CSSProperties, useEffect, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 
@@ -98,61 +98,70 @@ export default function NotificationsPage() {
   };
 
   return (
-    <div style={{ maxWidth: 900, margin: '40px auto', fontFamily: 'system-ui' }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Link href="/" style={{ textDecoration: 'none' }}>← {tt('На главную')}</Link>
-      </div>
+    <div className="app-page" style={page}>
+      <section style={heroCard}>
+        <div style={heroCopy}>
+          <div style={eyebrow}>{tt('Центр уведомлений')}</div>
+          <h1 style={heroTitle}>{tt('Уведомления')}</h1>
+          <p style={heroText}>{tt('Все системные события, приглашения и обновления собраны в одном потоке.')}</p>
+        </div>
+        <div style={heroActions}>
+          <Link href="/" style={linkButton}>← {tt('На главную')}</Link>
+          <button type="button" onClick={load} style={btnSecondary}>{tt('Обновить')}</button>
+          <button type="button" onClick={markAllRead} style={btnPrimary}>{tt('Отметить всё прочитанным')}</button>
+        </div>
+      </section>
 
-      <div style={{ marginTop: 10, color: '#6b7280' }}>
-        {tt('Непрочитанных')}: <b>{unreadCount}</b>
-      </div>
+      <section style={summaryCard}>
+        <div style={summaryLabel}>{tt('Непрочитанных')}</div>
+        <div style={summaryValue}>{unreadCount}</div>
+      </section>
 
-      <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-        <button type="button" onClick={load} style={btnSecondary}>{tt('Обновить')}</button>
-        <button type="button" onClick={markAllRead} style={btnPrimary}>{tt('Отметить всё прочитанным')}</button>
-      </div>
+      {error ? <p style={errorBanner}>{error}</p> : null}
+      {info ? <p style={infoBanner}>{info}</p> : null}
+      {loading ? <p style={loadingBanner}>{tt('Загрузка…')}</p> : null}
 
-      {error && <p style={{ color: 'red', marginTop: 12 }}>{error}</p>}
-      {info && <p style={{ color: 'green', marginTop: 12 }}>{info}</p>}
-      {loading && <p style={{ marginTop: 12 }}>{tt('Загрузка…')}</p>}
-
-      <div style={{ marginTop: 16, display: 'grid', gap: 10 }}>
+      <div style={listWrap}>
         {items.length === 0 ? (
-          <div style={{ color: '#6b7280' }}>{tt('Пока уведомлений нет.')}</div>
+          <div style={emptyCard}>{tt('Пока уведомлений нет.')}</div>
         ) : (
-          items.map(n => (
-            <div
+          items.map((n) => (
+            <article
               key={n.id}
               style={{
-                padding: 12,
-                borderRadius: 10,
-                border: '1px solid #e5e7eb',
-                background: n.isRead ? '#fff' : '#fefce8',
+                ...notificationCard,
+                background: n.isRead
+                  ? 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.88) 100%)'
+                  : 'linear-gradient(180deg, rgba(255, 247, 237, 0.96) 0%, rgba(255, 255, 255, 0.92) 100%)',
+                borderColor: n.isRead ? 'rgba(226, 232, 240, 0.95)' : 'rgba(251, 146, 60, 0.28)',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontWeight: 900 }}>{n.title}</div>
-                  <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-                    {new Date(n.createdAt).toLocaleString(localeTag)} · <span style={{ fontWeight: 700 }}>{tt(n.type)}</span>
+              <div style={notificationHead}>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <div style={titleRow}>
+                    <div style={notificationTitle}>{n.title}</div>
+                    {!n.isRead ? <span style={pill}>{tt('Новое')}</span> : null}
                   </div>
-                  {n.body && <div style={{ marginTop: 8 }}>{tt(n.body)}</div>}
-                  {n.link && (
-                    <div style={{ marginTop: 8 }}>
-                      <Link href={n.link} style={{ textDecoration: 'none' }}>{tt('Открыть')}</Link>
+                  <div style={metaLine}>
+                    {new Date(n.createdAt).toLocaleString(localeTag)} · <span style={metaStrong}>{tt(n.type)}</span>
+                  </div>
+                  {n.body ? <div style={notificationBody}>{tt(n.body)}</div> : null}
+                  {n.link ? (
+                    <div>
+                      <Link href={n.link} style={linkInline}>{tt('Открыть')}</Link>
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {!n.isRead && (
+                {!n.isRead ? (
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
                     <button type="button" onClick={() => markRead(n.id)} style={btnSecondary}>
                       {tt('Прочитано')}
                     </button>
-                  )}
-                </div>
+                  </div>
+                ) : null}
               </div>
-            </div>
+            </article>
           ))
         )}
       </div>
@@ -160,21 +169,207 @@ export default function NotificationsPage() {
   );
 }
 
-const btnPrimary: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 8,
-  border: 'none',
-  backgroundColor: '#2563eb',
-  color: '#fff',
+const page: CSSProperties = {
+  display: 'grid',
+  gap: 18,
+  maxWidth: 980,
+};
+
+const heroCard: CSSProperties = {
+  display: 'grid',
+  gap: 16,
+  padding: 'clamp(18px, 3vw, 28px)',
+  borderRadius: 30,
+  border: '1px solid rgba(251, 146, 60, 0.24)',
+  background:
+    'radial-gradient(circle at top right, rgba(251, 146, 60, 0.16), transparent 28%), linear-gradient(145deg, rgba(255, 250, 243, 0.96) 0%, rgba(255, 255, 255, 0.92) 52%, rgba(239, 246, 255, 0.9) 100%)',
+  boxShadow: '0 28px 80px rgba(15, 23, 42, 0.12)',
+};
+
+const heroCopy: CSSProperties = {
+  display: 'grid',
+  gap: 8,
+};
+
+const eyebrow: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  letterSpacing: '0.12em',
+  textTransform: 'uppercase',
+  color: '#c2410c',
+};
+
+const heroTitle: CSSProperties = {
+  margin: 0,
+  color: '#0f172a',
+  fontSize: 'clamp(28px, 4vw, 42px)',
+  lineHeight: 0.98,
+  fontWeight: 900,
+  letterSpacing: '-0.05em',
+};
+
+const heroText: CSSProperties = {
+  margin: 0,
+  maxWidth: 620,
+  color: '#475569',
+  lineHeight: 1.6,
+};
+
+const heroActions: CSSProperties = {
+  display: 'flex',
+  gap: 10,
+  flexWrap: 'wrap',
+  alignItems: 'center',
+};
+
+const summaryCard: CSSProperties = {
+  display: 'grid',
+  gap: 4,
+  padding: '18px 20px',
+  borderRadius: 24,
+  border: '1px solid rgba(255, 255, 255, 0.84)',
+  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.88) 100%)',
+  boxShadow: '0 20px 50px rgba(15, 23, 42, 0.08)',
+};
+
+const summaryLabel: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: '#94a3b8',
+};
+
+const summaryValue: CSSProperties = {
+  fontSize: 'clamp(28px, 5vw, 42px)',
+  lineHeight: 1,
+  fontWeight: 900,
+  letterSpacing: '-0.05em',
+  color: '#0f172a',
+};
+
+const listWrap: CSSProperties = {
+  display: 'grid',
+  gap: 12,
+};
+
+const notificationCard: CSSProperties = {
+  padding: 18,
+  borderRadius: 24,
+  border: '1px solid rgba(226, 232, 240, 0.95)',
+  boxShadow: '0 18px 42px rgba(15, 23, 42, 0.08)',
+};
+
+const notificationHead: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: 16,
+  flexWrap: 'wrap',
+};
+
+const titleRow: CSSProperties = {
+  display: 'flex',
+  gap: 10,
+  alignItems: 'center',
+  flexWrap: 'wrap',
+};
+
+const notificationTitle: CSSProperties = {
+  fontWeight: 900,
+  fontSize: 18,
+  color: '#0f172a',
+};
+
+const metaLine: CSSProperties = {
+  fontSize: 12,
+  color: '#64748b',
+};
+
+const metaStrong: CSSProperties = {
+  fontWeight: 800,
+  color: '#475569',
+};
+
+const notificationBody: CSSProperties = {
+  color: '#334155',
+  lineHeight: 1.6,
+};
+
+const pill: CSSProperties = {
+  padding: '6px 10px',
+  borderRadius: 999,
+  background: 'rgba(249, 115, 22, 0.12)',
+  color: '#c2410c',
+  fontSize: 12,
+  fontWeight: 800,
+};
+
+const linkInline: CSSProperties = {
+  color: '#c2410c',
+  fontWeight: 800,
+  textDecoration: 'none',
+};
+
+const emptyCard: CSSProperties = {
+  padding: '20px 22px',
+  borderRadius: 22,
+  border: '1px dashed rgba(148, 163, 184, 0.35)',
+  color: '#64748b',
+  background: 'rgba(255, 255, 255, 0.56)',
+};
+
+const errorBanner: CSSProperties = {
+  margin: 0,
+  padding: '14px 16px',
+  borderRadius: 18,
+  background: 'rgba(254, 226, 226, 0.92)',
+  border: '1px solid rgba(248, 113, 113, 0.34)',
+  color: '#b91c1c',
   fontWeight: 700,
+};
+
+const infoBanner: CSSProperties = {
+  margin: 0,
+  padding: '14px 16px',
+  borderRadius: 18,
+  background: 'rgba(220, 252, 231, 0.92)',
+  border: '1px solid rgba(34, 197, 94, 0.24)',
+  color: '#166534',
+  fontWeight: 700,
+};
+
+const loadingBanner: CSSProperties = {
+  margin: 0,
+  padding: '14px 16px',
+  borderRadius: 18,
+  border: '1px solid rgba(226, 232, 240, 0.92)',
+  background: 'rgba(255, 255, 255, 0.8)',
+  color: '#475569',
+  fontWeight: 700,
+};
+
+const btnPrimary: CSSProperties = {
+  padding: '10px 14px',
+  borderRadius: 14,
+  border: 'none',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+  boxShadow: '0 16px 30px rgba(234, 88, 12, 0.24)',
+  color: '#fff',
+  fontWeight: 800,
   cursor: 'pointer',
 };
 
-const btnSecondary: React.CSSProperties = {
-  padding: '9px 12px',
-  borderRadius: 8,
-  border: '1px solid #d1d5db',
-  background: '#fff',
+const btnSecondary: CSSProperties = {
+  padding: '10px 14px',
+  borderRadius: 14,
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.82)',
+  color: '#0f172a',
   cursor: 'pointer',
-  fontWeight: 700,
+  fontWeight: 800,
+};
+
+const linkButton: CSSProperties = {
+  ...btnSecondary,
+  textDecoration: 'none',
 };

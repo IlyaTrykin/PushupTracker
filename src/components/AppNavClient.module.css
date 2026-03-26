@@ -1,0 +1,142 @@
+.headerRow {
+  gap: 16px;
+}
+
+.titleBlock {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.eyebrow {
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #c2410c;
+}
+
+.pageTitle {
+  min-width: 0;
+  color: #0f172a;
+  font-size: clamp(22px, 4vw, 30px);
+  line-height: 0.94;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerActions {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.userPill {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+  font-weight: 800;
+  max-width: min(46vw, 220px);
+}
+
+.userName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menuButton {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.88) 100%);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.bottomItem {
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.bottomIconWrap {
+  width: 46px;
+  height: 36px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.72);
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.bottomIconWrapActive {
+  border-color: rgba(249, 115, 22, 0.28);
+  background: linear-gradient(180deg, rgba(255, 237, 213, 0.98) 0%, rgba(255, 247, 237, 0.92) 100%);
+  box-shadow: 0 12px 26px rgba(249, 115, 22, 0.18);
+  transform: translateY(-1px);
+}
+
+.bottomLabel {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.drawerIdentity {
+  display: grid;
+  gap: 8px;
+}
+
+.drawerName {
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.drawerExercise {
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 237, 213, 0.72);
+  border: 1px solid rgba(249, 115, 22, 0.18);
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.languageWrap {
+  padding: 10px 2px 4px;
+  margin-top: 4px;
+  border-top: 1px solid rgba(226, 232, 240, 0.92);
+}
+
+@media (max-width: 640px) {
+  .pageTitle {
+    font-size: 20px;
+  }
+
+  .userPill {
+    max-width: 120px;
+    padding: 0 10px;
+  }
+}

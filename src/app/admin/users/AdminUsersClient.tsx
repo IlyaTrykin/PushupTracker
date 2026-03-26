@@ -344,6 +344,8 @@ export default function AdminUsersClient() {
     <div className="admin-users-wrap">
       <div className="admin-users-head">
         <div>
+          <div className="eyebrow">{tt('Admin control')}</div>
+          <h1>{tt('Пользователи и поощрения')}</h1>
           <p>{tt('Управление профилями, правами доступа, паролями и поощрениями.')}</p>
           <p className="muted">{tt('На узких экранах таблица прокручивается горизонтально.')}</p>
         </div>
@@ -543,39 +545,68 @@ export default function AdminUsersClient() {
         .admin-users-wrap {
           max-width: 1200px;
           margin: 0 auto;
-          padding: 16px;
+          padding: 0;
           display: grid;
-          gap: 16px;
+          gap: 18px;
         }
         .admin-users-head {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
-          gap: 12px;
+          gap: 16px;
           flex-wrap: wrap;
+          padding: clamp(18px, 3vw, 28px);
+          border-radius: 30px;
+          border: 1px solid rgba(251, 146, 60, 0.24);
+          background:
+            radial-gradient(circle at top right, rgba(251, 146, 60, 0.16), transparent 28%),
+            linear-gradient(145deg, rgba(255, 250, 243, 0.96) 0%, rgba(255, 255, 255, 0.92) 54%, rgba(239, 246, 255, 0.9) 100%);
+          box-shadow: 0 28px 80px rgba(15, 23, 42, 0.12);
+        }
+        .eyebrow {
+          margin-bottom: 8px;
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: #c2410c;
+        }
+        h1 {
+          margin: 0 0 8px;
+          color: #0f172a;
+          font-size: clamp(30px, 4vw, 42px);
+          line-height: 0.98;
+          font-weight: 900;
+          letter-spacing: -0.05em;
         }
         h2 {
           margin: 0;
-          font-size: 18px;
+          color: #0f172a;
+          font-size: 22px;
+          font-weight: 900;
+          letter-spacing: -0.03em;
         }
         p {
           margin: 0;
-          color: #4b5563;
+          color: #475569;
+          line-height: 1.6;
         }
         .panel {
-          border: 1px solid #d1d5db;
-          border-radius: 14px;
-          padding: 14px;
+          border: 1px solid rgba(255, 255, 255, 0.86);
+          border-radius: 28px;
+          padding: 20px;
           display: grid;
-          gap: 12px;
-          background: #fff;
+          gap: 14px;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.88) 100%);
+          box-shadow: 0 22px 56px rgba(15, 23, 42, 0.08);
         }
         .error-box {
-          border: 1px solid #fecaca;
-          background: #fef2f2;
+          border: 1px solid rgba(248, 113, 113, 0.34);
+          background: rgba(254, 226, 226, 0.92);
           color: #991b1b;
-          border-radius: 10px;
-          padding: 10px;
+          border-radius: 18px;
+          padding: 14px 16px;
+          font-weight: 700;
         }
         .create-grid {
           display: grid;
@@ -590,38 +621,46 @@ export default function AdminUsersClient() {
         }
         .text-input {
           width: 100%;
-          border: 1px solid #d1d5db;
-          border-radius: 10px;
-          padding: 9px 10px;
+          min-height: 48px;
+          border: 1px solid rgba(148, 163, 184, 0.28);
+          border-radius: 16px;
+          padding: 0 14px;
           font-size: 14px;
+          color: #0f172a;
+          background: rgba(255, 255, 255, 0.88);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
         }
         .btn {
-          border: 1px solid #2563eb;
-          background: #2563eb;
+          border: none;
+          background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+          box-shadow: 0 16px 30px rgba(234, 88, 12, 0.24);
           color: #fff;
-          border-radius: 10px;
-          padding: 8px 12px;
+          border-radius: 14px;
+          padding: 10px 14px;
           cursor: pointer;
-          font-weight: 700;
+          font-weight: 800;
         }
         .btn:disabled {
           opacity: 0.55;
           cursor: not-allowed;
         }
         .btn-secondary {
-          border-color: #d1d5db;
-          background: #fff;
-          color: #111827;
+          border: 1px solid rgba(148, 163, 184, 0.24);
+          background: rgba(255, 255, 255, 0.82);
+          box-shadow: none;
+          color: #0f172a;
         }
         .btn-danger {
-          border-color: #ef4444;
-          background: #fff;
+          border: 1px solid rgba(239, 68, 68, 0.22);
+          background: rgba(255, 255, 255, 0.86);
+          box-shadow: none;
           color: #b91c1c;
         }
         .users-table-wrap {
           overflow-x: auto;
-          border: 1px solid #e5e7eb;
-          border-radius: 10px;
+          border: 1px solid rgba(226, 232, 240, 0.95);
+          border-radius: 22px;
+          background: rgba(255, 255, 255, 0.7);
         }
         .users-table {
           width: 100%;
@@ -632,19 +671,23 @@ export default function AdminUsersClient() {
           min-width: 760px;
         }
         th, td {
-          border-bottom: 1px solid #e5e7eb;
-          padding: 10px;
+          border-bottom: 1px solid rgba(226, 232, 240, 0.95);
+          padding: 12px 10px;
           text-align: left;
           vertical-align: top;
         }
         th {
-          background: #f9fafb;
+          background: rgba(248, 250, 252, 0.84);
           font-size: 13px;
-          font-weight: 700;
+          font-weight: 800;
+          color: #475569;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
           white-space: nowrap;
         }
         td {
           font-size: 14px;
+          color: #0f172a;
         }
         .avatar-cell {
           min-width: 190px;
@@ -659,9 +702,9 @@ export default function AdminUsersClient() {
           height: 42px;
           border-radius: 999px;
           object-fit: cover;
-          border: 1px solid #e5e7eb;
+          border: 1px solid rgba(226, 232, 240, 0.95);
           flex: 0 0 auto;
-          background: #fff;
+          background: rgba(255, 255, 255, 0.88);
         }
         .avatar-fallback {
           display: inline-flex;
@@ -669,7 +712,7 @@ export default function AdminUsersClient() {
           justify-content: center;
           font-weight: 700;
           color: #374151;
-          background: #f3f4f6;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(226, 232, 240, 0.92) 100%);
         }
         .btn-file {
           position: relative;
@@ -701,7 +744,7 @@ export default function AdminUsersClient() {
         }
         .muted {
           font-size: 12px;
-          color: #6b7280;
+          color: #64748b;
           margin-top: 6px;
           word-break: break-all;
         }

@@ -8,6 +8,7 @@ import { useAuth } from '@/auth/provider';
 import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
+import styles from './AppNavClient.module.css';
 
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 type ExerciseTypeChangedDetail = ExerciseType | { exerciseType?: ExerciseType };
@@ -153,46 +154,22 @@ export default function AppNavClient() {
   return (
     <>
       <header className="app-header">
-        <div className="app-header-row">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <div style={{ fontWeight: 900, color: '#000', textDecoration: 'none', whiteSpace: 'nowrap' }}>
-              {pageTitle}
-            </div>
+        <div className={`app-header-row ${styles.headerRow}`}>
+          <div className={styles.titleBlock}>
+            <div className={styles.eyebrow}>{messages.common.appName}</div>
+            <div className={styles.pageTitle}>{pageTitle}</div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end' }}>
-            <div
-              style={{
-                color: '#000',
-                fontWeight: 800,
-                maxWidth: 140,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <AvatarCircle src={me?.avatarPath ?? null} size={22} />
-                <span>{me?.username || messages.common.guest}</span>
-              </span>
+          <div className={styles.headerActions}>
+            <div className={styles.userPill}>
+              <AvatarCircle src={me?.avatarPath ?? null} size={22} />
+              <span className={styles.userName}>{me?.username || messages.common.guest}</span>
             </div>
             <button
               type="button"
-              className="app-menu-btn"
+              className={`${styles.menuButton} app-menu-btn`}
               onClick={() => setOpen(true)}
               aria-label={messages.nav.menuAria}
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 10,
-                border: '1px solid #d1d5db',
-                background: '#fff',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                flex: '0 0 auto',
-              }}
             >
               <Image src="/icons/bottom-nav/menu.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
             </button>
@@ -201,29 +178,39 @@ export default function AppNavClient() {
       </header>
 
       <nav className="bottom-nav" role="navigation" aria-label={messages.nav.menuAria}>
-        <Link className={bottomItemClass(navActive('/dashboard'))} href="/dashboard" aria-label={messages.nav.bottom.dashboard}>
-          <Image src={`/icons/bottom-nav/training.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} unoptimized />
-          <span className="bottom-nav__label">{messages.nav.bottom.dashboard}</span>
+        <Link className={`${bottomItemClass(navActive('/dashboard'))} ${styles.bottomItem}`} href="/dashboard" aria-label={messages.nav.bottom.dashboard}>
+          <span className={`${styles.bottomIconWrap} ${navActive('/dashboard') ? styles.bottomIconWrapActive : ''}`}>
+            <Image src={`/icons/bottom-nav/training.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} unoptimized />
+          </span>
+          <span className={`${styles.bottomLabel} bottom-nav__label`}>{messages.nav.bottom.dashboard}</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/program'))} href="/program" aria-label={messages.nav.bottom.program}>
-          <Image src="/icons/bottom-nav/program.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
-          <span className="bottom-nav__label">{messages.nav.bottom.program}</span>
+        <Link className={`${bottomItemClass(navActive('/program'))} ${styles.bottomItem}`} href="/program" aria-label={messages.nav.bottom.program}>
+          <span className={`${styles.bottomIconWrap} ${navActive('/program') ? styles.bottomIconWrapActive : ''}`}>
+            <Image src="/icons/bottom-nav/program.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
+          </span>
+          <span className={`${styles.bottomLabel} bottom-nav__label`}>{messages.nav.bottom.program}</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/friends'))} href="/friends" aria-label={messages.nav.bottom.friends}>
-          <Image src="/icons/bottom-nav/friends.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
-          <span className="bottom-nav__label">{messages.nav.bottom.friends}</span>
+        <Link className={`${bottomItemClass(navActive('/friends'))} ${styles.bottomItem}`} href="/friends" aria-label={messages.nav.bottom.friends}>
+          <span className={`${styles.bottomIconWrap} ${navActive('/friends') ? styles.bottomIconWrapActive : ''}`}>
+            <Image src="/icons/bottom-nav/friends.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
+          </span>
+          <span className={`${styles.bottomLabel} bottom-nav__label`}>{messages.nav.bottom.friends}</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/challenges'))} href="/challenges" aria-label={messages.nav.bottom.challenges}>
-          <Image src={`/icons/bottom-nav/challenges.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} unoptimized />
-          <span className="bottom-nav__label">{messages.nav.bottom.challenges}</span>
+        <Link className={`${bottomItemClass(navActive('/challenges'))} ${styles.bottomItem}`} href="/challenges" aria-label={messages.nav.bottom.challenges}>
+          <span className={`${styles.bottomIconWrap} ${navActive('/challenges') ? styles.bottomIconWrapActive : ''}`}>
+            <Image src={`/icons/bottom-nav/challenges.svg?v=${navIconVersion}`} className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} unoptimized />
+          </span>
+          <span className={`${styles.bottomLabel} bottom-nav__label`}>{messages.nav.bottom.challenges}</span>
         </Link>
 
-        <Link className={bottomItemClass(navActive('/progress'))} href="/progress" aria-label={messages.nav.bottom.progress}>
-          <Image src="/icons/bottom-nav/summary.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
-          <span className="bottom-nav__label">{messages.nav.bottom.progress}</span>
+        <Link className={`${bottomItemClass(navActive('/progress'))} ${styles.bottomItem}`} href="/progress" aria-label={messages.nav.bottom.progress}>
+          <span className={`${styles.bottomIconWrap} ${navActive('/progress') ? styles.bottomIconWrapActive : ''}`}>
+            <Image src="/icons/bottom-nav/summary.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
+          </span>
+          <span className={`${styles.bottomLabel} bottom-nav__label`}>{messages.nav.bottom.progress}</span>
         </Link>
       </nav>
 
@@ -231,11 +218,9 @@ export default function AppNavClient() {
         <div className="app-drawer-overlay" onClick={() => setOpen(false)}>
           <div className="app-drawer" onClick={(e) => e.stopPropagation()}>
             <div className="app-drawer__top">
-              <div className="app-drawer__user">
-                <div style={{ fontWeight: 900, color: '#000' }}>
-                  {me?.username || messages.nav.unauthorized}
-                </div>
-                <div style={{ fontSize: 12, color: '#000', opacity: 0.75 }}>{exerciseLabel}</div>
+              <div className={styles.drawerIdentity}>
+                <div className={styles.drawerName}>{me?.username || messages.nav.unauthorized}</div>
+                <div className={styles.drawerExercise}>{exerciseLabel}</div>
               </div>
 
               <button type="button" className="app-drawer__close" onClick={() => setOpen(false)} aria-label={messages.nav.closeAria}>
@@ -265,7 +250,7 @@ export default function AppNavClient() {
               </a>
 
               {me?.username ? (
-                <div style={{ padding: '4px 2px' }}>
+                <div className={styles.languageWrap}>
                   <LanguageSelect
                     value={locale}
                     onChange={handleLanguageChange}
