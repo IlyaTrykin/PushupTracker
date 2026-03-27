@@ -3,8 +3,10 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import {
   formatExerciseValue,
   programBaselinePromptLabel,
@@ -110,6 +112,11 @@ type CreateNumericField =
   | 'weightKg';
 type ExerciseType = CreateForm['exerciseType'];
 type JsonObject = Record<string, unknown>;
+type ProgramCachePayload = {
+  profileHints: ProgramProfileHints;
+  activePrograms: ProgramDetail[];
+  history: ProgramHistoryRow[];
+};
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -343,9 +350,11 @@ function suggestedDurationWeeks(args: {
 }
 
 export default function ProgramPage() {
+  const { user } = useAuth();
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
+  const cacheKey = useMemo(() => getUserScopedCacheKey('program', user?.id, user?.username), [user?.id, user?.username]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -374,30 +383,41 @@ export default function ProgramPage() {
     sex: 'unknown',
   });
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const applyPayload = useCallback((payload: ProgramCachePayload) => {
+    setActivePrograms(Array.isArray(payload.activePrograms) ? payload.activePrograms : []);
+    setHistory(Array.isArray(payload.history) ? payload.history : []);
+    setProfileHints(payload.profileHints || { ageYears: null, weightKg: null, sex: null });
+    setForm((prev) => ({
+      ...prev,
+      ageYears: payload.profileHints?.ageYears ?? prev.ageYears,
+      weightKg: payload.profileHints?.weightKg ?? prev.weightKg,
+      sex: payload.profileHints?.sex && isSex(payload.profileHints.sex) ? payload.profileHints.sex : prev.sex,
+    }));
+  }, []);
+
+  const load = useCallback(async ({ preferCache = false }: { preferCache?: boolean } = {}) => {
+    const cached = preferCache ? readCachedValue<ProgramCachePayload>(cacheKey) : null;
+    setLoading(!cached);
     setError(null);
+    if (cached) applyPayload(cached);
     try {
       const data = (await fetchJson('/api/program')) as ProgramOverview;
-      setActivePrograms(Array.isArray(data.activePrograms) ? data.activePrograms : []);
-      setHistory(Array.isArray(data.history) ? data.history : []);
-      setProfileHints(data.profileHints || { ageYears: null, weightKg: null, sex: null });
-
-      setForm((prev) => ({
-        ...prev,
-        ageYears: data.profileHints?.ageYears ?? prev.ageYears,
-        weightKg: data.profileHints?.weightKg ?? prev.weightKg,
-        sex: data.profileHints?.sex && isSex(data.profileHints.sex) ? data.profileHints.sex : prev.sex,
-      }));
+      const payload: ProgramCachePayload = {
+        activePrograms: Array.isArray(data.activePrograms) ? data.activePrograms : [],
+        history: Array.isArray(data.history) ? data.history : [],
+        profileHints: data.profileHints || { ageYears: null, weightKg: null, sex: null },
+      };
+      applyPayload(payload);
+      writeCachedValue(cacheKey, payload);
     } catch (e) {
-      setError(tt(getErrorMessage(e) || 'Не удалось загрузить программу'));
+      if (!cached) setError(tt(getErrorMessage(e) || 'Не удалось загрузить программу'));
     } finally {
       setLoading(false);
     }
-  }, [tt]);
+  }, [applyPayload, cacheKey, tt]);
 
   useEffect(() => {
-    void load();
+    void load({ preferCache: true });
   }, [load]);
 
   const resolvedForm = useMemo(() => ({

@@ -7,6 +7,7 @@ import { AuthProvider } from '@/auth/provider';
 import AppNav from '@/components/AppNav';
 import RegisterSW from '@/components/RegisterSW';
 import ScreenWakeLock from '@/components/ScreenWakeLock';
+import TapSound from '@/components/TapSound';
 import { LocaleProvider } from '@/i18n/provider';
 import { getRequestLocale } from '@/i18n/server';
 import { getAuthUserFromSessionToken } from '@/lib/auth';
@@ -113,6 +114,7 @@ export default async function RootLayout({
               {swRecoveryScript}
             </Script>
             <ScreenWakeLock />
+            <TapSound />
             <RegisterSW />
             <AppNav />
             <div className="app-shell"><div className="app-content">{children}</div></div>

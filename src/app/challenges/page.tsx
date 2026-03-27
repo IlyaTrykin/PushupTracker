@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import {
   challengeDailyMinLabel,
   challengeMostLabel,
@@ -37,6 +39,11 @@ type ChallengeListItem = {
 };
 
 type JsonObject = Record<string, unknown>;
+type ChallengesCachePayload = {
+  meId: string;
+  friends: Friend[];
+  challenges: ChallengeListItem[];
+};
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -121,9 +128,11 @@ function badge(text: string, tone: 'gray' | 'green' | 'amber' | 'red') {
 }
 
 export default function ChallengesPage() {
+  const { user } = useAuth();
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
+  const cacheKey = useMemo(() => getUserScopedCacheKey('challenges', user?.id, user?.username), [user?.id, user?.username]);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [challenges, setChallenges] = useState<ChallengeListItem[]>([]);
   const [meId, setMeId] = useState<string>('');
@@ -141,34 +150,48 @@ export default function ChallengesPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const applyPayload = useCallback((payload: ChallengesCachePayload) => {
+    setMeId(typeof payload.meId === 'string' ? payload.meId : '');
+    setFriends(Array.isArray(payload.friends) ? payload.friends : []);
+    setChallenges(Array.isArray(payload.challenges) ? payload.challenges : []);
+  }, []);
+
   const loadAll = useCallback(async ({
     showLoading = true,
     resetInfo = true,
+    preferCache = false,
   }: {
     showLoading?: boolean;
     resetInfo?: boolean;
+    preferCache?: boolean;
   } = {}) => {
-    if (showLoading) setLoading(true);
+    const cached = preferCache ? readCachedValue<ChallengesCachePayload>(cacheKey) : null;
+    if (showLoading) setLoading(!cached);
     setError(null);
     if (resetInfo) setInfo(null);
+    if (cached) applyPayload(cached);
     try {
       const [me, fr, ch] = await Promise.all([
         fetchJsonSafe('/api/me'),
         fetchJsonSafe('/api/friends'),
         fetchJsonSafe('/api/challenges'),
       ]);
-      setMeId(typeof me?.id === 'string' ? me.id : '');
-      setFriends(Array.isArray(fr) ? (fr as Friend[]) : []);
-      setChallenges(Array.isArray(ch) ? (ch as ChallengeListItem[]) : []);
+      const payload: ChallengesCachePayload = {
+        meId: typeof me?.id === 'string' ? me.id : '',
+        friends: Array.isArray(fr) ? (fr as Friend[]) : [],
+        challenges: Array.isArray(ch) ? (ch as ChallengeListItem[]) : [],
+      };
+      applyPayload(payload);
+      writeCachedValue(cacheKey, payload);
     } catch (e: unknown) {
-      setError(getErrorMessage(e));
+      if (!cached) setError(getErrorMessage(e));
     } finally {
-      if (showLoading) setLoading(false);
+      setLoading(false);
     }
-  }, []);
+  }, [applyPayload, cacheKey]);
 
   useEffect(() => {
-    void loadAll();
+    void loadAll({ preferCache: true });
   }, [loadAll]);
 
   useEffect(() => {

@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { type CSSProperties, useEffect, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 
 type NotificationItem = {
   id: string;
@@ -13,6 +15,11 @@ type NotificationItem = {
   link: string | null;
   isRead: boolean;
   createdAt: string;
+};
+
+type NotificationsCachePayload = {
+  items: NotificationItem[];
+  unreadCount: number;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -38,33 +45,44 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
 }
 
 export default function NotificationsPage() {
+  const { user } = useAuth();
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = (input: string) => t(locale, input);
+  const cacheKey = useMemo(() => getUserScopedCacheKey('notifications', user?.id, user?.username), [user?.id, user?.username]);
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
+  const applyPayload = useCallback((payload: NotificationsCachePayload) => {
+    setItems(Array.isArray(payload.items) ? payload.items : []);
+    setUnreadCount(typeof payload.unreadCount === 'number' ? payload.unreadCount : 0);
+  }, []);
+
+  const load = useCallback(async ({ preferCache = false }: { preferCache?: boolean } = {}) => {
+    const cached = preferCache ? readCachedValue<NotificationsCachePayload>(cacheKey) : null;
+    setLoading(!cached);
     setError(null);
     setInfo(null);
+    if (cached) applyPayload(cached);
     try {
       const data = await fetchJsonSafe('/api/notifications');
-      const items = Array.isArray(data?.items) ? (data.items as NotificationItem[]) : [];
-      const unreadCount = typeof data?.unreadCount === 'number' ? data.unreadCount : 0;
-      setItems(items);
-      setUnreadCount(unreadCount);
+      const payload: NotificationsCachePayload = {
+        items: Array.isArray(data?.items) ? (data.items as NotificationItem[]) : [],
+        unreadCount: typeof data?.unreadCount === 'number' ? data.unreadCount : 0,
+      };
+      applyPayload(payload);
+      writeCachedValue(cacheKey, payload);
     } catch (e: unknown) {
-      setError(getErrorMessage(e));
+      if (!cached) setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  };
+  }, [applyPayload, cacheKey]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load({ preferCache: true }); }, [load]);
 
   const markRead = async (id: string) => {
     setError(null);
@@ -107,7 +125,7 @@ export default function NotificationsPage() {
         </div>
         <div style={heroActions}>
           <Link href="/" style={linkButton}>← {tt('На главную')}</Link>
-          <button type="button" onClick={load} style={btnSecondary}>{tt('Обновить')}</button>
+          <button type="button" onClick={() => void load()} style={btnSecondary}>{tt('Обновить')}</button>
           <button type="button" onClick={markAllRead} style={btnPrimary}>{tt('Отметить всё прочитанным')}</button>
         </div>
       </section>

@@ -2,8 +2,10 @@
 
 import Image from 'next/image';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
 
 interface Friend {
@@ -129,6 +131,14 @@ type TableRow = {
   friend: Pick<Friend, 'friendshipId' | 'username' | 'avatarPath' | 'isFollowing'>;
   statsAll: Stats;
   statsByExercise: StatsByExercise;
+};
+type FriendsCachePayload = {
+  me: MeSummary | null;
+  myWorkouts: Workout[];
+  friends: Friend[];
+  incomingRequests: PendingRequest[];
+  outgoingRequests: PendingRequest[];
+  friendWorkouts: Record<string, Workout[]>;
 };
 
 const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
@@ -368,9 +378,11 @@ async function fetchJson(url: string) {
 }
 
 export default function FriendsPage() {
+  const { user } = useAuth();
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
+  const cacheKey = useMemo(() => getUserScopedCacheKey('friends', user?.id, user?.username), [user?.id, user?.username]);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<PendingRequest[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<PendingRequest[]>([]);
@@ -401,36 +413,47 @@ export default function FriendsPage() {
   const [feedViewportHeight, setFeedViewportHeight] = useState<number | null>(null);
   const feedListRef = useRef<HTMLDivElement | null>(null);
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  const applyPayload = useCallback((payload: FriendsCachePayload) => {
+    setMe(payload.me || null);
+    setMyWorkouts(Array.isArray(payload.myWorkouts) ? payload.myWorkouts : []);
+    setFriends(Array.isArray(payload.friends) ? payload.friends : []);
+    setIncomingRequests(Array.isArray(payload.incomingRequests) ? payload.incomingRequests : []);
+    setOutgoingRequests(Array.isArray(payload.outgoingRequests) ? payload.outgoingRequests : []);
+    setFriendWorkouts(payload.friendWorkouts && typeof payload.friendWorkouts === 'object' ? payload.friendWorkouts : {});
+  }, []);
+
+  const loadAll = useCallback(async ({ preferCache = false }: { preferCache?: boolean } = {}) => {
+    const cached = preferCache ? readCachedValue<FriendsCachePayload>(cacheKey) : null;
+    setLoading(!cached);
     setError(null);
     setInfo(null);
+    if (cached) applyPayload(cached);
 
     try {
       const meData = (await fetchJson('/api/me')) as MeSummary;
-      setMe(meData || null);
-
       const mine = (await fetchJson('/api/workouts')) as Workout[];
-      setMyWorkouts(mine || []);
-
       const fr = (await fetchJson('/api/friends')) as Friend[];
-      setFriends(fr || []);
-
       const req = (await fetchJson('/api/friends/requests')) as FriendRequestsPayload;
-      setIncomingRequests(req?.incoming || []);
-      setOutgoingRequests(req?.outgoing || []);
-
       const byUser = (await fetchJson('/api/friends/workouts')) as Record<string, Workout[]>;
-      setFriendWorkouts((byUser && typeof byUser === 'object') ? byUser : {});
+      const payload: FriendsCachePayload = {
+        me: meData || null,
+        myWorkouts: mine || [],
+        friends: fr || [],
+        incomingRequests: req?.incoming || [],
+        outgoingRequests: req?.outgoing || [],
+        friendWorkouts: (byUser && typeof byUser === 'object') ? byUser : {},
+      };
+      applyPayload(payload);
+      writeCachedValue(cacheKey, payload);
     } catch (e) {
-      setError(getErrorMessage(e));
+      if (!cached) setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyPayload, cacheKey]);
 
   useEffect(() => {
-    void loadAll();
+    void loadAll({ preferCache: true });
   }, [loadAll]);
 
   const loadFriendWorkoutReactions = useCallback(async (workoutIds: string[]) => {
@@ -956,7 +979,7 @@ export default function FriendsPage() {
             </div>
 
             <button type="submit" style={btnPrimary}>{tt('Добавить')}</button>
-            <button type="button" onClick={loadAll} style={btnSecondary}>{tt('Обновить')}</button>
+            <button type="button" onClick={() => void loadAll()} style={btnSecondary}>{tt('Обновить')}</button>
           </form>
         ) : null}
 

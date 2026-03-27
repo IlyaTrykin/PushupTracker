@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
@@ -65,8 +66,14 @@ type ReactionSummaryItem = {
 
 type JsonObject = Record<string, unknown>;
 
+type CachedWorkoutsPayload = {
+  items: Workout[];
+  updatedAt: string;
+};
+
 const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
+const WORKOUTS_CACHE_VERSION = '20260327-1';
 
 const EXERCISE_LABELS: Record<string, string> = {
   pushups: 'Отжимания',
@@ -151,6 +158,38 @@ function isJsonObject(value: unknown): value is JsonObject {
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   return String(error);
+}
+
+function getWorkoutsCacheKey(userId?: string, username?: string): string | null {
+  const identity = userId || username;
+  return identity ? `dashboard-workouts:${WORKOUTS_CACHE_VERSION}:${identity}` : null;
+}
+
+function readCachedWorkouts(cacheKey: string | null): CachedWorkoutsPayload | null {
+  if (!cacheKey || typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isJsonObject(parsed) || !Array.isArray(parsed.items)) return null;
+    return {
+      items: parsed.items as Workout[],
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedWorkouts(cacheKey: string | null, items: Workout[]) {
+  if (!cacheKey || typeof window === 'undefined') return;
+  try {
+    const payload: CachedWorkoutsPayload = {
+      items,
+      updatedAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch {}
 }
 
 async function fetchJsonSafe(url: string, init?: RequestInit) {
@@ -248,7 +287,7 @@ function computeStats(workouts: Workout[]): Stats {
 
 function Stat({ label, value, breakdown }: { label: string; value: number | string; breakdown?: StatBreakdown }) {
   return (
-    <div className="app-tile">
+    <div className={`app-tile${breakdown ? ' app-tile--breakdown' : ''}`}>
       <div className="app-tile__title">{label}</div>
       {!breakdown ? <div className="app-tile__value">{value}</div> : null}
       {breakdown ? (
@@ -309,6 +348,7 @@ function AvatarMini({ src }: { src?: string | null }) {
 }
 
 export default function DashboardPage() {
+  const { user } = useAuth();
   const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
@@ -337,6 +377,7 @@ export default function DashboardPage() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailDay, setDetailDay] = useState<string | null>(null);
   const [workoutReactions, setWorkoutReactions] = useState<Record<string, WorkoutReactionPayload>>({});
+  const [initialLoadReady, setInitialLoadReady] = useState(false);
   const calendarMonthInitializedRef = useRef(false);
   const repsRef = useRef(reps);
   const plankSecondsLeftRef = useRef(plankSecondsLeft);
@@ -344,6 +385,10 @@ export default function DashboardPage() {
   const plankElapsedSeconds = useMemo(
     () => Math.max(0, Math.max(0, reps) - Math.max(0, plankSecondsLeft)),
     [reps, plankSecondsLeft],
+  );
+  const workoutsCacheKey = useMemo(
+    () => getWorkoutsCacheKey(user?.id, user?.username),
+    [user?.id, user?.username],
   );
 
   useEffect(() => {
@@ -380,15 +425,22 @@ export default function DashboardPage() {
           ? (data.items as Workout[])
           : [];
       applyLoadedWorkouts(items);
+      writeCachedWorkouts(workoutsCacheKey, items);
     } catch (error: unknown) {
       setError(getErrorMessage(error));
     }
-  }, [applyLoadedWorkouts]);
+  }, [applyLoadedWorkouts, workoutsCacheKey]);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadInitialWorkouts = async () => {
+      const cached = readCachedWorkouts(workoutsCacheKey);
+      if (cached && !cancelled) {
+        applyLoadedWorkouts(cached.items);
+        setInitialLoadReady(true);
+      }
+
       try {
         const data = await fetchJsonSafe('/api/workouts');
         const items = Array.isArray(data)
@@ -398,9 +450,13 @@ export default function DashboardPage() {
             : [];
         if (cancelled) return;
         applyLoadedWorkouts(items);
+        writeCachedWorkouts(workoutsCacheKey, items);
       } catch (error: unknown) {
         if (cancelled) return;
+        if (cached) return;
         setError(getErrorMessage(error));
+      } finally {
+        if (!cancelled) setInitialLoadReady(true);
       }
     };
 
@@ -408,7 +464,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [applyLoadedWorkouts]);
+  }, [applyLoadedWorkouts, workoutsCacheKey]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -661,11 +717,6 @@ export default function DashboardPage() {
 
       <section className={styles.hero}>
         <div className={styles.entryCard}>
-          <div className={styles.entryHeader}>
-            <div className={styles.entryTitle}>{tt('Добавить')}</div>
-            <div className={styles.entryValueLabel}>{tt(exerciseValueLabel(exerciseType))}</div>
-          </div>
-
           <div className={styles.entryBody}>
             <div style={exerciseTypePickerWrap} role="tablist" aria-label={tt('Упражнение')}>
               {EXERCISE_ORDER.map((type) => {
@@ -688,7 +739,9 @@ export default function DashboardPage() {
 
             <div
               style={{
-                width: 'min(92vw, 520px)',
+                width: '100%',
+                maxWidth: 520,
+                marginInline: 'auto',
                 display: 'grid',
                 gridTemplateColumns: '1fr 1fr',
                 gap: 10,
@@ -813,22 +866,25 @@ export default function DashboardPage() {
       <section className={styles.sectionCard}>
         <div className={styles.sectionHeader}>
           <div className={styles.sectionTitleBlock}>
-            <div className={styles.sectionEyebrow}>{messages.common.appName}</div>
             <h2 className={styles.sectionTitle}>{tt('Всего')}</h2>
           </div>
         </div>
 
-        <section className="app-tiles">
-        <Stat label={tt('Сегодня')} value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} />
-        <Stat label={tt('Всего')} value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} />
-        <Stat label={tt('Текущий год')} value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} />
-        <Stat label={tt('Текущий месяц')} value={stats.totalMonth} breakdown={breakdownFromStats((s) => s.totalMonth)} />
-        <Stat label={tt('Текущая неделя')} value={stats.totalWeek} breakdown={breakdownFromStats((s) => s.totalWeek)} />
-        <Stat label={tt('Среднее/день (месяц)')} value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} />
-        <Stat label={tt('Среднее/день (год)')} value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} />
-        <Stat label={tt('Среднее/день (всего)')} value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} />
-        <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={breakdownFromStats((s) => s.streak)} />
-        </section>
+        {initialLoadReady ? (
+          <section className="app-tiles">
+            <Stat label={tt('Сегодня')} value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} />
+            <Stat label={tt('Всего')} value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} />
+            <Stat label={tt('Текущий год')} value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} />
+            <Stat label={tt('Текущий месяц')} value={stats.totalMonth} breakdown={breakdownFromStats((s) => s.totalMonth)} />
+            <Stat label={tt('Текущая неделя')} value={stats.totalWeek} breakdown={breakdownFromStats((s) => s.totalWeek)} />
+            <Stat label={tt('Среднее/день (месяц)')} value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} />
+            <Stat label={tt('Среднее/день (год)')} value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} />
+            <Stat label={tt('Среднее/день (всего)')} value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} />
+            <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={breakdownFromStats((s) => s.streak)} />
+          </section>
+        ) : (
+          <div className={styles.sectionLoading}>{messages.common.loading}</div>
+        )}
       </section>
 
       <section style={card} className={styles.sectionCard}>
@@ -838,78 +894,84 @@ export default function DashboardPage() {
             <h2 className={styles.sectionTitle}>{tt('Календарь записей')}</h2>
           </div>
         </div>
-        <div style={calendarNavWrap}>
-          <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(calendarMonth, localeTag)}</div>
-          <div style={calendarNavButtons}>
-            <button type="button" style={btnSecondary} onClick={() => setCalendarMonth((d) => addCalendarMonths(d, -1))}>
-              {tt('Предыдущий')}
-            </button>
-            <button type="button" style={btnSecondary} onClick={() => setCalendarMonth((d) => addCalendarMonths(d, 1))}>
-              {tt('Следующий')}
-            </button>
-          </div>
-        </div>
-
-        <div style={calendarGrid}>
-          {weekdays.map((day) => (
-            <div key={day} style={calendarWeekdayCell}>{day}</div>
-          ))}
-
-          {calendarCells.map((cell, idx) => {
-            if (!cell) return <div key={`empty-${idx}`} style={calendarEmptyCell} />;
-            const row = dayMap.get(cell.key);
-            const hasData = Boolean(row && row.items.length);
-            const active = detailsOpen && detailDay === cell.key;
-            const isToday = cell.key === todayKey;
-            const cellDate = new Date(`${cell.key}T00:00:00`);
-            const dayOfWeek = cellDate.getDay();
-            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-            const baseBackground = hasData ? '#f8fafc' : '#fff';
-            const exerciseTotals = EXERCISE_ORDER
-              .map((type) => ({ type, sum: row?.byExercise.get(type) ?? 0 }))
-              .filter((x) => x.sum > 0);
-
-            return (
-              <button
-                key={cell.key}
-                type="button"
-                onClick={() => {
-                  if (!hasData) return;
-                  setDetailDay(cell.key);
-                  setDetailsOpen(true);
-                  setEditingId(null);
-                }}
-                style={{
-                  ...calendarDayCell,
-                  background: isWeekend
-                    ? `linear-gradient(rgba(244, 114, 182, 0.12), rgba(244, 114, 182, 0.12)), ${baseBackground}`
-                    : baseBackground,
-                  borderColor: isToday ? '#16a34a' : active ? '#2563eb' : hasData ? '#d1d5db' : '#f3f4f6',
-                  boxShadow: isToday ? 'inset 0 0 0 1px #16a34a' : 'none',
-                }}
-              >
-                <div style={{ fontWeight: 900, textAlign: 'left', color: '#000' }}>{cell.day}</div>
-                <div style={exerciseNumbersRow}>
-                  {exerciseTotals.map(({ type, sum }) => (
-                    <span key={type} style={exerciseNumberItem}>
-                      <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={22} height={22} style={exerciseNumberIcon} unoptimized />
-                      <span style={exerciseNumber}>{sum}</span>
-                    </span>
-                  ))}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        <div style={legendWrap}>
-          {EXERCISE_ORDER.map((type) => (
-            <div key={type} style={legendItem}>
-              <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={20} height={20} style={legendIcon} unoptimized />
-              <span>{tt(exerciseLabel(type))}</span>
+        {initialLoadReady ? (
+          <>
+            <div style={calendarNavWrap}>
+              <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(calendarMonth, localeTag)}</div>
+              <div style={calendarNavButtons}>
+                <button type="button" style={btnSecondary} onClick={() => setCalendarMonth((d) => addCalendarMonths(d, -1))}>
+                  {tt('Предыдущий')}
+                </button>
+                <button type="button" style={btnSecondary} onClick={() => setCalendarMonth((d) => addCalendarMonths(d, 1))}>
+                  {tt('Следующий')}
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
+
+            <div style={calendarGrid}>
+              {weekdays.map((day) => (
+                <div key={day} style={calendarWeekdayCell}>{day}</div>
+              ))}
+
+              {calendarCells.map((cell, idx) => {
+                if (!cell) return <div key={`empty-${idx}`} style={calendarEmptyCell} />;
+                const row = dayMap.get(cell.key);
+                const hasData = Boolean(row && row.items.length);
+                const active = detailsOpen && detailDay === cell.key;
+                const isToday = cell.key === todayKey;
+                const cellDate = new Date(`${cell.key}T00:00:00`);
+                const dayOfWeek = cellDate.getDay();
+                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                const baseBackground = hasData ? '#f8fafc' : '#fff';
+                const exerciseTotals = EXERCISE_ORDER
+                  .map((type) => ({ type, sum: row?.byExercise.get(type) ?? 0 }))
+                  .filter((x) => x.sum > 0);
+
+                return (
+                  <button
+                    key={cell.key}
+                    type="button"
+                    onClick={() => {
+                      if (!hasData) return;
+                      setDetailDay(cell.key);
+                      setDetailsOpen(true);
+                      setEditingId(null);
+                    }}
+                    style={{
+                      ...calendarDayCell,
+                      background: isWeekend
+                        ? `linear-gradient(rgba(244, 114, 182, 0.12), rgba(244, 114, 182, 0.12)), ${baseBackground}`
+                        : baseBackground,
+                      borderColor: isToday ? '#16a34a' : active ? '#2563eb' : hasData ? '#d1d5db' : '#f3f4f6',
+                      boxShadow: isToday ? 'inset 0 0 0 1px #16a34a' : 'none',
+                    }}
+                  >
+                    <div style={{ fontWeight: 900, textAlign: 'left', color: '#000' }}>{cell.day}</div>
+                    <div style={exerciseNumbersRow}>
+                      {exerciseTotals.map(({ type, sum }) => (
+                        <span key={type} style={exerciseNumberItem}>
+                          <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={22} height={22} style={exerciseNumberIcon} unoptimized />
+                          <span style={exerciseNumber}>{sum}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={legendWrap}>
+              {EXERCISE_ORDER.map((type) => (
+                <div key={type} style={legendItem}>
+                  <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={20} height={20} style={legendIcon} unoptimized />
+                  <span>{tt(exerciseLabel(type))}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className={styles.sectionLoading}>{messages.common.loading}</div>
+        )}
       </section>
 
       {detailsVisible ? (
@@ -1043,7 +1105,9 @@ const exerciseTypePickerWrap: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
   gap: 'clamp(6px, 1.6vw, 10px)',
-  width: 'min(92vw, 560px)',
+  width: '100%',
+  maxWidth: 560,
+  marginInline: 'auto',
 };
 
 function exerciseTypePickerButton(active: boolean): React.CSSProperties {
@@ -1075,17 +1139,21 @@ const statBreakdownWrap: React.CSSProperties = {
   marginTop: 2,
   width: '100%',
   display: 'grid',
-  gap: 1,
+  gap: 2,
   alignContent: 'start',
+  justifyItems: 'start',
 };
 
 const statBreakdownItem: React.CSSProperties = {
-  display: 'inline-flex',
+  display: 'grid',
+  gridTemplateColumns: 'clamp(16px, 1.2vw, 20px) auto',
   alignItems: 'center',
-  justifyContent: 'center',
-  gap: 'clamp(2px, 0.25vw, 4px)',
+  justifyContent: 'start',
+  justifyItems: 'start',
+  gap: 'clamp(3px, 0.3vw, 6px)',
   minWidth: 0,
   lineHeight: 1,
+  width: '100%',
 };
 
 const statBreakdownIcon: React.CSSProperties = {
@@ -1094,6 +1162,7 @@ const statBreakdownIcon: React.CSSProperties = {
   objectFit: 'contain',
   display: 'block',
   flex: '0 0 auto',
+  justifySelf: 'center',
 };
 
 const statBreakdownValue: React.CSSProperties = {
@@ -1102,6 +1171,7 @@ const statBreakdownValue: React.CSSProperties = {
   color: '#0f172a',
   lineHeight: 1,
   fontVariantNumeric: 'tabular-nums',
+  textAlign: 'left',
 };
 
 const smallInput: React.CSSProperties = {
@@ -1117,7 +1187,9 @@ const smallInput: React.CSSProperties = {
 };
 
 const repsInputStyle: React.CSSProperties = {
-  width: 'min(92vw, 520px)',
+  width: '100%',
+  maxWidth: 520,
+  marginInline: 'auto',
   textAlign: 'center',
   fontWeight: 800,
   fontSize: 'clamp(84px, 20vw, 180px)',
@@ -1132,7 +1204,9 @@ const repsInputStyle: React.CSSProperties = {
 };
 
 const plusButtonsGrid: React.CSSProperties = {
-  width: 'min(92vw, 520px)',
+  width: '100%',
+  maxWidth: 520,
+  marginInline: 'auto',
   display: 'grid',
   gridTemplateColumns: '1fr 1fr',
   gap: 12,
@@ -1168,7 +1242,9 @@ const plus10Button: React.CSSProperties = {
 };
 
 const addButton: React.CSSProperties = {
-  width: 'min(92vw, 520px)',
+  width: '100%',
+  maxWidth: 520,
+  marginInline: 'auto',
   minHeight: 60,
   padding: '14px 16px',
   borderRadius: 20,
@@ -1204,7 +1280,7 @@ const calendarGrid: React.CSSProperties = {
   marginTop: 10,
   display: 'grid',
   gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
-  gap: 8,
+  gap: 6,
 };
 
 const calendarWeekdayCell: React.CSSProperties = {
@@ -1216,23 +1292,24 @@ const calendarWeekdayCell: React.CSSProperties = {
 };
 
 const calendarEmptyCell: React.CSSProperties = {
-  minHeight: 88,
+  minHeight: 'clamp(82px, 10.5vw, 120px)',
   border: '1px dashed rgba(226, 232, 240, 0.9)',
   borderRadius: 16,
   background: 'rgba(255, 255, 255, 0.72)',
 };
 
 const calendarDayCell: React.CSSProperties = {
-  minHeight: 'clamp(88px, 11vw, 122px)',
+  minHeight: 'clamp(82px, 10.5vw, 120px)',
   border: '1px solid rgba(226, 232, 240, 0.9)',
   borderRadius: 18,
-  padding: '10px 8px 8px 8px',
+  padding: '6px 6px 6px 3px',
   display: 'grid',
-  gap: 6,
+  gap: 4,
   alignContent: 'start',
   cursor: 'pointer',
   textAlign: 'left',
   boxShadow: '0 12px 24px rgba(15, 23, 42, 0.04)',
+  overflow: 'hidden',
 };
 
 const exerciseNumbersRow: React.CSSProperties = {
@@ -1240,32 +1317,35 @@ const exerciseNumbersRow: React.CSSProperties = {
   gap: 1,
   alignContent: 'start',
   justifyItems: 'start',
-  marginLeft: -1,
+  marginLeft: 0,
 };
 
 const exerciseNumber: React.CSSProperties = {
-  display: 'inline-block',
-  fontSize: 'clamp(12px, 0.95vw, 17px)',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 0,
+  fontSize: 'clamp(10px, 0.78vw, 14px)',
   lineHeight: 1,
   fontWeight: 900,
   color: '#000',
   whiteSpace: 'nowrap',
+  fontVariantNumeric: 'tabular-nums',
 };
 
 const exerciseNumberItem: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 'clamp(1px, 0.2vw, 4px)',
+  gap: 0,
   whiteSpace: 'nowrap',
   minWidth: 0,
 };
 
 const exerciseNumberIcon: React.CSSProperties = {
-  width: 'clamp(14px, 1.2vw, 22px)',
-  height: 'clamp(14px, 1.2vw, 22px)',
+  width: 'clamp(12px, 0.95vw, 16px)',
+  height: 'clamp(12px, 0.95vw, 16px)',
   objectFit: 'contain',
   flex: '0 0 auto',
-  marginLeft: -3,
+  marginLeft: 0,
   marginRight: 1,
 };
 

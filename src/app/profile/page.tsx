@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import PushNotificationsToggle from '@/components/PushNotificationsToggle';
 import { useI18n } from '@/i18n/provider';
+import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 
 type Profile = {
   id: string;
@@ -69,8 +70,9 @@ async function resizeToWebp256(file: File): Promise<Blob> {
 }
 
 export default function ProfilePage() {
-  const { setUser } = useAuth();
+  const { user, setUser } = useAuth();
   const { messages } = useI18n();
+  const cacheKey = useMemo(() => getUserScopedCacheKey('profile', user?.id, user?.username), [user?.id, user?.username]);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [username, setUsername] = useState('');
@@ -90,41 +92,50 @@ export default function ProfilePage() {
     return p ? p : '';
   }, [profile?.avatarPath]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const applyProfile = useCallback((nextProfile: Profile) => {
+    setProfile(nextProfile);
+    setUser({
+      id: nextProfile.id,
+      email: nextProfile.email,
+      username: nextProfile.username,
+      isAdmin: nextProfile.isAdmin,
+      avatarPath: nextProfile.avatarPath,
+      language: nextProfile.language,
+    });
+    setUsername(nextProfile.username || '');
+    setGender(nextProfile.gender || '');
+    setBirthDate(toDateInputValue(nextProfile.birthDate));
+    setWeightKg(nextProfile.weightKg != null ? String(nextProfile.weightKg) : '');
+  }, [setUser]);
+
+  const load = useCallback(async ({ preferCache = false }: { preferCache?: boolean } = {}) => {
+    const cached = preferCache ? readCachedValue<Profile>(cacheKey) : null;
+    setLoading(!cached);
     setError('');
+    if (cached) applyProfile(cached);
     try {
       const res = await fetch('/api/profile', { cache: 'no-store', credentials: 'include' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setProfile(null);
-        setUser(null);
-        setError(data.error || messages.profile.errors.load);
+        if (!cached) {
+          setProfile(null);
+          setUser(null);
+          setError(data.error || messages.profile.errors.load);
+        }
       } else {
         const nextProfile = data as Profile;
-        setProfile(nextProfile);
-        setUser({
-          id: nextProfile.id,
-          email: nextProfile.email,
-          username: nextProfile.username,
-          isAdmin: nextProfile.isAdmin,
-          avatarPath: nextProfile.avatarPath,
-          language: nextProfile.language,
-        });
-        setUsername(nextProfile.username || '');
-        setGender(nextProfile.gender || '');
-        setBirthDate(toDateInputValue(nextProfile.birthDate));
-        setWeightKg(nextProfile.weightKg != null ? String(nextProfile.weightKg) : '');
+        applyProfile(nextProfile);
+        writeCachedValue(cacheKey, nextProfile);
       }
     } catch {
-      setError(messages.profile.errors.network);
+      if (!cached) setError(messages.profile.errors.network);
     } finally {
       setLoading(false);
     }
-  }, [messages.profile.errors.load, messages.profile.errors.network, setUser]);
+  }, [applyProfile, cacheKey, messages.profile.errors.load, messages.profile.errors.network, setUser]);
 
   useEffect(() => {
-    void load();
+    void load({ preferCache: true });
   }, [load]);
 
   async function save() {

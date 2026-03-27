@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
+import { clearClientDataCaches } from '@/lib/client-cache';
 import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
@@ -12,6 +13,7 @@ import styles from './AppNavClient.module.css';
 
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 type ExerciseTypeChangedDetail = ExerciseType | { exerciseType?: ExerciseType };
+const APP_SHELL_PREWARM_VERSION = '20260327-1';
 
 function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles']) {
   if (!pathname || pathname === '/') return titles.home;
@@ -101,10 +103,34 @@ export default function AppNavClient() {
     return () => window.removeEventListener('exerciseTypeChanged', onChanged);
   }, []);
 
+  useEffect(() => {
+    if (!me?.username || !('serviceWorker' in navigator)) return;
+
+    const identity = me.id || me.username;
+    const prewarmKey = `app-shell-prewarmed:${APP_SHELL_PREWARM_VERSION}:${identity}`;
+    const routes = ['/dashboard', '/program', '/friends', '/challenges', '/progress', '/notifications', '/profile'];
+    if (me.isAdmin) routes.push('/admin/users');
+
+    const prewarm = async () => {
+      try {
+        if (window.localStorage.getItem(prewarmKey) === '1') return;
+        const registration = await navigator.serviceWorker.ready;
+        registration.active?.postMessage({ type: 'PREWARM_ROUTES', routes });
+        window.localStorage.setItem(prewarmKey, '1');
+      } catch {}
+    };
+
+    void prewarm();
+  }, [me?.id, me?.isAdmin, me?.username]);
+
   const logout = async () => {
     try {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
     } catch {}
+    try {
+      navigator.serviceWorker.controller?.postMessage({ type: 'CLEAR_RUNTIME_CACHES' });
+    } catch {}
+    clearClientDataCaches();
     setUser(null);
     window.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
     window.location.href = '/login';
