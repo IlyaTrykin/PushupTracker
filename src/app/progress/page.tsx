@@ -11,6 +11,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
+import { useAuth } from '@/auth/provider';
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { Messages } from '@/i18n/messages';
@@ -30,6 +31,7 @@ import type {
 import { fillTemplate, toExerciseType } from '@/lib/analytics/utils';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
+import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 
 const EXERCISE_OPTIONS: ExerciseFilter[] = ['all', 'pushups', 'pullups', 'squats', 'crunches', 'plank'];
 
@@ -903,9 +905,11 @@ function InsightsPanel({ insights }: { insights: Insight[] }) {
 }
 
 export default function ProgressPage() {
+  const { user } = useAuth();
   const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const progress = messages.progress;
+  const cacheKey = useMemo(() => getUserScopedCacheKey('progress-workouts', user?.id, user?.username), [user?.id, user?.username]);
   const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -917,15 +921,20 @@ export default function ProgressPage() {
     let cancelled = false;
 
     (async () => {
-      setLoading(true);
+      const cached = readCachedValue<WorkoutRecord[]>(cacheKey);
+      setLoading(!cached);
       setError(null);
+      if (cached && !cancelled) setWorkouts(cached);
       try {
         const response = await fetchJsonSafe<WorkoutRecord[] | { items?: WorkoutRecord[] }>('/api/workouts');
         const items = Array.isArray(response) ? response : response?.items ?? [];
-        if (!cancelled) setWorkouts(items);
+        if (!cancelled) {
+          setWorkouts(items);
+          writeCachedValue(cacheKey, items);
+        }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : progress.errorTitle;
-        if (!cancelled) setError(message);
+        if (!cancelled && !cached) setError(message);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -934,7 +943,7 @@ export default function ProgressPage() {
     return () => {
       cancelled = true;
     };
-  }, [progress.errorTitle]);
+  }, [cacheKey, progress.errorTitle]);
 
   const deferredPeriod = useDeferredValue(period);
   const deferredExercise = useDeferredValue(exercise);

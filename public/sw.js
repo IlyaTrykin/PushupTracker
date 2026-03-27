@@ -1,10 +1,18 @@
 /**
  * PushUp SW (safe for Next.js)
- * Key rule: NEVER cache /_next/* (build chunks) and never cache /api/*
+ * We cache:
+ * - hashed /_next/static/* assets
+ * - icons/manifest
+ * - same-origin app navigations for faster repeat opens
+ * We never cache:
+ * - /api/*
+ * - /_next/image and other dynamic internals
  */
 
-const VERSION = 'v5'; // при больших изменениях меняем версию, чтобы сбросить старый cache-first
+const VERSION = 'v7';
 const STATIC_CACHE = `pushup-static-${VERSION}`;
+const NEXT_STATIC_CACHE = `pushup-next-static-${VERSION}`;
+const NAVIGATION_CACHE = `pushup-navigation-${VERSION}`;
 
 self.addEventListener('install', () => {
   // Новая версия SW активируется сразу
@@ -17,7 +25,7 @@ self.addEventListener('activate', (event) => {
     const keys = await caches.keys();
     await Promise.all(
       keys
-        .filter((k) => k.startsWith('pushup-static-') && k !== STATIC_CACHE)
+        .filter((k) => k.startsWith('pushup-') && ![STATIC_CACHE, NEXT_STATIC_CACHE, NAVIGATION_CACHE].includes(k))
         .map((k) => caches.delete(k))
     );
 
@@ -37,6 +45,31 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+  if (event.data && event.data.type === 'CLEAR_RUNTIME_CACHES') {
+    event.waitUntil((async () => {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((k) => k.startsWith('pushup-'))
+          .map((k) => caches.delete(k))
+      );
+    })());
+  }
+  if (event.data && event.data.type === 'PREWARM_ROUTES' && Array.isArray(event.data.routes)) {
+    event.waitUntil((async () => {
+      const cache = await caches.open(NAVIGATION_CACHE);
+      const routes = Array.from(new Set(event.data.routes.filter((route) => typeof route === 'string')));
+      await Promise.all(routes.map(async (route) => {
+        try {
+          const request = new Request(route, { method: 'GET', credentials: 'include' });
+          const response = await fetch(request);
+          if (response.ok) {
+            await cache.put(request, response.clone());
+          }
+        } catch {}
+      }));
+    })());
+  }
 });
 
 function isSameOrigin(url) {
@@ -44,22 +77,62 @@ function isSameOrigin(url) {
 }
 
 function shouldBypass(url) {
-  // ВАЖНО: чанки Next и API — только сеть, без кеша
+  // Dynamic Next internals and API are always network-only.
   return (
-    url.pathname.startsWith('/_next/') ||
+    (url.pathname.startsWith('/_next/') && !url.pathname.startsWith('/_next/static/')) ||
     url.pathname.startsWith('/api/') ||
     url.pathname === '/sw.js'
   );
 }
 
 function isStaticAsset(url) {
-  // Кешируем только “безопасную” статику (иконки/manifest)
   return (
     url.pathname === '/manifest.webmanifest' ||
     url.pathname === '/apple-touch-icon.png' ||
     url.pathname === '/favicon.ico' ||
     url.pathname.startsWith('/icons/')
   );
+}
+
+function isNextStaticAsset(url) {
+  return url.pathname.startsWith('/_next/static/');
+}
+
+function isAppNavigation(url, request) {
+  if (request.mode !== 'navigate') return false;
+  if (url.pathname.startsWith('/api/')) return false;
+  if (url.pathname.startsWith('/_next/')) return false;
+  return true;
+}
+
+async function staleWhileRevalidateNavigation(request) {
+  const cache = await caches.open(NAVIGATION_CACHE);
+  const cached = await cache.match(request);
+  const networkPromise = fetch(request).then((response) => {
+    if (response.ok) cache.put(request, response.clone());
+    return response;
+  });
+
+  if (cached) {
+    return cached;
+  }
+
+  return networkPromise;
+}
+
+async function staleWhileRevalidateAsset(cacheName, request) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
+  const networkPromise = fetch(request).then((response) => {
+    if (response.ok) cache.put(request, response.clone());
+    return response;
+  });
+
+  if (cached) {
+    return cached;
+  }
+
+  return networkPromise;
 }
 
 self.addEventListener('fetch', (event) => {
@@ -73,39 +146,33 @@ self.addEventListener('fetch', (event) => {
   // Не лезем в чужие домены
   if (!isSameOrigin(url)) return;
 
-  // Не кешируем чанки / API
+  // Never cache API or dynamic Next internals.
   if (shouldBypass(url)) {
     event.respondWith(fetch(req));
     return;
   }
 
-  // Навигация: network-first (чтобы всегда брать актуальную версию страниц)
-  if (req.mode === 'navigate') {
+  if (isAppNavigation(url, req)) {
     event.respondWith(
-      fetch(req).catch(async () => {
-        // Можно сделать offline страницу, но пока вернём просто fallback на корень
-        const cached = await caches.match('/');
+      staleWhileRevalidateNavigation(req).catch(async () => {
+        const cache = await caches.open(NAVIGATION_CACHE);
+        const cached = await cache.match(req);
         return cached || Response.error();
       })
     );
     return;
   }
 
-  // Иконки/manifest: cache-first
   if (isStaticAsset(url)) {
-    event.respondWith((async () => {
-      const cache = await caches.open(STATIC_CACHE);
-      const cached = await cache.match(req);
-      if (cached) return cached;
-
-      const res = await fetch(req);
-      if (res.ok) cache.put(req, res.clone());
-      return res;
-    })());
+    event.respondWith(staleWhileRevalidateAsset(STATIC_CACHE, req));
     return;
   }
 
-  // Всё остальное: network-first без записи в кеш
+  if (isNextStaticAsset(url)) {
+    event.respondWith(staleWhileRevalidateAsset(NEXT_STATIC_CACHE, req));
+    return;
+  }
+
   event.respondWith(fetch(req));
 });
 

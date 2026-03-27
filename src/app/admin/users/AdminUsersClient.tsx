@@ -121,6 +121,7 @@ export default function AdminUsersClient() {
       setRewardRows(
         (rewardsData.rewards || []).map((reward: RewardRow) => ({
           ...reward,
+          message: typeof reward.message === 'string' ? tt(reward.message) : reward.message,
           dirty: false,
           saving: false,
           deleting: false,

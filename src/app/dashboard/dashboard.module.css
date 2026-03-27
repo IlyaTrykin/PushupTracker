@@ -20,11 +20,14 @@
 
 .heroStats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+  width: 100%;
+  min-width: 0;
 }
 
 .heroStat {
+  min-width: 0;
   padding: 14px 16px;
   border-radius: 22px;
   border: 1px solid rgba(255, 255, 255, 0.86);
@@ -33,6 +36,7 @@
   backdrop-filter: blur(14px);
   display: grid;
   gap: 6px;
+  text-align: center;
 }
 
 .heroStatLabel {
@@ -56,6 +60,7 @@
   z-index: 1;
   display: grid;
   gap: 16px;
+  min-width: 0;
   padding: clamp(16px, 3vw, 24px);
   border-radius: 28px;
   border: 1px solid rgba(255, 255, 255, 0.88);
@@ -64,32 +69,15 @@
   backdrop-filter: blur(18px);
 }
 
-.entryHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.entryTitle {
-  font-size: 13px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: #c2410c;
-}
-
-.entryValueLabel {
-  color: #475569;
-  font-size: 13px;
-  font-weight: 700;
-}
-
 .entryBody {
   display: grid;
+  width: 100%;
+  min-width: 0;
   gap: 12px;
-  justify-items: center;
+}
+
+.entryBody > * {
+  min-width: 0;
 }
 
 .statusStack {
@@ -158,10 +146,42 @@
   letter-spacing: -0.04em;
 }
 
+.sectionLoading {
+  min-height: 140px;
+  border-radius: 22px;
+  border: 1px dashed rgba(148, 163, 184, 0.26);
+  background: rgba(255, 255, 255, 0.56);
+  display: grid;
+  place-items: center;
+  color: #64748b;
+  font-weight: 800;
+}
+
 @media (max-width: 640px) {
   .hero {
     border-radius: 26px;
     padding: 16px;
+  }
+
+  .heroStats {
+    gap: 8px;
+  }
+
+  .heroStat {
+    padding: 10px 8px;
+    border-radius: 18px;
+    gap: 4px;
+  }
+
+  .heroStatLabel {
+    font-size: 10px;
+    line-height: 1.15;
+    letter-spacing: 0.04em;
+    word-break: break-word;
+  }
+
+  .heroStatValue {
+    font-size: clamp(16px, 5.6vw, 22px);
   }
 
   .entryCard,
