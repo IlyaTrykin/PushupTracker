@@ -60,6 +60,33 @@ async function getAccessibleWorkoutIds(userId: string, requestedWorkoutIds: stri
     for (const f of links) {
       accessibleOwners.add(f.userId === userId ? f.friendId : f.userId);
     }
+
+    const groupIds = (
+      await prisma.groupMembership.findMany({
+        where: {
+          userId,
+          status: 'active',
+          group: { deletedAt: null },
+        },
+        select: { groupId: true },
+      })
+    ).map((membership) => membership.groupId);
+
+    if (groupIds.length) {
+      const peers = await prisma.groupMembership.findMany({
+        where: {
+          groupId: { in: groupIds },
+          status: 'active',
+          userId: { in: ownerIds },
+          group: { deletedAt: null },
+        },
+        select: { userId: true },
+      });
+
+      for (const peer of peers) {
+        accessibleOwners.add(peer.userId);
+      }
+    }
   }
 
   return workouts.filter((w) => accessibleOwners.has(w.userId)).map((w) => w.id);
@@ -168,18 +195,36 @@ export async function POST(request: NextRequest) {
     if (!workout) return jsonError('Тренировка не найдена', 404);
 
     if (workout.userId !== userId) {
-      const friendLink = await prisma.friendship.findFirst({
-        where: {
-          status: 'accepted',
-          OR: [
-            { userId, friendId: workout.userId },
-            { userId: workout.userId, friendId: userId },
-          ],
-        },
-        select: { id: true },
-      });
+      const [friendLink, sharedGroup] = await Promise.all([
+        prisma.friendship.findFirst({
+          where: {
+            status: 'accepted',
+            OR: [
+              { userId, friendId: workout.userId },
+              { userId: workout.userId, friendId: userId },
+            ],
+          },
+          select: { id: true },
+        }),
+        prisma.groupMembership.findFirst({
+          where: {
+            userId: workout.userId,
+            status: 'active',
+            group: {
+              deletedAt: null,
+              memberships: {
+                some: {
+                  userId,
+                  status: 'active',
+                },
+              },
+            },
+          },
+          select: { id: true },
+        }),
+      ]);
 
-      if (!friendLink) return jsonError('Нет доступа к тренировке', 403);
+      if (!friendLink && !sharedGroup) return jsonError('Нет доступа к тренировке', 403);
     }
 
     const existing = await prisma.workoutReaction.findUnique({

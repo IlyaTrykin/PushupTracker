@@ -9,21 +9,21 @@ datasource db {
 }
 
 model User {
-  id                      String                 @id @default(uuid())
-  email                   String                 @unique
-  username                String                 @unique
-  passwordHash            String
-  createdAt               DateTime               @default(now())
-  updatedAt               DateTime               @updatedAt
-  language                String                 @default("ru")
-  gender                  String?
-  birthDate               DateTime?
-  weightKg                Int?
-  avatarPath              String?
-  deletedAt               DateTime?
-  deletedById             String?
-  deletedBy               User?                  @relation("UserDeletedBy", fields: [deletedById], references: [id])
-  deletedUsers            User[]                 @relation("UserDeletedBy")
+  id           String    @id @default(uuid())
+  email        String    @unique
+  username     String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  language     String    @default("ru")
+  gender       String?
+  birthDate    DateTime?
+  weightKg     Int?
+  avatarPath   String?
+  deletedAt    DateTime?
+  deletedById  String?
+  deletedBy    User?     @relation("UserDeletedBy", fields: [deletedById], references: [id])
+  deletedUsers User[]    @relation("UserDeletedBy")
 
   workouts                Workout[]
   friendships             Friendship[]           @relation("UserFriendships")
@@ -34,31 +34,122 @@ model User {
   Notification            Notification[]
   isAdmin                 Boolean                @default(false)
 
-  profileHistory          UserProfileHistory[]   @relation("UserProfileHistoryUser")
-  profileChangesMade      UserProfileHistory[]   @relation("UserProfileChangedBy")
-  passwordResetTokens     PasswordResetToken[]
-  friendFollows           FriendFollow[]         @relation("FriendFollowFollower")
-  followedBy              FriendFollow[]         @relation("FriendFollowFriend")
-  workoutReactions        WorkoutReaction[]
-  pushSubscriptions       PushSubscription[]
-  pushFriendRequest       Boolean                @default(true)
-  pushChallengeInvite     Boolean                @default(true)
-  pushChallengeRankChange Boolean                @default(true)
-  notificationPreferences NotificationPreference[]
-  trainingPrograms        TrainingProgram[]
+  profileHistory           UserProfileHistory[]     @relation("UserProfileHistoryUser")
+  profileChangesMade       UserProfileHistory[]     @relation("UserProfileChangedBy")
+  passwordResetTokens      PasswordResetToken[]
+  friendFollows            FriendFollow[]           @relation("FriendFollowFollower")
+  followedBy               FriendFollow[]           @relation("FriendFollowFriend")
+  workoutReactions         WorkoutReaction[]
+  pushSubscriptions        PushSubscription[]
+  ownedGroups              Group[]                  @relation("GroupOwner")
+  groupMemberships         GroupMembership[]
+  groupJoinRequests        GroupJoinRequest[]
+  groupAuditLogsAuthored   GroupAuditLog[]          @relation("GroupAuditActor")
+  groupAuditLogsTargeting  GroupAuditLog[]          @relation("GroupAuditTargetUser")
+  pushFriendRequest        Boolean                  @default(true)
+  pushChallengeInvite      Boolean                  @default(true)
+  pushChallengeRankChange  Boolean                  @default(true)
+  notificationPreferences  NotificationPreference[]
+  trainingPrograms         TrainingProgram[]
+  assignedTrainingPrograms TrainingProgram[]        @relation("TrainingProgramAssignedByUser")
 }
 
+model Group {
+  id        String    @id @default(uuid())
+  name      String
+  ownerId   String
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  owner           User               @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  memberships     GroupMembership[]
+  joinRequests    GroupJoinRequest[]
+  inviteLink      GroupInviteLink?
+  auditLogs       GroupAuditLog[]
+  challenges      Challenge[]
+  managedPrograms TrainingProgram[]  @relation("GroupManagedPrograms")
+
+  @@index([ownerId, createdAt])
+  @@index([deletedAt, createdAt])
+}
+
+model GroupMembership {
+  id        String    @id @default(uuid())
+  groupId   String
+  userId    String
+  status    String    @default("active") // active | left | removed
+  joinedAt  DateTime?
+  leftAt    DateTime?
+  removedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId, status, updatedAt])
+  @@index([groupId, status, updatedAt])
+}
+
+model GroupJoinRequest {
+  id           String    @id @default(uuid())
+  groupId      String
+  userId       String
+  status       String    @default("pending") // pending | approved | rejected
+  resolvedAt   DateTime?
+  resolvedById String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId, status, createdAt])
+  @@index([userId, status, createdAt])
+}
+
+model GroupInviteLink {
+  id        String   @id @default(uuid())
+  groupId   String   @unique
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+}
+
+model GroupAuditLog {
+  id           String   @id @default(cuid())
+  groupId      String
+  actorId      String?
+  targetUserId String?
+  action       String
+  entityType   String?
+  entityId     String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  group      Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  actor      User? @relation("GroupAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  targetUser User? @relation("GroupAuditTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([groupId, createdAt])
+  @@index([targetUserId, createdAt])
+}
 
 model Workout {
-  id           String   @id @default(uuid())
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId       String
-  date         DateTime
-  time         DateTime @default(now())
-  exerciseType String
-  reps         Int
+  id                String            @id @default(uuid())
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            String
+  date              DateTime
+  time              DateTime          @default(now())
+  exerciseType      String
+  reps              Int
   trainingSessionId String?
-  trainingSession   TrainingSession? @relation(fields: [trainingSessionId], references: [id], onDelete: SetNull)
+  trainingSession   TrainingSession?  @relation(fields: [trainingSessionId], references: [id], onDelete: SetNull)
   reactions         WorkoutReaction[]
 
   @@index([userId, exerciseType, time])
@@ -67,11 +158,11 @@ model Workout {
 }
 
 model WorkoutReward {
-  id               String   @id @default(cuid())
-  message          String
-  minPointsTenths  Int      @unique
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String   @id @default(cuid())
+  message         String
+  minPointsTenths Int      @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([minPointsTenths])
 }
@@ -132,7 +223,9 @@ model Challenge {
   id String @id @default(uuid())
 
   creatorId String
-  creator   User   @relation("UserCreatedChallenges", fields: [creatorId], references: [id])
+  creator   User    @relation("UserCreatedChallenges", fields: [creatorId], references: [id])
+  groupId   String?
+  group     Group?  @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   name         String
   exerciseType String
@@ -144,6 +237,8 @@ model Challenge {
   createdAt DateTime @default(now())
 
   participants ChallengeParticipant[]
+
+  @@index([groupId, createdAt])
 }
 
 model ChallengeParticipant {
@@ -174,27 +269,26 @@ model Notification {
   @@index([userId, isRead, createdAt])
 }
 
-
 model UserProfileHistory {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation("UserProfileHistoryUser", fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation("UserProfileHistoryUser", fields: [userId], references: [id], onDelete: Cascade)
 
   changedById String?
-  changedBy   User?    @relation("UserProfileChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+  changedBy   User?   @relation("UserProfileChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
 
-  changedAt   DateTime @default(now())
-  changes     Json
+  changedAt DateTime @default(now())
+  changes   Json
 
   @@index([userId, changedAt])
 }
 
 model PasswordResetToken {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String   @unique
-  createdAt DateTime @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  createdAt DateTime  @default(now())
   expiresAt DateTime
   usedAt    DateTime?
 
@@ -218,70 +312,75 @@ model PushSubscription {
 }
 
 model NotificationPreference {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  eventType   String
-  pushEnabled Boolean  @default(true)
-  emailEnabled Boolean @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventType    String
+  pushEnabled  Boolean  @default(true)
+  emailEnabled Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([userId, eventType])
   @@index([eventType])
 }
 
 model TrainingProgram {
-  id               String   @id @default(cuid())
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  exerciseType     String
-  goalType         String
-  targetReps       Int?
-  durationWeeks    Int
-  frequencyPerWeek Int
-  baselineMaxReps  Int
-  ageYears         Int
-  weightKg         Int
-  sex              String
-  startDate        DateTime @default(now())
-  status           String   @default("active") // active | inactive | needs_retest | completed
-  needsRetest      Boolean  @default(false)
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  managedByGroupId   String?
+  managedByGroup     Group?    @relation("GroupManagedPrograms", fields: [managedByGroupId], references: [id], onDelete: SetNull)
+  assignedByUserId   String?
+  assignedByUser     User?     @relation("TrainingProgramAssignedByUser", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  exerciseType       String
+  goalType           String
+  targetReps         Int?
+  durationWeeks      Int
+  frequencyPerWeek   Int
+  baselineMaxReps    Int
+  ageYears           Int
+  weightKg           Int
+  sex                String
+  startDate          DateTime  @default(now())
+  status             String    @default("active") // active | inactive | needs_retest | completed
+  needsRetest        Boolean   @default(false)
   lastRecalculatedAt DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  isActive         Boolean  @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  isActive           Boolean   @default(true)
 
-  sessions         TrainingSession[]
+  sessions TrainingSession[]
 
   @@index([userId, isActive, createdAt])
+  @@index([managedByGroupId, userId, isActive])
 }
 
 model TrainingSession {
-  id           String   @id @default(cuid())
-  programId    String
-  program      TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
-  weekNumber   Int
-  sessionNumber Int
-  scheduledAt  DateTime
-  isFinalTest  Boolean  @default(false)
-  startedAt    DateTime?
-  completed    Boolean  @default(false)
-  completedAt  DateTime?
-  shiftedCount Int      @default(0)
+  id             String          @id @default(cuid())
+  programId      String
+  program        TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  weekNumber     Int
+  sessionNumber  Int
+  scheduledAt    DateTime
+  isFinalTest    Boolean         @default(false)
+  startedAt      DateTime?
+  completed      Boolean         @default(false)
+  completedAt    DateTime?
+  shiftedCount   Int             @default(0)
   reminderSentAt DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
-  sets         TrainingSet[]
-  workouts     Workout[]
+  sets     TrainingSet[]
+  workouts Workout[]
 
   @@index([programId, scheduledAt])
   @@index([programId, completed, scheduledAt])
 }
 
 model TrainingSet {
-  id          String   @id @default(cuid())
+  id          String          @id @default(cuid())
   sessionId   String
   session     TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   setNumber   Int
@@ -289,9 +388,9 @@ model TrainingSet {
   actualReps  Int?
   restSeconds Int
   completedAt DateTime?
-  isKeySet    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isKeySet    Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
   @@unique([sessionId, setNumber])
   @@index([sessionId, setNumber])

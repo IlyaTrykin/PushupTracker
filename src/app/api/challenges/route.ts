@@ -29,9 +29,10 @@ const ALLOWED_EXERCISES = new Set(['pushups', 'pullups', 'crunches', 'squats', '
 
 export async function GET(request: NextRequest) {
   try {
-    let userId: string;
+    let actor: { id: string; isAdmin: boolean };
     try {
-      userId = (await requireUser(request)).id;
+      const user = await requireUser(request);
+      actor = { id: user.id, isAdmin: user.isAdmin };
     } catch (e) {
       if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
       return jsonError('Внутренняя ошибка сервера', 500);
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
 
     const challenges = await prisma.challenge.findMany({
       where: {
-        OR: [{ creatorId: userId }, { participants: { some: { userId } } }],
+        OR: [{ creatorId: actor.id }, { participants: { some: { userId: actor.id } } }],
       },
       orderBy: { createdAt: 'desc' },
       select: {
@@ -52,6 +53,7 @@ export async function GET(request: NextRequest) {
         endDate: true,
         createdAt: true,
         creatorId: true,
+        groupId: true,
         creator: { select: { username: true } },
         participants: {
           select: {
@@ -63,11 +65,28 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    const activeGroupIds = actor.isAdmin
+      ? null
+      : new Set(
+          (
+            await prisma.groupMembership.findMany({
+              where: {
+                userId: actor.id,
+                status: 'active',
+                group: { deletedAt: null },
+              },
+              select: { groupId: true },
+            })
+          ).map((row) => row.groupId),
+        );
+
     // добавить "мой статус" для удобства UI
-    const withMyStatus = challenges.map((c) => {
-      const mine = c.participants.find((p) => p.userId === userId);
-      return { ...c, myStatus: mine?.status ?? null };
-    });
+    const withMyStatus = challenges
+      .filter((c) => actor.isAdmin || !c.groupId || activeGroupIds?.has(c.groupId))
+      .map((c) => {
+        const mine = c.participants.find((p) => p.userId === actor.id);
+        return { ...c, myStatus: mine?.status ?? null };
+      });
 
     return NextResponse.json(withMyStatus);
   } catch (e) {

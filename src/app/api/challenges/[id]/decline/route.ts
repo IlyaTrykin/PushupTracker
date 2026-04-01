@@ -26,6 +26,14 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
     if (!cp) return NextResponse.json({ error: 'NOT_FOUND' }, { status: 404 });
 
+    const challenge = await prisma.challenge.findUnique({
+      where: { id },
+      select: { groupId: true },
+    });
+    if (challenge?.groupId) {
+      return NextResponse.json({ error: 'GROUP_CHALLENGE_AUTO_ACCEPTED' }, { status: 400 });
+    }
+
     await prisma.challengeParticipant.update({
       where: { id: cp.id },
       data: { status: 'declined' },

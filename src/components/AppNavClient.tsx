@@ -13,6 +13,8 @@ import styles from './AppNavClient.module.css';
 
 type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 type ExerciseTypeChangedDetail = ExerciseType | { exerciseType?: ExerciseType };
+type PageTitleOverrideDetail = string | { title?: string | null } | null;
+type PageHeaderActionDetail = string | { label?: string | null } | null;
 const APP_SHELL_PREWARM_VERSION = '20260327-1';
 
 function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles']) {
@@ -21,6 +23,7 @@ function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof use
   if (pathname.startsWith('/program/session/')) return titles.programSession;
   if (pathname.startsWith('/program')) return titles.program;
   if (pathname.startsWith('/friends')) return titles.friends;
+  if (pathname.startsWith('/groups')) return titles.groups;
   if (pathname.startsWith('/challenges/')) return titles.challenge;
   if (pathname.startsWith('/challenges')) return titles.challenges;
   if (pathname.startsWith('/progress')) return titles.progress;
@@ -57,16 +60,33 @@ function AvatarCircle({ src, size = 24 }: { src?: string | null; size?: number }
   );
 }
 
+function LeaveGroupIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M10 4.75H6.75A1.75 1.75 0 0 0 5 6.5v11A1.75 1.75 0 0 0 6.75 19.25H10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M14 8.5 18.5 12 14 15.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M18 12H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 4.75h5.25A1.75 1.75 0 0 1 17 6.5v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
+      <path d="M17 15.5v2A1.75 1.75 0 0 1 15.25 19.25H10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
+    </svg>
+  );
+}
+
 export default function AppNavClient() {
   const { locale, messages, setLocale } = useI18n();
   const { user: me, setUser, refreshUser } = useAuth();
   const pathname = usePathname();
   const isAuthRoute = pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
-  const pageTitle = useMemo(() => resolvePageTitle(pathname, messages.nav.pageTitles), [messages.nav.pageTitles, pathname]);
   const [open, setOpen] = useState(false);
   const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
   const [updatingLanguage, setUpdatingLanguage] = useState(false);
+  const [pageTitleOverride, setPageTitleOverride] = useState<string | null>(null);
+  const [pageHeaderActionLabel, setPageHeaderActionLabel] = useState<string | null>(null);
   const navIconVersion = '20260225';
+  const pageTitle = useMemo(
+    () => pageTitleOverride || resolvePageTitle(pathname, messages.nav.pageTitles),
+    [messages.nav.pageTitles, pageTitleOverride, pathname],
+  );
 
   const navActive = (href: string) => pathname === href || (href !== '/' && pathname?.startsWith(href));
   const bottomItemClass = (active: boolean) => `bottom-nav__item ${active ? 'bottom-nav__item--active' : ''}`;
@@ -104,11 +124,38 @@ export default function AppNavClient() {
   }, []);
 
   useEffect(() => {
+    setPageTitleOverride(null);
+    setPageHeaderActionLabel(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    const onPageTitleChanged = (event: Event) => {
+      const detail = (event as CustomEvent<PageTitleOverrideDetail>).detail;
+      const nextTitle = typeof detail === 'string' ? detail : detail?.title;
+      setPageTitleOverride(nextTitle?.trim() || null);
+    };
+
+    window.addEventListener('appPageTitleOverride', onPageTitleChanged);
+    return () => window.removeEventListener('appPageTitleOverride', onPageTitleChanged);
+  }, []);
+
+  useEffect(() => {
+    const onPageHeaderActionChanged = (event: Event) => {
+      const detail = (event as CustomEvent<PageHeaderActionDetail>).detail;
+      const nextLabel = typeof detail === 'string' ? detail : detail?.label;
+      setPageHeaderActionLabel(nextLabel?.trim() || null);
+    };
+
+    window.addEventListener('appPageHeaderAction', onPageHeaderActionChanged);
+    return () => window.removeEventListener('appPageHeaderAction', onPageHeaderActionChanged);
+  }, []);
+
+  useEffect(() => {
     if (!me?.username || !('serviceWorker' in navigator)) return;
 
     const identity = me.id || me.username;
     const prewarmKey = `app-shell-prewarmed:${APP_SHELL_PREWARM_VERSION}:${identity}`;
-    const routes = ['/dashboard', '/program', '/friends', '/challenges', '/progress', '/notifications', '/profile'];
+    const routes = ['/dashboard', '/program', '/friends', '/groups', '/challenges', '/progress', '/notifications', '/profile'];
     if (me.isAdmin) routes.push('/admin/users');
 
     const prewarm = async () => {
@@ -187,6 +234,17 @@ export default function AppNavClient() {
           </div>
 
           <div className={styles.headerActions}>
+            {pageHeaderActionLabel ? (
+              <button
+                type="button"
+                className={styles.pageActionButton}
+                title={pageHeaderActionLabel}
+                aria-label={pageHeaderActionLabel}
+                onClick={() => window.dispatchEvent(new CustomEvent('appPageHeaderActionClick'))}
+              >
+                <LeaveGroupIcon />
+              </button>
+            ) : null}
             <div className={styles.userPill}>
               <AvatarCircle src={me?.avatarPath ?? null} size={22} />
               <span className={styles.userName}>{me?.username || messages.common.guest}</span>
