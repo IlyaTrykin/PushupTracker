@@ -1206,7 +1206,7 @@ export default function FriendsPage() {
           >
             {groupedFeedWorkouts.map((group) => (
               <section key={`feed-day-${group.dayKey}`} style={{ display: 'grid', gap: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 900, color: '#334155' }}>
+                <div style={feedDayTitle}>
                   {formatDateWithWeekday(group.dayKey, localeTag)}
                 </div>
 
@@ -1725,6 +1725,21 @@ const feedListWrapScrollable: React.CSSProperties = {
   overflowY: 'auto',
   overscrollBehavior: 'contain',
   paddingRight: 3,
+};
+
+const feedDayTitle: React.CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 2,
+  alignSelf: 'start',
+  padding: '3px 10px',
+  borderRadius: 999,
+  fontSize: 12,
+  fontWeight: 900,
+  color: '#334155',
+  background: 'rgba(248, 250, 252, 0.96)',
+  backdropFilter: 'saturate(160%) blur(8px)',
+  boxShadow: '0 6px 18px rgba(15, 23, 42, 0.08)',
 };
 
 const feedTypeIcon: React.CSSProperties = {

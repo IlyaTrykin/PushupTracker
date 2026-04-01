@@ -1870,9 +1870,18 @@ const feedDaySection: CSSProperties = {
 };
 
 const feedDayTitle: CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 2,
+  alignSelf: 'start',
+  padding: '3px 10px',
+  borderRadius: 999,
   fontSize: 12,
   fontWeight: 900,
   color: '#334155',
+  background: 'rgba(248, 250, 252, 0.96)',
+  backdropFilter: 'saturate(160%) blur(8px)',
+  boxShadow: '0 6px 18px rgba(15, 23, 42, 0.08)',
 };
 
 const feedTypeIcon: CSSProperties = {

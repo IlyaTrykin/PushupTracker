@@ -11,8 +11,6 @@ import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
 import styles from './AppNavClient.module.css';
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
-type ExerciseTypeChangedDetail = ExerciseType | { exerciseType?: ExerciseType };
 type PageTitleOverrideDetail = string | { title?: string | null } | null;
 type PageHeaderActionDetail = string | { label?: string | null } | null;
 const APP_SHELL_PREWARM_VERSION = '20260327-1';
@@ -78,7 +76,6 @@ export default function AppNavClient() {
   const pathname = usePathname();
   const isAuthRoute = pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
   const [open, setOpen] = useState(false);
-  const [exerciseType, setExerciseType] = useState<ExerciseType>('pushups');
   const [updatingLanguage, setUpdatingLanguage] = useState(false);
   const [pageTitleOverride, setPageTitleOverride] = useState<string | null>(null);
   const [pageHeaderActionLabel, setPageHeaderActionLabel] = useState<string | null>(null);
@@ -91,37 +88,9 @@ export default function AppNavClient() {
   const navActive = (href: string) => pathname === href || (href !== '/' && pathname?.startsWith(href));
   const bottomItemClass = (active: boolean) => `bottom-nav__item ${active ? 'bottom-nav__item--active' : ''}`;
 
-  const exerciseLabel = useMemo(() => {
-    if (exerciseType === 'pushups') return messages.nav.exercise.pushups;
-    if (exerciseType === 'pullups') return messages.nav.exercise.pullups;
-    if (exerciseType === 'crunches') return messages.nav.exercise.crunches;
-    if (exerciseType === 'squats') return messages.nav.exercise.squats;
-    return messages.nav.exercise.plank;
-  }, [exerciseType, messages.nav.exercise]);
-
   useEffect(() => {
     if (me?.language) setLocale(normalizeLocale(me.language));
   }, [me?.language, setLocale]);
-
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem('exerciseType');
-      if (saved === 'pushups' || saved === 'pullups' || saved === 'crunches' || saved === 'squats' || saved === 'plank') {
-        setExerciseType(saved);
-      }
-    } catch {}
-
-    const onChanged = (event: Event) => {
-      const e = event as CustomEvent<ExerciseTypeChangedDetail>;
-      const detail = e.detail;
-      const t = typeof detail === 'string' ? detail : detail?.exerciseType;
-      if (t === 'pushups' || t === 'pullups' || t === 'crunches' || t === 'squats' || t === 'plank') {
-        setExerciseType(t);
-      }
-    };
-    window.addEventListener('exerciseTypeChanged', onChanged);
-    return () => window.removeEventListener('exerciseTypeChanged', onChanged);
-  }, []);
 
   useEffect(() => {
     setPageTitleOverride(null);
@@ -304,7 +273,6 @@ export default function AppNavClient() {
             <div className="app-drawer__top">
               <div className={styles.drawerIdentity}>
                 <div className={styles.drawerName}>{me?.username || messages.nav.unauthorized}</div>
-                <div className={styles.drawerExercise}>{exerciseLabel}</div>
               </div>
 
               <button type="button" className="app-drawer__close" onClick={() => setOpen(false)} aria-label={messages.nav.closeAria}>
