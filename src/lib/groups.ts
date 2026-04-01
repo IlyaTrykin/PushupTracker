@@ -36,6 +36,7 @@ const groupMemberSelect = {
   id: true,
   userId: true,
   status: true,
+  includeInStats: true,
   joinedAt: true,
   leftAt: true,
   removedAt: true,
@@ -392,6 +393,7 @@ export async function getGroupDetails(actor: GroupActor, groupId: string) {
       id: membership.id,
       userId: membership.userId,
       status: membership.status,
+      includeInStats: membership.includeInStats,
       joinedAt: membership.joinedAt ?? membership.createdAt,
       user: membership.user,
       isOwner: detail.ownerId === membership.userId,
@@ -669,6 +671,7 @@ export async function resolveJoinRequest(
         },
         update: {
           status: 'active',
+          includeInStats: true,
           joinedAt: now,
           leftAt: null,
           removedAt: null,
@@ -677,6 +680,7 @@ export async function resolveJoinRequest(
           groupId: group.id,
           userId: request.userId,
           status: 'active',
+          includeInStats: true,
           joinedAt: now,
         },
       });
@@ -828,6 +832,48 @@ export async function removeGroupMember(actor: GroupActor, groupId: string, targ
     });
 
     return { ok: true };
+  });
+}
+
+export async function updateGroupMemberStatsInclusion(
+  actor: GroupActor,
+  groupId: string,
+  targetUserId: string,
+  includeInStatsInput: unknown,
+) {
+  if (typeof includeInStatsInput !== 'boolean') {
+    throw new GroupError('Некорректное значение флага статистики', 400, 'GROUP_MEMBER_STATS_FLAG_INVALID');
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const group = await requireGroupManageAccess(tx, actor, groupId);
+    const membership = await requireActiveMember(tx, group.id, targetUserId);
+
+    const updated = await tx.groupMembership.update({
+      where: { id: membership.id },
+      data: { includeInStats: includeInStatsInput },
+      select: {
+        id: true,
+        groupId: true,
+        userId: true,
+        includeInStats: true,
+        status: true,
+        joinedAt: true,
+        updatedAt: true,
+      },
+    });
+
+    await createAuditLog(tx, {
+      groupId: group.id,
+      actorId: actor.id,
+      targetUserId,
+      action: 'group_member_stats_inclusion_updated',
+      entityType: 'group_membership',
+      entityId: membership.id,
+      metadata: { includeInStats: includeInStatsInput },
+    });
+
+    return updated;
   });
 }
 

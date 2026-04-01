@@ -16,6 +16,7 @@ import { t } from '@/i18n/translate';
 type MemberItem = {
   userId: string;
   status: string;
+  includeInStats: boolean;
   joinedAt: string;
   isOwner: boolean;
   user: {
@@ -243,6 +244,8 @@ function describeAuditAction(tt: (input: string) => string, log: GroupAuditLogIt
       return `${actor} ${tt('создал соревнование группы')}`;
     case 'group_challenge_deleted':
       return `${actor} ${tt('удалил соревнование группы')}`;
+    case 'group_member_stats_inclusion_updated':
+      return `${actor} ${tt('обновил участие участника в статистике группы')} ${target}`;
     default:
       return `${actor} · ${log.action}`;
   }
@@ -508,6 +511,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
   const [challengeStartDate, setChallengeStartDate] = useState(todayDateString());
   const [challengeEndDate, setChallengeEndDate] = useState(plusDaysString(14));
   const [ownerExitOpen, setOwnerExitOpen] = useState(false);
+  const [statsToggleUserId, setStatsToggleUserId] = useState('');
   const [groupExerciseFilter, setGroupExerciseFilter] = useState<ExerciseFilter>(
     isExerciseFilterValue(searchExercise) ? searchExercise : 'all',
   );
@@ -537,18 +541,31 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
     });
   }, [group?.members, normalizedMemberQuery]);
 
+  const statsIncludedMembers = useMemo(
+    () => (group?.members || []).filter((member) => member.includeInStats),
+    [group?.members],
+  );
+
+  const filteredStatsMembers = useMemo(() => {
+    if (!normalizedMemberQuery) return statsIncludedMembers;
+    return statsIncludedMembers.filter((member) => {
+      const haystack = [member.user.username, member.user.email || ''].join(' ').toLowerCase();
+      return haystack.includes(normalizedMemberQuery);
+    });
+  }, [normalizedMemberQuery, statsIncludedMembers]);
+
   const memberStats = useMemo(() => {
     if (!group) return [];
-    return group.members.map((member) => ({
+    return statsIncludedMembers.map((member) => ({
       member,
       stats: computeStats(workoutsByUser[member.user.username] || []),
       statsByExercise: computeStatsByExercise(workoutsByUser[member.user.username] || []),
     }));
-  }, [group, workoutsByUser]);
+  }, [group, statsIncludedMembers, workoutsByUser]);
 
   const filteredMemberStats = useMemo(
-    () => memberStats.filter(({ member }) => filteredMembers.some((candidate) => candidate.userId === member.userId)),
-    [filteredMembers, memberStats],
+    () => memberStats.filter(({ member }) => filteredStatsMembers.some((candidate) => candidate.userId === member.userId)),
+    [filteredStatsMembers, memberStats],
   );
 
   const memberById = useMemo(
@@ -583,22 +600,32 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       .sort((left, right) => right.occurredAt - left.occurredAt);
   }, [group, workoutsByUser]);
 
+  const statsIncludedUserIds = useMemo(
+    () => new Set(statsIncludedMembers.map((member) => member.userId)),
+    [statsIncludedMembers],
+  );
+
+  const statsGroupWorkouts = useMemo(
+    () => flatGroupWorkouts.filter((item) => statsIncludedUserIds.has(item.ownerUserId)),
+    [flatGroupWorkouts, statsIncludedUserIds],
+  );
+
   const groupAnalytics = useMemo(
     () =>
       buildProgressAnalytics({
-        workouts: flatGroupWorkouts as WorkoutRecord[],
+        workouts: statsGroupWorkouts as WorkoutRecord[],
         exercise: deferredExerciseFilter,
         period: deferredGroupPeriod,
         copy: messages.progress,
       }),
-    [deferredExerciseFilter, deferredGroupPeriod, flatGroupWorkouts, messages.progress],
+    [deferredExerciseFilter, deferredGroupPeriod, messages.progress, statsGroupWorkouts],
   );
 
   const filteredFeedItems = useMemo(() => {
-    return flatGroupWorkouts
+    return statsGroupWorkouts
       .filter((item) => deferredExerciseFilter === 'all' || item.exerciseType === deferredExerciseFilter)
       .filter((item) => isWorkoutInPeriod(item, deferredFeedPeriod));
-  }, [deferredExerciseFilter, deferredFeedPeriod, flatGroupWorkouts]);
+  }, [deferredExerciseFilter, deferredFeedPeriod, statsGroupWorkouts]);
 
   const groupedFeedItems = useMemo(() => {
     const groups = new Map<string, GroupFeedItem[]>();
@@ -619,7 +646,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
     if (!group) return [];
     const totals = new Map<string, { userId: string; username: string; total: number }>();
 
-    group.members.forEach((member) => {
+    statsIncludedMembers.forEach((member) => {
       totals.set(member.userId, {
         userId: member.userId,
         username: member.user.username,
@@ -627,7 +654,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       });
     });
 
-    flatGroupWorkouts.forEach((item) => {
+    statsGroupWorkouts.forEach((item) => {
       if (deferredExerciseFilter !== 'all' && item.exerciseType !== deferredExerciseFilter) return;
       if (!isWorkoutInPeriod(item, deferredGroupPeriod)) return;
       const row = totals.get(item.ownerUserId);
@@ -641,7 +668,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       .filter((item) => item.total > 0)
       .sort((left, right) => right.total - left.total)
       .slice(0, 5);
-  }, [deferredExerciseFilter, deferredGroupPeriod, flatGroupWorkouts, group]);
+  }, [deferredExerciseFilter, deferredGroupPeriod, group, statsGroupWorkouts, statsIncludedMembers]);
 
   const memberPageQuery = useMemo(() => {
     const query = new URLSearchParams();
@@ -652,13 +679,13 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
   }, [groupExerciseFilter, groupPeriod, memberQuery]);
 
   const spotlightCandidates = useMemo(
-    () => (group?.members || []).filter((member) => !member.isOwner || (group?.members.length || 0) === 1),
-    [group?.members],
+    () => statsIncludedMembers.filter((member) => !member.isOwner || statsIncludedMembers.length === 1),
+    [statsIncludedMembers],
   );
 
   const spotlightWorkouts = useMemo(
-    () => flatGroupWorkouts.filter((item) => item.ownerUserId === spotlightUserId),
-    [flatGroupWorkouts, spotlightUserId],
+    () => statsGroupWorkouts.filter((item) => item.ownerUserId === spotlightUserId),
+    [spotlightUserId, statsGroupWorkouts],
   );
 
   const spotlightAnalytics = useMemo(
@@ -795,6 +822,25 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       await load();
     } catch (e) {
       setError(getErrorMessage(e));
+    }
+  }
+
+  async function toggleMemberStatsInclusion(member: MemberItem, includeInStats: boolean) {
+    setStatsToggleUserId(member.userId);
+    setError(null);
+    setInfo(null);
+    try {
+      await fetchJsonSafe(`/api/groups/${groupId}/members/${member.userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ includeInStats }),
+      });
+      setInfo(includeInStats ? tt('Участник включён в статистику группы') : tt('Участник исключён из статистики группы'));
+      await load();
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setStatsToggleUserId('');
     }
   }
 
@@ -1334,6 +1380,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
               <thead>
                 <tr style={memberTableHeadRow}>
                   <th style={{ ...memberTh, ...memberStickyNameHead }}>{tt('Имя')}</th>
+                  {group.canManage ? <th style={memberTh}>{tt('В статистике')}</th> : null}
                   <th style={memberTh}>{tt('Дата')}</th>
                   <th style={memberTh}>{tt('Действия')}</th>
                 </tr>
@@ -1347,6 +1394,21 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                         {member.isOwner ? <span style={memberRolePill}>{tt('Владелец')}</span> : null}
                       </div>
                     </td>
+                    {group.canManage ? (
+                      <td style={memberTd}>
+                        <label style={statsCheckboxLabel}>
+                          <input
+                            type="checkbox"
+                            checked={member.includeInStats}
+                            disabled={statsToggleUserId === member.userId}
+                            onChange={(event) => {
+                              void toggleMemberStatsInclusion(member, event.target.checked);
+                            }}
+                          />
+                          <span>{member.includeInStats ? tt('Да') : tt('Нет')}</span>
+                        </label>
+                      </td>
+                    ) : null}
                     <td style={memberTd}>
                       {new Date(member.joinedAt).toLocaleDateString(localeTag)}
                     </td>
@@ -1972,6 +2034,16 @@ const memberRolePill: CSSProperties = {
   width: 'fit-content',
 };
 
+const statsCheckboxLabel: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 8,
+  whiteSpace: 'nowrap',
+  fontSize: 12,
+  fontWeight: 700,
+  color: '#0f172a',
+};
+
 const exerciseIconStack: CSSProperties = {
   display: 'grid',
   gap: 1,
@@ -2178,9 +2250,18 @@ const feedDaySection: CSSProperties = {
 };
 
 const feedDayTitle: CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 2,
+  alignSelf: 'start',
+  padding: '3px 10px',
+  borderRadius: 999,
   fontSize: 12,
   fontWeight: 900,
   color: '#334155',
+  background: 'rgba(248, 250, 252, 0.96)',
+  backdropFilter: 'saturate(160%) blur(8px)',
+  boxShadow: '0 6px 18px rgba(15, 23, 42, 0.08)',
 };
 
 const feedTypeIcon: CSSProperties = {

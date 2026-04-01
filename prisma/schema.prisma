@@ -79,6 +79,7 @@ model GroupMembership {
   groupId   String
   userId    String
   status    String    @default("active") // active | left | removed
+  includeInStats Boolean @default(true)
   joinedAt  DateTime?
   leftAt    DateTime?
   removedAt DateTime?
