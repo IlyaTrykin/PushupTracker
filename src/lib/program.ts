@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { sendWebPushToUsers } from '@/lib/web-push';
 
@@ -613,7 +614,61 @@ async function autofillOverdueSessionsFromExternalWorkouts(programId: string) {
   });
 }
 
-export async function createTrainingProgram(userId: string, input: ProgramCreateInput) {
+async function getProgramByWhere(where: Prisma.TrainingProgramWhereInput) {
+  const program = await prisma.trainingProgram.findFirst({
+    where,
+    include: {
+      sessions: {
+        orderBy: [{ scheduledAt: 'asc' }, { sessionNumber: 'asc' }],
+        include: {
+          sets: {
+            orderBy: { setNumber: 'asc' },
+          },
+        },
+      },
+    },
+  });
+
+  if (!program) return null;
+
+  const weekStats = getWeekStats(program.sessions.map((s) => ({ weekNumber: s.weekNumber, completed: s.completed })));
+  const successWeeks = Array.from(weekStats.values()).filter((x) => x.success).length;
+
+  const completedSessions = program.sessions.filter((s) => s.completed);
+  const warnings = buildRecoveryWarnings({
+    completedSessions: completedSessions.map((s) => ({
+      completedAt: s.completedAt,
+      sets: s.sets.map((st) => ({ actualReps: st.actualReps })),
+    })),
+    baselineMaxReps: program.baselineMaxReps,
+    needsRetest: program.needsRetest,
+  });
+
+  return {
+    ...program,
+    stats: {
+      totalSessions: program.sessions.length,
+      completedSessions: completedSessions.length,
+      totalSets: program.sessions.reduce((sum, s) => sum + s.sets.length, 0),
+      completedSets: program.sessions.reduce((sum, s) => sum + s.sets.filter((st) => st.actualReps != null).length, 0),
+      successWeeks,
+      completionPercent: program.sessions.length
+        ? Math.round((completedSessions.length / program.sessions.length) * 100)
+        : 0,
+      nextSession: program.sessions.find((s) => !s.completed) ?? null,
+    },
+    warnings,
+  };
+}
+
+export async function createTrainingProgram(
+  userId: string,
+  input: ProgramCreateInput,
+  options?: {
+    managedByGroupId?: string | null;
+    assignedByUserId?: string | null;
+  },
+) {
   const draft = buildProgramDraft(input);
 
   const created = await prisma.$transaction(async (tx) => {
@@ -637,6 +692,8 @@ export async function createTrainingProgram(userId: string, input: ProgramCreate
         startDate: startOfDay(draft.start),
         isActive: true,
         status: 'active',
+        managedByGroupId: options?.managedByGroupId ?? null,
+        assignedByUserId: options?.assignedByUserId ?? null,
       },
       select: { id: true },
     });
@@ -670,6 +727,21 @@ export async function createTrainingProgram(userId: string, input: ProgramCreate
 export async function deactivateTrainingProgram(userId: string, programId: string) {
   const row = await prisma.trainingProgram.findFirst({
     where: { id: programId, userId },
+    select: { id: true },
+  });
+  if (!row) throw new ProgramError('Программа не найдена', 404);
+
+  await prisma.trainingProgram.update({
+    where: { id: programId },
+    data: { isActive: false, status: 'inactive' },
+  });
+
+  return { ok: true };
+}
+
+export async function deactivateManagedTrainingProgram(userId: string, programId: string, groupId: string) {
+  const row = await prisma.trainingProgram.findFirst({
+    where: { id: programId, userId, managedByGroupId: groupId },
     select: { id: true },
   });
   if (!row) throw new ProgramError('Программа не найдена', 404);
@@ -1211,50 +1283,11 @@ export async function recalculateUpcomingSessions(programId: string) {
 }
 
 export async function getProgramById(userId: string, programId: string) {
-  const program = await prisma.trainingProgram.findFirst({
-    where: { id: programId, userId },
-    include: {
-      sessions: {
-        orderBy: [{ scheduledAt: 'asc' }, { sessionNumber: 'asc' }],
-        include: {
-          sets: {
-            orderBy: { setNumber: 'asc' },
-          },
-        },
-      },
-    },
-  });
+  return getProgramByWhere({ id: programId, userId });
+}
 
-  if (!program) return null;
-
-  const weekStats = getWeekStats(program.sessions.map((s) => ({ weekNumber: s.weekNumber, completed: s.completed })));
-  const successWeeks = Array.from(weekStats.values()).filter((x) => x.success).length;
-
-  const completedSessions = program.sessions.filter((s) => s.completed);
-  const warnings = buildRecoveryWarnings({
-    completedSessions: completedSessions.map((s) => ({
-      completedAt: s.completedAt,
-      sets: s.sets.map((st) => ({ actualReps: st.actualReps })),
-    })),
-    baselineMaxReps: program.baselineMaxReps,
-    needsRetest: program.needsRetest,
-  });
-
-  return {
-    ...program,
-    stats: {
-      totalSessions: program.sessions.length,
-      completedSessions: completedSessions.length,
-      totalSets: program.sessions.reduce((sum, s) => sum + s.sets.length, 0),
-      completedSets: program.sessions.reduce((sum, s) => sum + s.sets.filter((st) => st.actualReps != null).length, 0),
-      successWeeks,
-      completionPercent: program.sessions.length
-        ? Math.round((completedSessions.length / program.sessions.length) * 100)
-        : 0,
-      nextSession: program.sessions.find((s) => !s.completed) ?? null,
-    },
-    warnings,
-  };
+export async function getManagedProgramById(userId: string, programId: string, groupId: string) {
+  return getProgramByWhere({ id: programId, userId, managedByGroupId: groupId });
 }
 
 export async function getProgramOverview(userId: string) {
@@ -1329,6 +1362,91 @@ export async function getProgramOverview(userId: string) {
       : (!h.isActive || h.status === 'completed' || h.status === 'inactive'
         ? (latestCompletedAt ?? h.updatedAt)
         : null);
+
+    return {
+      id: h.id,
+      exerciseType: h.exerciseType,
+      goalType: h.goalType,
+      status: h.status,
+      createdAt: h.createdAt,
+      startedAt: h.startDate ?? h.createdAt,
+      finishedAt,
+      durationWeeks: h.durationWeeks,
+      frequencyPerWeek: h.frequencyPerWeek,
+      baselineMaxReps: h.baselineMaxReps,
+      targetReps: h.targetReps,
+      totalSessions: total,
+      completedSessions: completed,
+      completionPercent: total ? Math.round((completed / total) * 100) : 0,
+    };
+  });
+
+  return {
+    profileHints,
+    activePrograms,
+    history,
+  };
+}
+
+export async function getManagedProgramOverview(userId: string, groupId: string) {
+  const me = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { birthDate: true, weightKg: true, gender: true },
+  });
+
+  const profileHints: ProgramProfileHints = {
+    ageYears: deriveAgeFromBirthDate(me?.birthDate ?? null),
+    weightKg: me?.weightKg ?? null,
+    sex: me?.gender ?? null,
+  };
+
+  const activeRows = await prisma.trainingProgram.findMany({
+    where: { userId, isActive: true, managedByGroupId: groupId },
+    orderBy: [{ createdAt: 'desc' }],
+    select: { id: true },
+  });
+
+  const activePrograms = (await Promise.all(activeRows.map((x) => getManagedProgramById(userId, x.id, groupId))))
+    .filter((x): x is NonNullable<typeof x> => Boolean(x && x.isActive));
+
+  const historyRows = await prisma.trainingProgram.findMany({
+    where: {
+      userId,
+      managedByGroupId: groupId,
+      OR: [{ isActive: false }, { status: 'completed' }, { status: 'inactive' }],
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+    select: {
+      id: true,
+      exerciseType: true,
+      goalType: true,
+      status: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+      startDate: true,
+      durationWeeks: true,
+      frequencyPerWeek: true,
+      baselineMaxReps: true,
+      targetReps: true,
+      sessions: {
+        select: { id: true, completed: true, completedAt: true },
+      },
+    },
+  });
+
+  const history = historyRows.map((h) => {
+    const total = h.sessions.length;
+    const completed = h.sessions.filter((s) => s.completed).length;
+    const completedAtList = h.sessions
+      .map((s) => s.completedAt)
+      .filter((d): d is Date => Boolean(d));
+    const allCompleted = total > 0 && completed === total;
+    const latestCompletedAt = completedAtList.length
+      ? new Date(Math.max(...completedAtList.map((d) => d.getTime())))
+      : null;
+    const finishedAt = (allCompleted ? (latestCompletedAt ?? h.updatedAt) : null);
 
     return {
       id: h.id,

@@ -37,6 +37,37 @@
   gap: 10px;
 }
 
+.pageActionButton {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+  border: 1px solid rgba(248, 113, 113, 0.34);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(254, 242, 242, 0.96) 100%);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #dc2626;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.pageActionButton:hover {
+  transform: translateY(-1px);
+  border-color: rgba(220, 38, 38, 0.44);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 1) 0%, rgba(254, 226, 226, 0.98) 100%);
+  box-shadow: 0 14px 30px rgba(220, 38, 38, 0.14);
+}
+
+.pageActionButton:active {
+  transform: translateY(0);
+}
+
+.pageActionButton svg {
+  display: block;
+}
+
 .userPill {
   min-width: 0;
   min-height: 44px;
@@ -139,4 +170,6 @@
     max-width: 120px;
     padding: 0 10px;
   }
+
+  .pageActionButton { width: 42px; height: 42px; }
 }

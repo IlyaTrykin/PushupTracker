@@ -4,6 +4,9 @@ export type NotificationEventType =
   | 'friend_request'
   | 'challenge_invite'
   | 'challenge_rank_change'
+  | 'group_join_request'
+  | 'group_join_request_approved'
+  | 'group_join_request_rejected'
   | 'friend_workout'
   | 'friend_reaction'
   | 'program_reminder'
@@ -37,6 +40,24 @@ export const NOTIFICATION_EVENT_DEFS: NotificationEventDef[] = [
     label: 'Смена позиции в соревновании',
     defaultPush: true,
     defaultEmail: false,
+  },
+  {
+    eventType: 'group_join_request',
+    label: 'Новая заявка в группу',
+    defaultPush: true,
+    defaultEmail: true,
+  },
+  {
+    eventType: 'group_join_request_approved',
+    label: 'Заявка в группу одобрена',
+    defaultPush: true,
+    defaultEmail: true,
+  },
+  {
+    eventType: 'group_join_request_rejected',
+    label: 'Заявка в группу отклонена',
+    defaultPush: true,
+    defaultEmail: true,
   },
   {
     eventType: 'friend_workout',

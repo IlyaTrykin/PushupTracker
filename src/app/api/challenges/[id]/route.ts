@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
+import { GroupError, recordGroupAuditLog, requireGroupAccess, requireGroupManageAccess } from '@/lib/groups';
 
 type ChallengeProgressRow = {
   userId: string;
@@ -12,8 +13,8 @@ type ChallengeProgressRow = {
   qualifiedReps?: number;
 };
 
-function jsonError(message: string, status: number, details?: string) {
-  return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
+function jsonError(message: string, status: number, code?: string, details?: string | Record<string, unknown>) {
+  return NextResponse.json(code ? { error: message, code, details } : { error: message, details }, { status });
 }
 
 function getErrorMessage(error: unknown) {
@@ -23,9 +24,10 @@ function getErrorMessage(error: unknown) {
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    let userId: string;
+    let actor: { id: string; isAdmin: boolean; username: string };
     try {
-      userId = (await requireUser(request)).id;
+      const user = await requireUser(request);
+      actor = { id: user.id, isAdmin: user.isAdmin, username: user.username };
     } catch (e) {
       if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
       return jsonError('Внутренняя ошибка сервера', 500);
@@ -37,6 +39,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       where: { id },
       select: {
         id: true,
+        groupId: true,
         name: true,
         exerciseType: true,
         mode: true,
@@ -58,11 +61,26 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
 
     if (!challenge) return jsonError('Соревнование не найдено', 404);
 
-    const isMember = challenge.creatorId === userId || challenge.participants.some((p) => p.userId === userId);
-    if (!isMember) return jsonError('Нет доступа', 403);
+    let activeGroupMemberIds: Set<string> | null = null;
+    if (challenge.groupId) {
+      await requireGroupAccess(prisma, actor, challenge.groupId);
+      const activeMembers = await prisma.groupMembership.findMany({
+        where: {
+          groupId: challenge.groupId,
+          status: 'active',
+          group: { deletedAt: null },
+        },
+        select: { userId: true },
+      });
+      activeGroupMemberIds = new Set(activeMembers.map((row) => row.userId));
+    } else {
+      const isMember = actor.isAdmin || challenge.creatorId === actor.id || challenge.participants.some((p) => p.userId === actor.id);
+      if (!isMember) return jsonError('Нет доступа', 403);
+    }
 
     const acceptedIds = challenge.participants
       .filter((p) => p.status === 'accepted')
+      .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
       .map((p) => p.userId);
 
     const totalDays = (() => {
@@ -73,7 +91,9 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     })();
 
     if (!acceptedIds.length) {
-      const myStatus = challenge.participants.find((p) => p.userId === userId)?.status ?? null;
+      const myStatus = challenge.participants
+        .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
+        .find((p) => p.userId === actor.id)?.status ?? null;
       return NextResponse.json({ challenge, myStatus, progress: [] });
     }
 
@@ -103,6 +123,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
 
       progress = challenge.participants
         .filter((p) => p.status === 'accepted')
+        .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
         .map((p) => ({
           userId: p.userId,
           username: p.user.username,
@@ -131,6 +152,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
 
       progress = challenge.participants
         .filter((p) => p.status === 'accepted')
+        .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
         .map((p) => {
           const v = setsMap.get(p.userId) ?? { sets: 0, reps: 0 };
           return {
@@ -158,6 +180,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
 
       progress = challenge.participants
         .filter((p) => p.status === 'accepted')
+        .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
         .map((p) => ({
           userId: p.userId,
           username: p.user.username,
@@ -166,10 +189,13 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
         .sort((a, b) => b.total - a.total);
     }
 
-    const myStatus = challenge.participants.find((p) => p.userId === userId)?.status ?? null;
+    const myStatus = challenge.participants
+      .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
+      .find((p) => p.userId === actor.id)?.status ?? null;
 
     return NextResponse.json({ challenge, myStatus, progress });
   } catch (e) {
+    if (e instanceof GroupError) return jsonError(e.message, e.status, e.code, e.details);
     console.error('CHALLENGE GET ERROR:', e);
     return jsonError('Внутренняя ошибка сервера (GET /api/challenges/[id])', 500, getErrorMessage(e));
   }
@@ -177,9 +203,10 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
 
 export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
-    let userId: string;
+    let actor: { id: string; isAdmin: boolean; username: string };
     try {
-      userId = (await requireUser(request)).id;
+      const user = await requireUser(request);
+      actor = { id: user.id, isAdmin: user.isAdmin, username: user.username };
     } catch (e) {
       if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
       return jsonError('Внутренняя ошибка сервера', 500);
@@ -189,17 +216,32 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
 
     const challenge = await prisma.challenge.findUnique({
       where: { id },
-      select: { id: true, creatorId: true },
+      select: { id: true, creatorId: true, groupId: true },
     });
 
     if (!challenge) return jsonError('Соревнование не найдено', 404);
-    if (challenge.creatorId !== userId) return jsonError('Удалять может только создатель', 403);
+    if (challenge.groupId) {
+      await requireGroupManageAccess(prisma, actor, challenge.groupId);
+    } else if (!actor.isAdmin && challenge.creatorId !== actor.id) {
+      return jsonError('Удалять может только создатель', 403);
+    }
 
     await prisma.challengeParticipant.deleteMany({ where: { challengeId: id } });
     await prisma.challenge.delete({ where: { id } });
 
+    if (challenge.groupId) {
+      await recordGroupAuditLog({
+        groupId: challenge.groupId,
+        actorId: actor.id,
+        action: 'group_challenge_deleted',
+        entityType: 'challenge',
+        entityId: id,
+      });
+    }
+
     return NextResponse.json({ ok: true });
   } catch (e) {
+    if (e instanceof GroupError) return jsonError(e.message, e.status, e.code, e.details);
     console.error('CHALLENGE DELETE ERROR:', e);
     return jsonError('Внутренняя ошибка сервера (DELETE /api/challenges/[id])', 500, getErrorMessage(e));
   }

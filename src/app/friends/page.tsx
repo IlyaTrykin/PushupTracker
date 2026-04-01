@@ -1,7 +1,8 @@
 'use client';
 
 import Image from 'next/image';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
@@ -117,7 +118,7 @@ type SortKey =
   | 'avgAll'
   | 'streak';
 
-type FeedLimit = 5 | 10 | 30 | 50 | 100;
+type FeedPeriod = '7d' | '30d' | '90d' | 'all';
 type JsonObject = Record<string, unknown>;
 type MeSummary = { id: string; username: string; avatarPath: string | null };
 type FriendRequestsPayload = { incoming: PendingRequest[]; outgoing: PendingRequest[] };
@@ -143,7 +144,7 @@ type FriendsCachePayload = {
 
 const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
-const FEED_LIMIT_OPTIONS: FeedLimit[] = [5, 10, 30, 50, 100];
+const FEED_PERIOD_OPTIONS: FeedPeriod[] = ['7d', '30d', '90d', 'all'];
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -160,6 +161,18 @@ function getWorkoutDate(value: Pick<Workout, 'time' | 'date'>): Date {
 
 function getWorkoutTimestamp(value: Pick<Workout, 'time' | 'date'>): number {
   return getWorkoutDate(value).getTime();
+}
+
+function isWorkoutInPeriod(workout: Pick<Workout, 'time' | 'date'>, period: FeedPeriod): boolean {
+  if (period === 'all') return true;
+  const days = period === '7d' ? 7 : period === '90d' ? 90 : 30;
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  const occurredAt = getWorkoutDate(workout);
+  return occurredAt >= start && occurredAt <= end;
 }
 
 function normalizeDate(d: Date): string {
@@ -409,9 +422,7 @@ export default function FriendsPage() {
   const [reactingWorkoutId, setReactingWorkoutId] = useState<string | null>(null);
   const [modalReactionPickerWorkoutId, setModalReactionPickerWorkoutId] = useState<string | null>(null);
   const [feedReactionPickerWorkoutId, setFeedReactionPickerWorkoutId] = useState<string | null>(null);
-  const [feedLimit, setFeedLimit] = useState<FeedLimit>(5);
-  const [feedViewportHeight, setFeedViewportHeight] = useState<number | null>(null);
-  const feedListRef = useRef<HTMLDivElement | null>(null);
+  const [feedPeriod, setFeedPeriod] = useState<FeedPeriod>('30d');
 
   const applyPayload = useCallback((payload: FriendsCachePayload) => {
     setMe(payload.me || null);
@@ -826,8 +837,8 @@ export default function FriendsPage() {
       return true;
     });
 
-    return unique.slice(0, feedLimit);
-  }, [myWorkouts, me, friends, friendWorkouts, feedLimit, tt]);
+    return unique.filter((w) => isWorkoutInPeriod(w, feedPeriod));
+  }, [myWorkouts, me, friends, friendWorkouts, feedPeriod, tt]);
 
   const groupedFeedWorkouts = useMemo(
     () =>
@@ -929,29 +940,20 @@ export default function FriendsPage() {
     if (!exists) setFeedReactionPickerWorkoutId(null);
   }, [feedReactionPickerWorkoutId, latestFeedWorkouts]);
 
-  useLayoutEffect(() => {
-    const wrap = feedListRef.current;
-    if (!wrap) return;
-    if (feedLimit === 5) {
-      const measured = Math.ceil(wrap.scrollHeight);
-      if (measured > 0 && measured !== feedViewportHeight) {
-        setFeedViewportHeight(measured);
-      }
-      return;
-    }
-    if (!feedViewportHeight) {
-      const targetRow = wrap.querySelector<HTMLElement>('[data-feed-row-index="4"]');
-      if (targetRow) {
-        setFeedViewportHeight(targetRow.offsetTop + targetRow.offsetHeight + 2);
-      }
-    }
-  }, [feedLimit, groupedFeedWorkouts, friendWorkoutReactions, feedReactionPickerWorkoutId, feedViewportHeight]);
-
   return (
     <div className="app-page">
       {error ? <p style={errorBanner}>{error}</p> : null}
       {info ? <p style={infoBanner}>{info}</p> : null}
       {loading ? <p style={loadingBanner}>{tt('Загрузка…')}</p> : null}
+
+      <section style={viewSwitchWrap}>
+        <Link href="/friends" style={{ ...viewSwitchBtn, ...viewSwitchBtnActive }}>
+          {tt('Друзья')}
+        </Link>
+        <Link href="/groups" style={viewSwitchBtn}>
+          {tt('Группы')}
+        </Link>
+      </section>
 
       <section style={accentCard}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', overflowX: 'auto' }}>
@@ -1171,21 +1173,22 @@ export default function FriendsPage() {
       <section style={accentCard}>
         <div style={feedHeaderRow}>
           <h2 style={{ marginTop: 0, marginBottom: 0 }}>{tt('Лента тренировок')}</h2>
-          <div role="group" aria-label={tt('Показывать тренировок')} style={feedLimitToggleRow}>
-            {FEED_LIMIT_OPTIONS.map((limit) => {
-              const active = feedLimit === limit;
+          <div role="group" aria-label={tt('Период')} style={feedLimitToggleRow}>
+            {FEED_PERIOD_OPTIONS.map((period) => {
+              const active = feedPeriod === period;
+              const label = period === 'all' ? tt('Все') : tt(period === '7d' ? '7д' : period === '30d' ? '30д' : '90д');
               return (
                 <button
-                  key={`feed-limit-${limit}`}
+                  key={`feed-period-${period}`}
                   type="button"
-                  onClick={() => setFeedLimit(limit)}
+                  onClick={() => setFeedPeriod(period)}
                   style={{
                     ...feedLimitToggleBtn,
                     ...(active ? feedLimitToggleBtnActive : {}),
                   }}
                   aria-pressed={active}
                 >
-                  {limit}
+                  {label}
                 </button>
               );
             })}
@@ -1196,14 +1199,9 @@ export default function FriendsPage() {
           <p style={{ margin: 0 }}>{tt('Пока нет тренировок в ленте.')}</p>
         ) : (
           <div
-            ref={feedListRef}
             style={{
               ...feedListWrap,
-              ...(feedLimit > 5 ? {
-                ...feedListWrapScrollable,
-                height: feedViewportHeight ? `${feedViewportHeight}px` : '300px',
-                maxHeight: feedViewportHeight ? `${feedViewportHeight}px` : '300px',
-              } : {}),
+              ...feedListWrapScrollable,
             }}
           >
             {groupedFeedWorkouts.map((group) => (
@@ -2002,6 +2000,32 @@ const btnDanger: React.CSSProperties = {
   color: '#b91c1c',
   fontWeight: 900,
   cursor: 'pointer',
+};
+
+const viewSwitchWrap: React.CSSProperties = {
+  display: 'inline-flex',
+  gap: 8,
+  padding: 6,
+  borderRadius: 18,
+  background: 'rgba(255, 255, 255, 0.78)',
+  border: '1px solid rgba(148, 163, 184, 0.2)',
+  boxShadow: '0 12px 28px rgba(15, 23, 42, 0.08)',
+  marginBottom: 12,
+};
+
+const viewSwitchBtn: React.CSSProperties = {
+  padding: '10px 16px',
+  borderRadius: 14,
+  textDecoration: 'none',
+  color: '#0f172a',
+  fontWeight: 800,
+  background: 'transparent',
+};
+
+const viewSwitchBtnActive: React.CSSProperties = {
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+  color: '#fff',
+  boxShadow: '0 12px 24px rgba(234, 88, 12, 0.18)',
 };
 
 const fieldInput: React.CSSProperties = {
