@@ -9,11 +9,15 @@ import { sendWebPushToUsers } from '@/lib/web-push';
 type DbClient = Prisma.TransactionClient | typeof prisma;
 export type GroupActor = Pick<AuthUser, 'id' | 'isAdmin' | 'username'>;
 
-const memberUserSelect = {
+const memberUserPublicSelect = {
   id: true,
   username: true,
-  email: true,
   avatarPath: true,
+} as const;
+
+const memberUserPrivateSelect = {
+  ...memberUserPublicSelect,
+  email: true,
 } as const;
 
 const groupBaseSelect = {
@@ -42,7 +46,7 @@ const groupMemberSelect = {
   removedAt: true,
   createdAt: true,
   updatedAt: true,
-  user: { select: memberUserSelect },
+  user: { select: memberUserPublicSelect },
 } as const;
 
 const joinRequestSelect = {
@@ -53,7 +57,7 @@ const joinRequestSelect = {
   updatedAt: true,
   resolvedAt: true,
   resolvedById: true,
-  user: { select: memberUserSelect },
+  user: { select: memberUserPrivateSelect },
 } as const;
 
 const auditLogSelect = {
@@ -632,7 +636,7 @@ export async function resolveJoinRequest(
         groupId: true,
         userId: true,
         status: true,
-        user: { select: memberUserSelect },
+        user: { select: memberUserPrivateSelect },
       },
     });
 

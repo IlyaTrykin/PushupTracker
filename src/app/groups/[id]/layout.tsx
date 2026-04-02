@@ -1,7 +1,8 @@
 import { cookies } from 'next/headers';
+import { notFound, redirect } from 'next/navigation';
 import GroupSubnavClient from './GroupSubnavClient';
 import { getAuthUserFromSessionToken } from '@/lib/auth';
-import { getGroupDetails } from '@/lib/groups';
+import { getGroupDetails, GroupError } from '@/lib/groups';
 
 export default async function GroupLayout({
   children,
@@ -13,23 +14,28 @@ export default async function GroupLayout({
   const { id } = await params;
   const cookieStore = await cookies();
   const actor = await getAuthUserFromSessionToken(cookieStore.get('session')?.value);
+  if (!actor) redirect('/login');
 
-  let groupName = '';
-  let canManage = false;
-  let memberCount = 0;
+  let group;
+  try {
+    group = await getGroupDetails(actor, id);
+  } catch (error) {
+    if (error instanceof GroupError) {
+      if (error.code === 'GROUP_NOT_FOUND') notFound();
+      if (error.code === 'GROUP_ACCESS_DENIED') notFound();
+    }
 
-  if (actor) {
-    try {
-      const group = await getGroupDetails(actor, id);
-      groupName = group.name;
-      canManage = group.canManage;
-      memberCount = group.members.length;
-    } catch {}
+    throw error;
   }
 
   return (
     <>
-      {groupName ? <GroupSubnavClient groupId={id} groupName={groupName} canManage={canManage} memberCount={memberCount} /> : null}
+      <GroupSubnavClient
+        groupId={id}
+        groupName={group.name}
+        canManage={group.canManage}
+        memberCount={group.members.length}
+      />
       {children}
     </>
   );
