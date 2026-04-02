@@ -31,14 +31,30 @@ function getExerciseTypeFromQuery(request: NextRequest): ExerciseType | null {
   return et as ExerciseType;
 }
 
+function getUserIdFromQuery(request: NextRequest): string | null {
+  const raw = request.nextUrl.searchParams.get('userId');
+  if (!raw) return null;
+  const userId = raw.trim();
+  return userId || null;
+}
+
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireUser(request);
     const { id } = await ctx.params;
     const exerciseType = getExerciseTypeFromQuery(request);
+    const requestedUserId = getUserIdFromQuery(request);
 
     const { group, members, userIds } = await getGroupWorkoutScope(user, id);
-    const where: Prisma.WorkoutWhereInput = { userId: { in: userIds } };
+    const scopedUserIds = requestedUserId
+      ? userIds.filter((userId) => userId === requestedUserId)
+      : userIds;
+
+    if (requestedUserId && !scopedUserIds.length) {
+      return jsonError('Участник группы не найден', 404, 'GROUP_MEMBER_NOT_FOUND');
+    }
+
+    const where: Prisma.WorkoutWhereInput = { userId: { in: scopedUserIds } };
     if (exerciseType) where.exerciseType = exerciseType;
 
     const workouts = await prisma.workout.findMany({
@@ -47,7 +63,11 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       select: { id: true, userId: true, reps: true, date: true, time: true, exerciseType: true },
     });
 
-    const byUserId = new Map(members.map((membership) => [membership.userId, membership.user]));
+    const byUserId = new Map(
+      members
+        .filter((membership) => !requestedUserId || membership.userId === requestedUserId)
+        .map((membership) => [membership.userId, membership.user]),
+    );
     const byUser: Record<string, WorkoutResponseItem[]> = {};
     for (const workout of workouts) {
       const userInfo = byUserId.get(workout.userId);
@@ -69,7 +89,9 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
         ownerId: group.ownerId,
       },
       byUser,
-      members: members.map((membership) => ({
+      members: members
+        .filter((membership) => !requestedUserId || membership.userId === requestedUserId)
+        .map((membership) => ({
         userId: membership.userId,
         username: membership.user.username,
         avatarPath: membership.user.avatarPath ?? null,

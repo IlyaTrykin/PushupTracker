@@ -115,12 +115,6 @@ function normalizeTime(d: Date) {
   return `${hh}:${mm}`;
 }
 
-function toDate(iso: string | null | undefined): Date | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
 function monthStart(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
@@ -378,7 +372,6 @@ export default function DashboardPage() {
   const [detailDay, setDetailDay] = useState<string | null>(null);
   const [workoutReactions, setWorkoutReactions] = useState<Record<string, WorkoutReactionPayload>>({});
   const [initialLoadReady, setInitialLoadReady] = useState(false);
-  const calendarMonthInitializedRef = useRef(false);
   const repsRef = useRef(reps);
   const plankSecondsLeftRef = useRef(plankSecondsLeft);
   const isPlankSelected = exerciseType === 'plank';
@@ -407,12 +400,6 @@ export default function DashboardPage() {
 
   const applyLoadedWorkouts = useCallback((items: Workout[]) => {
     setWorkouts(items);
-    if (calendarMonthInitializedRef.current) return;
-    const first = items[0];
-    const firstDate = toDate(first?.time || first?.date);
-    if (!firstDate) return;
-    calendarMonthInitializedRef.current = true;
-    setCalendarMonth(monthStart(firstDate));
   }, []);
 
   const loadWorkouts = useCallback(async () => {
@@ -515,15 +502,31 @@ export default function DashboardPage() {
     const first = new Date(year, month, 1);
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const mondayOffset = (first.getDay() + 6) % 7;
-    const out: Array<{ key: string; day: number } | null> = [];
+    const out: Array<{ key: string; day: number; inCurrentMonth: boolean }> = [];
 
-    for (let i = 0; i < mondayOffset; i += 1) out.push(null);
+    for (let i = mondayOffset; i > 0; i -= 1) {
+      const d = new Date(year, month, 1 - i);
+      out.push({
+        key: normalizeDate(d),
+        day: d.getDate(),
+        inCurrentMonth: false,
+      });
+    }
     for (let day = 1; day <= daysInMonth; day += 1) {
       const d = new Date(year, month, day);
       const key = normalizeDate(d);
-      out.push({ key, day });
+      out.push({ key, day, inCurrentMonth: true });
     }
-    while (out.length % 7 !== 0) out.push(null);
+    let trailingDay = 1;
+    while (out.length % 7 !== 0) {
+      const d = new Date(year, month + 1, trailingDay);
+      out.push({
+        key: normalizeDate(d),
+        day: d.getDate(),
+        inCurrentMonth: false,
+      });
+      trailingDay += 1;
+    }
     return out;
   }, [calendarMonth]);
 
@@ -913,8 +916,7 @@ export default function DashboardPage() {
                 <div key={day} style={calendarWeekdayCell}>{day}</div>
               ))}
 
-              {calendarCells.map((cell, idx) => {
-                if (!cell) return <div key={`empty-${idx}`} style={calendarEmptyCell} />;
+              {calendarCells.map((cell) => {
                 const row = dayMap.get(cell.key);
                 const hasData = Boolean(row && row.items.length);
                 const active = detailsOpen && detailDay === cell.key;
@@ -922,7 +924,10 @@ export default function DashboardPage() {
                 const cellDate = new Date(`${cell.key}T00:00:00`);
                 const dayOfWeek = cellDate.getDay();
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                const baseBackground = hasData ? '#f8fafc' : '#fff';
+                const isOutsideCurrentMonth = !cell.inCurrentMonth;
+                const baseBackground = hasData
+                  ? (isOutsideCurrentMonth ? 'rgba(248, 250, 252, 0.78)' : '#f8fafc')
+                  : (isOutsideCurrentMonth ? 'rgba(248, 250, 252, 0.52)' : '#fff');
                 const exerciseTotals = EXERCISE_ORDER
                   .map((type) => ({ type, sum: row?.byExercise.get(type) ?? 0 }))
                   .filter((x) => x.sum > 0);
@@ -942,11 +947,27 @@ export default function DashboardPage() {
                       background: isWeekend
                         ? `linear-gradient(rgba(244, 114, 182, 0.12), rgba(244, 114, 182, 0.12)), ${baseBackground}`
                         : baseBackground,
-                      borderColor: isToday ? '#16a34a' : active ? '#2563eb' : hasData ? '#d1d5db' : '#f3f4f6',
+                      borderColor: isToday
+                        ? '#16a34a'
+                        : active
+                          ? '#2563eb'
+                          : hasData
+                            ? '#d1d5db'
+                            : isOutsideCurrentMonth
+                              ? 'rgba(226, 232, 240, 0.72)'
+                              : '#f3f4f6',
                       boxShadow: isToday ? 'inset 0 0 0 1px #16a34a' : 'none',
                     }}
                   >
-                    <div style={{ fontWeight: 900, textAlign: 'left', color: '#000' }}>{cell.day}</div>
+                    <div
+                      style={{
+                        fontWeight: 900,
+                        textAlign: 'left',
+                        color: isOutsideCurrentMonth ? '#94a3b8' : '#000',
+                      }}
+                    >
+                      {cell.day}
+                    </div>
                     <div style={exerciseNumbersRow}>
                       {exerciseTotals.map(({ type, sum }) => (
                         <span key={type} style={exerciseNumberItem}>
@@ -1289,13 +1310,6 @@ const calendarWeekdayCell: React.CSSProperties = {
   color: '#000',
   textAlign: 'center',
   padding: '4px 0',
-};
-
-const calendarEmptyCell: React.CSSProperties = {
-  minHeight: 'clamp(82px, 10.5vw, 120px)',
-  border: '1px dashed rgba(226, 232, 240, 0.9)',
-  borderRadius: 16,
-  background: 'rgba(255, 255, 255, 0.72)',
 };
 
 const calendarDayCell: React.CSSProperties = {

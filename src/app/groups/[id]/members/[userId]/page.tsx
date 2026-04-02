@@ -411,7 +411,9 @@ export default function GroupMemberDetailPage() {
     try {
       const [groupRes, workoutsRes] = await Promise.all([
         fetchJsonSafe<{ group: GroupDetail }>(`/api/groups/${groupId}`),
-        fetchJsonSafe<{ byUser: Record<string, GroupWorkout[]> }>(`/api/groups/${groupId}/workouts`),
+        fetchJsonSafe<{ byUser: Record<string, GroupWorkout[]> }>(
+          `/api/groups/${groupId}/workouts?userId=${encodeURIComponent(memberId)}`,
+        ),
       ]);
 
       const nextMember = groupRes.group.members.find((candidate) => candidate.userId === memberId) || null;
