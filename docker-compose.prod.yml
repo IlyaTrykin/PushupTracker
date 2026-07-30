@@ -1,0 +1,59 @@
+# pushup-tracker — co-located deploy на VPS team manager (37.252.23.144).
+# pushup поднимается ИЗОЛИРОВАННЫМ соседом за уже работающим teammanager-caddy:
+#   - свой Caddy НЕ поднимаем (80/443 держит teammanager-caddy);
+#   - наружу порты НЕ публикуем — внешний вход только через teammanager-caddy
+#     (блок tracker.trykin.online добавляется в его Caddyfile на этапе cutover);
+#   - db: только внутренняя сеть; web: internal + внешняя teammanager_proxy
+#     (Caddy достаёт web по имени контейнера pushup-web).
+# team manager этим стеком не затрагивается.
+name: pushup
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: pushup-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pushup_db_data:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  web:
+    build: .
+    container_name: pushup-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - pushup_uploads_data:/app/public/uploads
+    networks: [internal, proxy]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+networks:
+  internal:
+  proxy:
+    external: true
+    name: teammanager_proxy
+
+volumes:
+  pushup_db_data:
+  pushup_uploads_data:
