@@ -48,7 +48,8 @@ export const ruMessages = {
       admin: 'Админка',
       logout: 'Выйти',
       login: 'Вход',
-      feedbackEmail: 'Обратная связь: PushupTrackerApp@gmail.com',
+      feedback: 'Обратная связь',
+      support: 'Поддержать проект',
     },
     exercise: {
       pushups: 'Отжимания',
@@ -57,6 +58,16 @@ export const ruMessages = {
       squats: 'Приседания',
       plank: 'Планка',
     },
+  },
+  feedback: {
+    title: 'Обратная связь',
+    hint: 'Нашли ошибку или есть предложение? Напишите нам — ответим на вашу почту.',
+    placeholder: 'Ваше сообщение…',
+    send: 'Отправить',
+    sending: 'Отправляем…',
+    sent: 'Спасибо! Сообщение отправлено.',
+    error: 'Не удалось отправить. Попробуйте позже.',
+    close: 'Закрыть',
   },
   auth: {
     login: {
