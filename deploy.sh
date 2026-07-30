@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Default to the known working SSH target. You can still override via:
-#   SERVER=ssh.trykin.online ./deploy.sh
-#   SERVER=ilya@37.230.147.134 ./deploy.sh
-SERVER="${SERVER:-ilya@37.230.147.134}"
-REMOTE_DIR="${REMOTE_DIR:-/home/ilya/pushup-tracker}"
-# Prefer the project key if it exists locally; otherwise fall back to the ssh-agent/default config.
+# Деплой на VPS 37.252.23.144, где pushup живёт изолированным соседом за
+# teammanager-caddy: свой Caddy не поднимаем, порты наружу не публикуем.
+# /root/pushup-tracker — это rsync-приёмник, а НЕ git-checkout.
+#
+# Переопределяется через окружение:
+#   SERVER=root@1.2.3.4 ./deploy.sh
+#   REMOTE_DIR=/root/pushup-tracker ./deploy.sh
+#   SSH_KEY=~/.ssh/other ./deploy.sh
+SERVER="${SERVER:-root@37.252.23.144}"
+REMOTE_DIR="${REMOTE_DIR:-/root/pushup-tracker}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+HEALTH_URL="${HEALTH_URL:-https://tracker.trykin.online/api/health}"
+
+# Ключ проекта, если он есть локально; иначе полагаемся на ssh-agent/ssh_config.
 DEFAULT_SSH_KEY="${HOME}/.ssh/ilyatrykin"
 SSH_KEY="${SSH_KEY:-}"
 if [[ -z "${SSH_KEY}" && -f "${DEFAULT_SSH_KEY}" ]]; then
@@ -25,31 +33,52 @@ for opt in "${SSH_OPTS[@]}"; do
   RSYNC_RSH+=" ${opt}"
 done
 
-echo "[1/4] Sync project -> ${SERVER}:${REMOTE_DIR}"
+echo "[1/4] Sync project -> ${SERVER}:${REMOTE_DIR} (HEAD $(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
 
-rsync -avz --delete \
+# Без --delete: на сервере есть каталоги, которых нет в репозитории (logs/,
+# смонтированный public/uploads), и сносить их деплоем нельзя.
+# .env исключён намеренно — рантайм-секреты живут только на сервере.
+rsync -az --info=stats1 \
   -e "${RSYNC_RSH}" \
   --exclude '.git' \
   --exclude 'node_modules' \
   --exclude '.next' \
-  --exclude '*.dump' \
-  --exclude '*.sql.gz' \
+  --exclude '.env' \
+  --exclude '.env.*' \
   --exclude 'backups' \
   --exclude 'Backups' \
+  --exclude 'tmp' \
+  --exclude 'output' \
+  --exclude 'test-results' \
+  --exclude 'import' \
+  --exclude '*.tgz' \
+  --exclude '*.sql.gz' \
+  --exclude '*.dump' \
+  --exclude '*.tsbuildinfo' \
   --exclude '.DS_Store' \
-  --exclude '.env' \
-  --exclude '.env.runtime' \
   ./ "${SERVER}:${REMOTE_DIR}/"
 
-echo "[2/4] Build and restart on server"
+echo "[2/4] Build web image on server"
 "${SSH_CMD[@]}" "${SERVER}" "set -e; cd '${REMOTE_DIR}'; \
-  docker compose pull || true; \
-  docker compose build --no-cache web; \
-  docker compose up -d --force-recreate web caddy; \
-  docker compose exec -T web npx prisma migrate deploy"
+  docker compose -f '${COMPOSE_FILE}' build web"
 
-echo "[3/4] Health check"
-"${SSH_CMD[@]}" "${SERVER}" "set -e; \
-  curl -fsS http://127.0.0.1:3000/api/health | head -c 300; echo"
+# Миграции применяет сам контейнер: CMD образа делает prisma migrate deploy
+# перед next start, поэтому отдельного шага здесь нет.
+echo "[3/4] Recreate web container"
+"${SSH_CMD[@]}" "${SERVER}" "set -e; cd '${REMOTE_DIR}'; \
+  docker compose -f '${COMPOSE_FILE}' up -d --force-recreate web"
 
-echo "[4/4] Done"
+echo "[4/4] Health check ${HEALTH_URL}"
+for attempt in $(seq 1 12); do
+  if body="$(curl -fsS --max-time 10 "${HEALTH_URL}" 2>/dev/null)"; then
+    echo "${body}"
+    echo "Done"
+    exit 0
+  fi
+  echo "  not ready yet (${attempt}/12), retrying in 5s…"
+  sleep 5
+done
+
+echo "Health check failed: ${HEALTH_URL}" >&2
+"${SSH_CMD[@]}" "${SERVER}" "docker logs pushup-web --tail 40 2>&1" >&2 || true
+exit 1
