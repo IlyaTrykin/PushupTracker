@@ -26,7 +26,25 @@ export async function GET(request: Request) {
     orderBy: { email: 'asc' },
   });
 
-  return NextResponse.json({ users });
+  // Последняя активность: максимум из последнего входа и последней тренировки.
+  // Сессии чистятся при выходе и по истечении срока, поэтому вход — лишь нижняя оценка.
+  const [lastSessions, lastWorkouts] = await Promise.all([
+    prisma.session.groupBy({ by: ['userId'], _max: { createdAt: true } }),
+    prisma.workout.groupBy({ by: ['userId'], _max: { time: true } }),
+  ]);
+
+  const lastActive = new Map<string, Date>();
+  const bump = (userId: string, at: Date | null) => {
+    if (!at) return;
+    const current = lastActive.get(userId);
+    if (!current || at > current) lastActive.set(userId, at);
+  };
+  lastSessions.forEach((row) => bump(row.userId, row._max.createdAt));
+  lastWorkouts.forEach((row) => bump(row.userId, row._max.time));
+
+  return NextResponse.json({
+    users: users.map((u) => ({ ...u, lastActiveAt: lastActive.get(u.id)?.toISOString() ?? null })),
+  });
 }
 
 // body: { email, password, isAdmin?, username? }
