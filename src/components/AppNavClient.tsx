@@ -6,6 +6,8 @@ import { usePathname } from 'next/navigation';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { clearClientDataCaches } from '@/lib/client-cache';
+import { SUPPORT_URL } from '@/lib/support';
+import FeedbackSheet from '@/components/FeedbackSheet';
 import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
@@ -76,6 +78,7 @@ export default function AppNavClient() {
   const pathname = usePathname();
   const isAuthRoute = pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
   const [open, setOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [updatingLanguage, setUpdatingLanguage] = useState(false);
   const [pageTitleOverride, setPageTitleOverride] = useState<string | null>(null);
   const [pageHeaderActionLabel, setPageHeaderActionLabel] = useState<string | null>(null);
@@ -293,12 +296,27 @@ export default function AppNavClient() {
                 </Link>
               ) : null}
 
+              {me?.username ? (
+                <button
+                  type="button"
+                  className="app-drawer__btn"
+                  onClick={() => {
+                    setFeedbackOpen(true);
+                    setOpen(false);
+                  }}
+                >
+                  {messages.nav.drawer.feedback}
+                </button>
+              ) : null}
+
               <a
                 className="app-drawer__btn"
-                href="mailto:PushupTrackerApp@gmail.com"
+                href={SUPPORT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
                 onClick={() => setOpen(false)}
               >
-                {messages.nav.drawer.feedbackEmail}
+                {messages.nav.drawer.support}
               </a>
 
               {me?.username ? (
@@ -327,6 +345,8 @@ export default function AppNavClient() {
           </div>
         </div>
       ) : null}
+
+      <FeedbackSheet open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </>
   );
 }

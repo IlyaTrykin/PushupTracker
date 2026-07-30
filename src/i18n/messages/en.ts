@@ -50,7 +50,8 @@ export const enMessages: DeepPartial<Messages> = {
       admin: 'Admin',
       logout: 'Log out',
       login: 'Log in',
-      feedbackEmail: 'Feedback: PushupTrackerApp@gmail.com',
+      feedback: 'Feedback',
+      support: 'Support the project',
     },
     exercise: {
       pushups: 'Push-ups',
@@ -59,6 +60,16 @@ export const enMessages: DeepPartial<Messages> = {
       squats: 'Squats',
       plank: 'Plank',
     },
+  },
+  feedback: {
+    title: 'Feedback',
+    hint: "Found a bug or have a suggestion? Write to us — we'll reply to your email.",
+    placeholder: 'Your message…',
+    send: 'Send',
+    sending: 'Sending…',
+    sent: 'Thanks! Your message has been sent.',
+    error: "Couldn't send. Please try again later.",
+    close: 'Close',
   },
   auth: {
     login: {
