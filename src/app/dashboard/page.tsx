@@ -530,6 +530,16 @@ export default function DashboardPage() {
     return out;
   }, [calendarMonth]);
 
+  // Кнопка сброса в системном календаре/часах очищает поле. Трактуем пустое
+  // значение как возврат ввода на «сейчас»: иначе форма застревает на ранее
+  // подтверждённой дате и вернуться на сегодня из пикера нечем.
+  const resetEntryDateTimeToNow = useCallback(() => {
+    const now = new Date();
+    setDate(normalizeDate(now));
+    setTime(normalizeTime(now));
+    setTimeTouched(false);
+  }, []);
+
   const submitWorkout = useCallback(async (value: number, selectedType: ExerciseType) => {
     const timeToSend = timeTouched ? time : normalizeTime(new Date());
     const data = await fetchJsonSafe('/api/workouts', {
@@ -753,7 +763,13 @@ export default function DashboardPage() {
               <input
                 type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => {
+                  if (!e.target.value) {
+                    resetEntryDateTimeToNow();
+                    return;
+                  }
+                  setDate(e.target.value);
+                }}
                 style={smallInput}
                 aria-label={tt('Дата')}
               />
@@ -761,12 +777,24 @@ export default function DashboardPage() {
                 type="time"
                 value={time}
                 onChange={(e) => {
+                  if (!e.target.value) {
+                    resetEntryDateTimeToNow();
+                    return;
+                  }
                   setTime(e.target.value);
                   setTimeTouched(true);
                 }}
                 style={smallInput}
                 aria-label={tt('Время')}
               />
+
+              {/* Сброс внутри системного пикера перехватить нельзя, поэтому,
+                  когда ввод уехал с сегодняшнего дня, даём собственный возврат. */}
+              {date !== todayKey ? (
+                <button type="button" onClick={resetEntryDateTimeToNow} style={resetDateButton}>
+                  ↺ {tt('Сегодня')}
+                </button>
+              ) : null}
             </div>
 
             <input
@@ -1205,6 +1233,19 @@ const smallInput: React.CSSProperties = {
   fontWeight: 700,
   color: '#0f172a',
   boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.76)',
+};
+
+const resetDateButton: React.CSSProperties = {
+  gridColumn: '1 / -1',
+  minHeight: 40,
+  padding: '8px 14px',
+  borderRadius: 14,
+  border: '1px solid rgba(249, 115, 22, 0.28)',
+  background: 'rgba(255, 237, 213, 0.72)',
+  color: '#c2410c',
+  fontWeight: 800,
+  fontSize: 13,
+  cursor: 'pointer',
 };
 
 const repsInputStyle: React.CSSProperties = {
