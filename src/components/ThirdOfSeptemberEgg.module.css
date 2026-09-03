@@ -1,0 +1,59 @@
+/* Длительности синхронизированы с ThirdOfSeptemberEgg.tsx: 600ms въезд + 2000ms пауза + 500ms отъезд. */
+.root {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: 70;
+  width: clamp(150px, 42vw, 260px);
+  pointer-events: none;
+  user-select: none;
+  transform: translateX(115%);
+  animation: peek 3100ms both;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(-10px 0 20px rgba(15, 23, 42, 0.22));
+}
+
+@keyframes peek {
+  0% {
+    transform: translateX(115%);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  19.35% {
+    transform: translateX(0);
+    animation-timing-function: linear;
+  }
+  83.87% {
+    transform: translateX(0);
+    animation-timing-function: cubic-bezier(0.7, 0, 0.84, 0);
+  }
+  100% {
+    transform: translateX(115%);
+  }
+}
+
+@keyframes peekFade {
+  0% {
+    opacity: 0;
+  }
+  19.35% {
+    opacity: 1;
+  }
+  83.87% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root {
+    transform: none;
+    animation-name: peekFade;
+  }
+}

@@ -8,6 +8,7 @@ import AppNav from '@/components/AppNav';
 import RegisterSW from '@/components/RegisterSW';
 import ScreenWakeLock from '@/components/ScreenWakeLock';
 import TapSound from '@/components/TapSound';
+import ThirdOfSeptemberEgg from '@/components/ThirdOfSeptemberEgg';
 import { LocaleProvider } from '@/i18n/provider';
 import { getRequestLocale } from '@/i18n/server';
 import { getAuthUserFromSessionToken } from '@/lib/auth';
@@ -117,6 +118,7 @@ export default async function RootLayout({
             <TapSound />
             <RegisterSW />
             <AppNav />
+            <ThirdOfSeptemberEgg />
             <div className="app-shell"><div className="app-content">{children}</div></div>
           </AuthProvider>
         </LocaleProvider>
