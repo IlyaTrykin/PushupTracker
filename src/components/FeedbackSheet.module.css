@@ -1,18 +1,22 @@
+/* Шапка приложения закреплена поверх всего (z-index 10000), поэтому окно
+   начинается ниже неё, а не по центру экрана — иначе верх высокого окна
+   вместе с крестиком уходит под шапку. */
 .overlay {
+  --sheet-top: calc(var(--app-header-h, 64px) + var(--safe-top, 0px) + 28px);
   position: fixed;
   inset: 0;
   z-index: 80;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 16px;
+  padding: var(--sheet-top) 16px calc(16px + var(--safe-bottom, 0px));
   background: rgba(15, 23, 42, 0.32);
   backdrop-filter: blur(6px);
 }
 
 .sheet {
   width: min(460px, 100%);
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - var(--sheet-top) - 16px - var(--safe-bottom, 0px));
   overflow: auto;
   padding: 18px;
   border-radius: 28px;
