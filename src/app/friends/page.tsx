@@ -7,7 +7,7 @@ import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
-import { formatWorkoutValue } from '@/lib/exercise-metrics';
+import { formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { EXERCISES, EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 interface Friend {
@@ -853,6 +853,12 @@ export default function FriendsPage() {
     return out;
   }, [friendCalendarMonth]);
 
+  // Легенда календаря — только упражнения, которые есть в показанном месяце.
+  const calendarTypes = useMemo(
+    () => EXERCISE_ORDER.filter((type) => friendCalendarCells.some((cell) => cell && (selectedFriendDayMap.get(cell.key)?.byExercise.get(type) ?? 0) > 0)),
+    [friendCalendarCells, selectedFriendDayMap],
+  );
+
   const hasPendingRequests = incomingRequests.length > 0 || outgoingRequests.length > 0;
   const todayKey = normalizeDate(new Date());
   const friendWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
@@ -1003,6 +1009,8 @@ export default function FriendsPage() {
 
                   const sBy: StatsByExercise = row.statsByExercise;
                   const uname = isMe ? tt('Ты') : row.friend.username;
+                  // Только упражнения, по которым у человека есть хоть одна запись.
+                  const rowTypes = EXERCISE_ORDER.filter((type) => sBy[type].totalAll > 0);
 
                   return (
                     <tr key={isMe ? '__me__' : row.friend.friendshipId}>
@@ -1017,7 +1025,8 @@ export default function FriendsPage() {
 
                       <td style={{ ...tdCompact, ...stickyExerciseCell }}>
                         <div style={exerciseIconStack}>
-                          {EXERCISE_ORDER.map((type) => (
+                          {rowTypes.length ? null : '—'}
+                          {rowTypes.map((type) => (
                             <Image key={`${uname}-${type}`} src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={16} height={16} style={tableExerciseIcon} unoptimized />
                           ))}
                         </div>
@@ -1025,47 +1034,47 @@ export default function FriendsPage() {
 
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-today-${type}`} style={metricValue}>{sBy[type].totalToday}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-today-${type}`} style={metricValue}>{sBy[type].totalToday}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-all-${type}`} style={metricValue}>{sBy[type].totalAll}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-all-${type}`} style={metricValue}>{sBy[type].totalAll}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-year-${type}`} style={metricValue}>{sBy[type].totalYear}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-year-${type}`} style={metricValue}>{sBy[type].totalYear}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-month-${type}`} style={metricValue}>{sBy[type].totalMonth}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-month-${type}`} style={metricValue}>{sBy[type].totalMonth}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-week-${type}`} style={metricValue}>{sBy[type].totalWeek}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-week-${type}`} style={metricValue}>{sBy[type].totalWeek}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-avgm-${type}`} style={metricValue}>{sBy[type].avgPerDayMonth || '-'}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-avgm-${type}`} style={metricValue}>{sBy[type].avgPerDayMonth || '-'}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-avgy-${type}`} style={metricValue}>{sBy[type].avgPerDayYear || '-'}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-avgy-${type}`} style={metricValue}>{sBy[type].avgPerDayYear || '-'}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-avga-${type}`} style={metricValue}>{sBy[type].avgPerDayAll || '-'}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-avga-${type}`} style={metricValue}>{sBy[type].avgPerDayAll || '-'}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {EXERCISE_ORDER.map((type) => <span key={`${uname}-streak-${type}`} style={metricValue}>{sBy[type].streak}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-streak-${type}`} style={metricValue}>{sBy[type].streak}</span>)}
                         </div>
                       </td>
 
@@ -1223,7 +1232,10 @@ export default function FriendsPage() {
 
                         <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={18} height={18} style={feedTypeIcon} unoptimized />
 
-                        <div style={feedReps}>{formatWorkoutValue(w, locale)}</div>
+                        <div style={feedReps}>
+                          {formatWorkoutValue(w, locale, false)}
+                          {formatWorkoutSides(w, locale) ? <div style={feedSides}>{formatWorkoutSides(w, locale)}</div> : null}
+                        </div>
                       </div>
 
                       {summaryItems.length ? (
@@ -1396,7 +1408,7 @@ export default function FriendsPage() {
                 </div>
 
                 <div style={legendWrap}>
-                  {EXERCISE_ORDER.map((type) => (
+                  {calendarTypes.map((type) => (
                     <div key={type} style={legendItem}>
                       <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={20} height={20} style={legendIcon} unoptimized />
                       <span>{tt(exerciseLabel(type))}</span>
@@ -1768,6 +1780,14 @@ const feedReps: React.CSSProperties = {
   textAlign: 'right',
   minWidth: 44,
   whiteSpace: 'nowrap',
+};
+
+// Раскладка по рукам — мелко под значением, чтобы длинная запись не сжимала имя.
+const feedSides: React.CSSProperties = {
+  marginTop: 2,
+  fontSize: 12,
+  fontWeight: 700,
+  color: '#64748b',
 };
 
 const feedReactionRow: React.CSSProperties = {

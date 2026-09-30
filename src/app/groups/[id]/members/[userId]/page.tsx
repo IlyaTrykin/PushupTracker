@@ -7,7 +7,7 @@ import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, use
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
-import { formatExerciseValue, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { formatExerciseValue, formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, isLoadedExercise, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
@@ -354,6 +354,12 @@ export default function GroupMemberDetailPage() {
   const [exerciseFilter, setExerciseFilter] = useState<ExerciseFilter>(
     isExerciseFilterValue(searchExercise) ? searchExercise : 'all',
   );
+
+  // В фильтре — только упражнения, по которым есть записи (и текущий выбор).
+  const exerciseFilterOptions = useMemo<ExerciseFilter[]>(() => {
+    const present = new Set(workouts.map((workout) => toExerciseType(workout.exerciseType)));
+    return ['all', ...EXERCISE_ORDER.filter((type) => present.has(type) || type === exerciseFilter)];
+  }, [workouts, exerciseFilter]);
   const [period, setPeriod] = useState<PeriodKey>(
     isPeriodKeyValue(searchPeriod) ? searchPeriod : '30d',
   );
@@ -513,6 +519,12 @@ export default function GroupMemberDetailPage() {
     while (out.length % 7 !== 0) out.push(null);
     return out;
   }, [calendarMonth]);
+
+  // Легенда календаря — только упражнения, которые есть в показанном месяце.
+  const calendarTypes = useMemo(
+    () => EXERCISE_ORDER.filter((type) => calendarCells.some((cell) => cell && (dayMap.get(cell.key)?.byExercise.get(type) ?? 0) > 0)),
+    [calendarCells, dayMap],
+  );
 
   const groupedRecentWorkouts = useMemo(() => {
     const filtered = workouts
@@ -772,7 +784,7 @@ export default function GroupMemberDetailPage() {
 
         <div style={filterGroup}>
           <div style={filterRow}>
-            {(['all', ...EXERCISE_ORDER] as ExerciseFilter[]).map((filter) => (
+            {exerciseFilterOptions.map((filter) => (
               <button
                 key={filter}
                 type="button"
@@ -962,7 +974,7 @@ export default function GroupMemberDetailPage() {
           </div>
 
           <div style={legendWrap}>
-            {EXERCISE_ORDER.map((type) => (
+            {calendarTypes.map((type) => (
               <div key={type} style={legendItem}>
                 <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={20} height={20} style={legendIcon} unoptimized />
                 <span>{exerciseLabel(type, messages.nav.exercise) || type}</span>
@@ -1022,7 +1034,10 @@ export default function GroupMemberDetailPage() {
                           </div>
                         </div>
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={18} height={18} style={feedTypeIcon} unoptimized />
-                        <div style={feedReps}>{formatWorkoutValue(workout, locale)}</div>
+                        <div style={feedReps}>
+                          {formatWorkoutValue(workout, locale, false)}
+                          {formatWorkoutSides(workout, locale) ? <div style={feedSides}>{formatWorkoutSides(workout, locale)}</div> : null}
+                        </div>
                       </div>
                     </article>
                   );
@@ -1940,4 +1955,12 @@ const feedReps: CSSProperties = {
   textAlign: 'right',
   minWidth: 44,
   whiteSpace: 'nowrap',
+};
+
+// Раскладка по рукам — мелко под значением, чтобы длинная запись не сжимала имя.
+const feedSides: CSSProperties = {
+  marginTop: 2,
+  fontSize: 12,
+  fontWeight: 700,
+  color: '#64748b',
 };

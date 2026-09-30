@@ -32,18 +32,21 @@ type WorkoutValueFields = {
   repsRight?: number | null;
 };
 
-// Значение подхода для детализации: итог, вес снаряда и раскладка по рукам.
-// В сводной статистике используется только итог (reps).
-export function formatWorkoutValue(workout: WorkoutValueFields, locale: string = 'ru'): string {
-  const isEnglish = locale === 'en';
+// Раскладка по рукам («Л 5 / П 6») или пустая строка, если её нет.
+export function formatWorkoutSides(workout: WorkoutValueFields, locale: string = 'ru'): string {
+  if (workout.repsLeft == null && workout.repsRight == null) return '';
+  const left = workout.repsLeft ?? 0;
+  const right = workout.repsRight ?? 0;
+  return locale === 'en' ? `L ${left} / R ${right}` : `Л ${left} / П ${right}`;
+}
+
+// Значение подхода для детализации: итог, вес снаряда и (если withSides) раскладка
+// по рукам. В сводной статистике используется только итог (reps).
+export function formatWorkoutValue(workout: WorkoutValueFields, locale: string = 'ru', withSides = true): string {
   let out = formatExerciseValue(workout.reps, workout.exerciseType, true);
-  if (workout.loadKg != null) out += ` × ${workout.loadKg} ${isEnglish ? 'kg' : 'кг'}`;
-  if (workout.repsLeft != null || workout.repsRight != null) {
-    const left = workout.repsLeft ?? 0;
-    const right = workout.repsRight ?? 0;
-    out += isEnglish ? ` (L ${left} / R ${right})` : ` (Л ${left} / П ${right})`;
-  }
-  return out;
+  if (workout.loadKg != null) out += ` × ${workout.loadKg} ${locale === 'en' ? 'kg' : 'кг'}`;
+  const sides = withSides ? formatWorkoutSides(workout, locale) : '';
+  return sides ? `${out} (${sides})` : out;
 }
 
 export function challengeMostLabel(exerciseType?: string | null): string {
