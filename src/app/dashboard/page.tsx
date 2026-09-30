@@ -278,19 +278,31 @@ function computeStats(workouts: Workout[]): Stats {
   };
 }
 
+// Пустые значения в статистике: ноль и прочерки средних без данных.
+function hasBreakdownValue(value: number | string | undefined) {
+  if (value == null) return false;
+  if (typeof value === 'number') return value !== 0;
+  const trimmed = value.trim();
+  return trimmed !== '' && trimmed !== '-' && trimmed !== '—' && Number(trimmed) !== 0;
+}
+
 function Stat({ label, value, breakdown }: { label: string; value: number | string; breakdown?: StatBreakdown }) {
+  // В плитке — только упражнения, по которым за период есть записи.
+  const breakdownTypes = breakdown ? EXERCISE_ORDER.filter((type) => hasBreakdownValue(breakdown[type])) : [];
   return (
     <div className={`app-tile${breakdown ? ' app-tile--breakdown' : ''}`}>
       <div className="app-tile__title">{label}</div>
       {!breakdown ? <div className="app-tile__value">{value}</div> : null}
       {breakdown ? (
         <div style={statBreakdownWrap}>
-          {EXERCISE_ORDER.map((type) => (
+          {breakdownTypes.length ? breakdownTypes.map((type) => (
             <span key={`${label}-${type}`} style={statBreakdownItem}>
               <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={20} height={20} style={statBreakdownIcon} unoptimized />
               <span style={statBreakdownValue}>{breakdown[type]}</span>
             </span>
-          ))}
+          )) : (
+            <span style={statBreakdownValue}>—</span>
+          )}
         </div>
       ) : null}
     </div>
@@ -733,7 +745,10 @@ export default function DashboardPage() {
                 {isFavoriteSelected ? (
                   <span style={moreExercisesGlyph} aria-hidden="true">⋯</span>
                 ) : (
-                  <Image src={exerciseFeedIcon(exerciseType)} alt="" aria-hidden="true" width={38} height={38} style={exerciseTypePickerIcon} unoptimized />
+                  <span style={moreExercisesSelected}>
+                    <Image src={exerciseFeedIcon(exerciseType)} alt="" aria-hidden="true" width={38} height={38} style={moreExercisesSelectedIcon} unoptimized />
+                    <span style={moreExercisesSelectedGlyph} aria-hidden="true">⋯</span>
+                  </span>
                 )}
               </button>
 
@@ -1239,6 +1254,31 @@ const moreExercisesGlyph: React.CSSProperties = {
   fontWeight: 900,
   lineHeight: 1,
   color: '#475569',
+};
+
+const moreExercisesSelected: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 0,
+  lineHeight: 1,
+};
+
+// Иконка чуть меньше соседних, чтобы под ней поместилось «⋯» — намёк на выбор.
+const moreExercisesSelectedIcon: React.CSSProperties = {
+  width: 'clamp(20px, 6.5vw, 30px)',
+  height: 'clamp(20px, 6.5vw, 30px)',
+  objectFit: 'contain',
+  display: 'block',
+};
+
+const moreExercisesSelectedGlyph: React.CSSProperties = {
+  marginTop: -2,
+  fontSize: 'clamp(14px, 4vw, 18px)',
+  fontWeight: 900,
+  lineHeight: 0.8,
+  color: '#64748b',
 };
 
 const moreExercisesBackdrop: React.CSSProperties = {
