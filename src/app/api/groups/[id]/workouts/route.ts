@@ -3,8 +3,8 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
 import { GroupError, getGroupWorkoutScope } from '@/lib/groups';
+import { isExerciseType, type ExerciseType } from '@/lib/exercises';
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 type WorkoutResponseItem = {
   id: string;
   reps: number;
@@ -12,8 +12,6 @@ type WorkoutResponseItem = {
   time: string | null;
   exerciseType: ExerciseType;
 };
-
-const ALLOWED_EXERCISES = new Set(['pushups', 'pullups', 'crunches', 'squats', 'plank']);
 
 function jsonError(message: string, status: number, code?: string, details?: Record<string, unknown>) {
   return NextResponse.json(code ? { error: message, code, details } : { error: message, details }, { status });
@@ -27,8 +25,7 @@ function getExerciseTypeFromQuery(request: NextRequest): ExerciseType | null {
   const raw = request.nextUrl.searchParams.get('exerciseType');
   if (!raw) return null;
   const et = raw.trim();
-  if (!ALLOWED_EXERCISES.has(et)) return null;
-  return et as ExerciseType;
+  return isExerciseType(et) ? et : null;
 }
 
 function getUserIdFromQuery(request: NextRequest): string | null {

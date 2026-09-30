@@ -6,11 +6,7 @@ import { fillTemplate } from '@/lib/analytics/utils';
 type ProgressCopy = Messages['progress'];
 
 function exerciseLabel(exercise: DistributionItem['exercise'], copy: ProgressCopy): string {
-  if (exercise === 'pushups') return copy.exercises.pushups;
-  if (exercise === 'pullups') return copy.exercises.pullups;
-  if (exercise === 'crunches') return copy.exercises.crunches;
-  if (exercise === 'squats') return copy.exercises.squats;
-  return copy.exercises.plank;
+  return copy.exercises[exercise];
 }
 
 function formatPercent(value: number): string {

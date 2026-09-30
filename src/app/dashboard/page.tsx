@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
+import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, toExerciseType } from '@/lib/exercises';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import styles from './dashboard.module.css';
 
@@ -72,17 +73,8 @@ type CachedWorkoutsPayload = {
   updatedAt: string;
 };
 
-const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
 const WORKOUTS_CACHE_VERSION = '20260327-1';
-
-const EXERCISE_LABELS: Record<string, string> = {
-  pushups: 'Отжимания',
-  pullups: 'Подтягивания',
-  crunches: 'Скручивания',
-  squats: 'Приседания',
-  plank: 'Планка',
-};
 
 function toIsoTime(date: string, time: string) {
   return new Date(`${date}T${time}:00`).toISOString();
@@ -300,21 +292,15 @@ function Stat({ label, value, breakdown }: { label: string; value: number | stri
 }
 
 function exerciseLabel(type: string | undefined) {
-  return EXERCISE_LABELS[type || ''] || type || 'Упражнение';
+  return catalogExerciseLabel(type);
 }
 
 function normalizeExerciseType(type: string | undefined): ExerciseType {
-  if (type === 'pullups' || type === 'crunches' || type === 'squats' || type === 'plank') return type;
-  return 'pushups';
+  return toExerciseType(type);
 }
 
 function exerciseFeedIcon(type: string | undefined) {
-  const v = '20260315-2';
-  if (type === 'pullups') return `/icons/exercise-types/feed/pullups.svg?v=${v}`;
-  if (type === 'crunches') return `/icons/exercise-types/feed/crunches.svg?v=${v}`;
-  if (type === 'squats') return `/icons/exercise-types/feed/squats.svg?v=${v}`;
-  if (type === 'plank') return `/icons/exercise-types/feed/plank.svg?v=${v}`;
-  return `/icons/exercise-types/feed/pushups.svg?v=${v}`;
+  return exerciseIcon(type);
 }
 
 function buildReactionSummaryItem(
@@ -445,21 +431,13 @@ export default function DashboardPage() {
   }, [toastMessage]);
 
   const stats = useMemo(() => computeStats(workouts), [workouts]);
-  const statsByExercise = useMemo<Record<ExerciseType, Stats>>(() => ({
-    pushups: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'pushups')),
-    pullups: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'pullups')),
-    crunches: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'crunches')),
-    squats: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'squats')),
-    plank: computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === 'plank')),
-  }), [workouts]);
+  const statsByExercise = useMemo<Record<ExerciseType, Stats>>(
+    () => createByExercise((type) => computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === type))),
+    [workouts],
+  );
 
-  const breakdownFromStats = (pick: (s: Stats) => number): StatBreakdown => ({
-    pushups: pick(statsByExercise.pushups),
-    pullups: pick(statsByExercise.pullups),
-    crunches: pick(statsByExercise.crunches),
-    squats: pick(statsByExercise.squats),
-    plank: pick(statsByExercise.plank),
-  });
+  const breakdownFromStats = (pick: (s: Stats) => number): StatBreakdown =>
+    createByExercise((type) => pick(statsByExercise[type]));
   const selectedStats = statsByExercise[exerciseType];
 
   const dayMap = useMemo(() => {
@@ -586,10 +564,7 @@ export default function DashboardPage() {
     setEditDate(normalizeDate(new Date(w.time || w.date)));
     setEditTime(normalizeTime(new Date(w.time || w.date)));
     setEditReps(w.reps || 0);
-    const next = String(w.exerciseType || 'pushups');
-    setEditExerciseType(
-      next === 'pushups' || next === 'pullups' || next === 'crunches' || next === 'squats' || next === 'plank' ? next : 'pushups',
-    );
+    setEditExerciseType(normalizeExerciseType(w.exerciseType));
   };
 
   const cancelEdit = () => {
@@ -1011,11 +986,9 @@ export default function DashboardPage() {
                                 onChange={(e) => setEditExerciseType(e.target.value as ExerciseType)}
                                 style={editInput}
                               >
-                                <option value="pushups">{tt('Отжимания')}</option>
-                                <option value="pullups">{tt('Подтягивания')}</option>
-                                <option value="crunches">{tt('Скручивания')}</option>
-                                <option value="squats">{tt('Приседания')}</option>
-                                <option value="plank">{tt('Планка')}</option>
+                                {EXERCISE_ORDER.map((type) => (
+                                  <option key={type} value={type}>{tt(exerciseLabel(type))}</option>
+                                ))}
                               </select>
                             </div>
 

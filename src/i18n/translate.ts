@@ -1,4 +1,5 @@
 import { DEFAULT_LOCALE, getIntlLocaleTag, type Locale } from '@/i18n/locale';
+import { EXERCISES } from '@/lib/exercises';
 
 type RegexTranslation = {
   pattern: RegExp;
@@ -30,11 +31,7 @@ const exactTextMap: Record<string, string> = {
   'Программа не активна': 'Program is not active',
   'Подход не найден': 'Set not found',
   'Упражнение': 'Exercise',
-  'Отжимания': 'Push-ups',
-  'Подтягивания': 'Pull-ups',
-  'Скручивания': 'Crunches',
-  'Приседания': 'Squats',
-  'Планка': 'Plank',
+  ...Object.fromEntries(Object.values(EXERCISES).map((exercise) => [exercise.label.ru, exercise.label.en])),
   'Секунды': 'Seconds',
   'секунд': 'seconds',
   'сек': 'sec',

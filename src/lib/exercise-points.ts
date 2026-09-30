@@ -1,26 +1,24 @@
-export type ExercisePointType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+import { EXERCISES, pointsPerUnit, toExerciseType, type ExerciseType } from '@/lib/exercises';
 
-export const EXERCISE_POINT_FACTORS: Record<ExercisePointType, number> = {
-  pushups: 1,
-  pullups: 3,
-  squats: 0.7,
-  crunches: 0.5,
-  plank: 0.1,
-};
+export type ExercisePointType = ExerciseType;
+
+// Коэффициенты при эталонном весе; единая шкала и её обоснование — в src/lib/exercises.ts.
+export const EXERCISE_POINT_FACTORS = Object.fromEntries(
+  Object.values(EXERCISES).map((exercise) => [exercise.id, exercise.pointsPerUnit]),
+) as Record<ExercisePointType, number>;
 
 export function toExercisePointType(value?: string | null): ExercisePointType {
-  if (value === 'pullups' || value === 'crunches' || value === 'squats' || value === 'plank') return value;
-  return 'pushups';
+  return toExerciseType(value);
 }
 
 export function calculateExercisePoints(
   value: number,
   exerciseType?: string | null,
+  loadKg?: number | null,
 ): number {
   const safeValue = Number(value);
   if (!Number.isFinite(safeValue) || safeValue <= 0) return 0;
-  const normalizedType = toExercisePointType(exerciseType);
-  return tenthsToPoints(pointsToTenths(safeValue * EXERCISE_POINT_FACTORS[normalizedType]));
+  return tenthsToPoints(pointsToTenths(safeValue * pointsPerUnit(exerciseType, loadKg)));
 }
 
 export function pointsToTenths(points: number): number {

@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n/provider';
 import { getLocaleTimerAudio } from '@/i18n/locale';
 import { t } from '@/i18n/translate';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
+import type { ExerciseType } from '@/lib/exercises';
 
 type TrainingSet = {
   id: string;
@@ -84,22 +85,8 @@ async function fetchJson(url: string, init?: RequestInit) {
   return data;
 }
 
-function exerciseLabel(
-  exerciseType: string,
-  labels: {
-    pushups: string;
-    pullups: string;
-    crunches: string;
-    squats: string;
-    plank: string;
-  },
-) {
-  if (exerciseType === 'pushups') return labels.pushups;
-  if (exerciseType === 'pullups') return labels.pullups;
-  if (exerciseType === 'crunches') return labels.crunches;
-  if (exerciseType === 'squats') return labels.squats;
-  if (exerciseType === 'plank') return labels.plank;
-  return exerciseType;
+function exerciseLabel(exerciseType: string, labels: Record<ExerciseType, string>) {
+  return (labels as Record<string, string>)[exerciseType] ?? exerciseType;
 }
 
 function sanitizePositiveInt(value: string): number {

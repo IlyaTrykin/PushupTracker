@@ -5,6 +5,7 @@ import {
   ProgramError,
   createTrainingProgram,
   deriveAgeFromBirthDate,
+  isProgramExerciseType,
   getProgramOverview,
   suggestDurationWeeks,
   suggestFrequencyPerWeek,
@@ -18,7 +19,7 @@ function jsonError(message: string, status = 400, code?: string) {
 }
 
 function isExerciseType(value: string): value is ProgramCreateInput['exerciseType'] {
-  return ['pushups', 'pullups', 'crunches', 'squats', 'plank'].includes(value);
+  return isProgramExerciseType(value);
 }
 
 export async function GET(request: Request) {

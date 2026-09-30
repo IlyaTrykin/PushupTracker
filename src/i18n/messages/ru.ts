@@ -1,3 +1,5 @@
+import { exerciseLabelMap } from '@/lib/exercises';
+
 export const ruMessages = {
   common: {
     appName: 'Pushup Tracker',
@@ -52,11 +54,7 @@ export const ruMessages = {
       support: 'Поддержать проект',
     },
     exercise: {
-      pushups: 'Отжимания',
-      pullups: 'Подтягивания',
-      crunches: 'Скручивания',
-      squats: 'Приседания',
-      plank: 'Планка',
+      ...exerciseLabelMap('ru'),
     },
   },
   feedback: {
@@ -226,11 +224,7 @@ export const ruMessages = {
     errorTitle: 'Не удалось загрузить страницу',
     exercises: {
       all: 'Все упражнения',
-      pushups: 'Отжимания',
-      pullups: 'Подтягивания',
-      crunches: 'Скручивания',
-      squats: 'Приседания',
-      plank: 'Планка',
+      ...exerciseLabelMap('ru'),
     },
     periods: {
       d7: '7 дней',

@@ -12,6 +12,8 @@ import {
   programBaselinePromptLabel,
   programTargetPromptLabel,
 } from '@/lib/exercise-metrics';
+import type { ProgramExerciseType } from '@/lib/program';
+import { EXERCISES, PROGRAM_EXERCISE_ORDER, exerciseIcon, exerciseLabel as catalogExerciseLabel, isExerciseType as isCatalogExerciseType } from '@/lib/exercises';
 
 type TrainingSet = {
   id: string;
@@ -93,7 +95,7 @@ type ProgramOverview = {
 };
 
 type CreateForm = {
-  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+  exerciseType: ProgramExerciseType;
   baselineMaxReps: number;
   targetReps: number;
   frequencyPerWeek: number;
@@ -155,51 +157,26 @@ async function fetchJson(url: string, init?: RequestInit) {
 }
 
 function exerciseLabel(exerciseType: string) {
-  if (exerciseType === 'pushups') return 'Отжимания';
-  if (exerciseType === 'pullups') return 'Подтягивания';
-  if (exerciseType === 'crunches') return 'Скручивания';
-  if (exerciseType === 'squats') return 'Приседания';
-  if (exerciseType === 'plank') return 'Планка';
-  return exerciseType;
+  return catalogExerciseLabel(exerciseType);
 }
 
 function exerciseCode(exerciseType: string) {
-  if (exerciseType === 'pushups') return 'ОТЖ';
-  if (exerciseType === 'pullups') return 'ПТГ';
-  if (exerciseType === 'crunches') return 'СКР';
-  if (exerciseType === 'squats') return 'ПРС';
-  if (exerciseType === 'plank') return 'ПЛН';
-  return exerciseType.toUpperCase().slice(0, 3);
+  return isCatalogExerciseType(exerciseType) ? EXERCISES[exerciseType].code : exerciseType.toUpperCase().slice(0, 3);
 }
 
 function exerciseColor(exerciseType: string) {
-  if (exerciseType === 'pushups') return '#dbeafe';
-  if (exerciseType === 'pullups') return '#fee2e2';
-  if (exerciseType === 'crunches') return '#dcfce7';
-  if (exerciseType === 'squats') return '#fef3c7';
-  if (exerciseType === 'plank') return '#ccfbf1';
-  return '#e5e7eb';
+  return isCatalogExerciseType(exerciseType) ? EXERCISES[exerciseType].colors.soft : '#e5e7eb';
 }
 
 function exerciseLegendColor(exerciseType: string) {
-  if (exerciseType === 'pushups') return '#38bdf8';
-  if (exerciseType === 'pullups') return '#ef4444';
-  if (exerciseType === 'crunches') return '#22c55e';
-  if (exerciseType === 'squats') return '#b8860b';
-  if (exerciseType === 'plank') return '#14b8a6';
-  return '#9ca3af';
+  return isCatalogExerciseType(exerciseType) ? EXERCISES[exerciseType].colors.accent : '#9ca3af';
 }
 
 function exerciseFeedIcon(exerciseType: string) {
-  const v = '20260315-2';
-  if (exerciseType === 'pullups') return `/icons/exercise-types/feed/pullups.svg?v=${v}`;
-  if (exerciseType === 'crunches') return `/icons/exercise-types/feed/crunches.svg?v=${v}`;
-  if (exerciseType === 'squats') return `/icons/exercise-types/feed/squats.svg?v=${v}`;
-  if (exerciseType === 'plank') return `/icons/exercise-types/feed/plank.svg?v=${v}`;
-  return `/icons/exercise-types/feed/pushups.svg?v=${v}`;
+  return exerciseIcon(exerciseType);
 }
 
-const EXERCISE_ORDER = ['pushups', 'pullups', 'crunches', 'squats', 'plank'] as const;
+const EXERCISE_ORDER = PROGRAM_EXERCISE_ORDER;
 
 function toDate(iso: string | null | undefined): Date | null {
   if (!iso) return null;
@@ -282,7 +259,7 @@ function calendarDayBackground(upcoming: number, completed: number) {
 }
 
 function suggestedFrequencyPerWeek(args: {
-  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+  exerciseType: ProgramExerciseType;
   baselineMaxReps: number;
   targetReps: number;
   ageYears: number;
@@ -307,7 +284,7 @@ function suggestedFrequencyPerWeek(args: {
 }
 
 function suggestedDurationWeeks(args: {
-  exerciseType: 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+  exerciseType: ProgramExerciseType;
   baselineMaxReps: number;
   targetReps: number;
   ageYears: number;
@@ -962,11 +939,9 @@ export default function ProgramPage() {
                   }}
                   style={inputStyle}
                 >
-                  <option value="pushups">{tt('Отжимания')}</option>
-                  <option value="pullups">{tt('Подтягивания')}</option>
-                  <option value="crunches">{tt('Скручивания')}</option>
-                  <option value="squats">{tt('Приседания')}</option>
-                  <option value="plank">{tt('Планка')}</option>
+                  {EXERCISE_ORDER.map((type) => (
+                    <option key={type} value={type}>{tt(exerciseLabel(type))}</option>
+                  ))}
                 </select>
               </div>
             ) : null}

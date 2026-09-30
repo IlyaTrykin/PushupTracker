@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
+import { isExerciseType, type ExerciseType } from '@/lib/exercises';
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 type WorkoutResponseItem = {
   id: string;
   reps: number;
@@ -11,8 +11,6 @@ type WorkoutResponseItem = {
   time: string | null;
   exerciseType: ExerciseType;
 };
-
-const ALLOWED_EXERCISES = new Set(['pushups', 'pullups', 'crunches', 'squats', 'plank']);
 
 
 function jsonError(message: string, status: number, details?: string) {
@@ -32,8 +30,7 @@ function getExerciseTypeFromQuery(request: NextRequest): ExerciseType | null {
   const raw = request.nextUrl.searchParams.get('exerciseType');
   if (!raw) return null;
   const et = raw.trim();
-  if (!ALLOWED_EXERCISES.has(et)) return null;
-  return et as ExerciseType;
+  return isExerciseType(et) ? et : null;
 }
 
 export async function GET(request: NextRequest) {

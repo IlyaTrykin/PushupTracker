@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AuthError, requireUser } from '@/lib/auth';
 import { GroupError, getGroupWorkoutScope, recordGroupAuditLog, requireGroupManageAccess } from '@/lib/groups';
 import { prisma } from '@/lib/prisma';
+import { isExerciseType } from '@/lib/exercises';
 
 type JsonObject = Record<string, unknown>;
 
@@ -17,7 +18,6 @@ function parseISODateOnly(s: string): Date | null {
   return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
 }
 
-const ALLOWED_EXERCISES = new Set(['pushups', 'pullups', 'crunches', 'squats', 'plank']);
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     const endDate = parseISODateOnly(String(body.endDate || '').trim());
 
     if (!name) return jsonError('Введите название соревнования', 400);
-    if (!ALLOWED_EXERCISES.has(exerciseType)) return jsonError('Некорректный тип упражнения', 400);
+    if (!isExerciseType(exerciseType)) return jsonError('Некорректный тип упражнения', 400);
     if (!startDate || !endDate) return jsonError('Даты должны быть в формате YYYY-MM-DD', 400);
     if (endDate < startDate) return jsonError('endDate не может быть раньше startDate', 400);
 
