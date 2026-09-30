@@ -8,7 +8,7 @@ import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
 import { toLoadPoints } from '@/lib/analytics/utils';
-import { formatExerciseValue, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { formatExerciseValue, formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { t } from '@/i18n/translate';
@@ -596,6 +596,12 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
     [flatGroupWorkouts, statsIncludedUserIds],
   );
 
+  // В фильтре — только упражнения, по которым есть записи (и текущий выбор).
+  const exerciseFilterOptions = useMemo<ExerciseFilter[]>(() => {
+    const present = new Set(statsGroupWorkouts.map((workout) => toExerciseType(workout.exerciseType)));
+    return ['all', ...EXERCISE_ORDER.filter((type) => present.has(type) || type === groupExerciseFilter)];
+  }, [statsGroupWorkouts, groupExerciseFilter]);
+
   const groupAnalytics = useMemo(
     () =>
       buildProgressAnalytics({
@@ -949,7 +955,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
 
         <div style={filterGroup}>
           <div style={filterRow}>
-            {(['all', ...EXERCISE_ORDER] as ExerciseFilter[]).map((filter) => (
+            {exerciseFilterOptions.map((filter) => (
               <button
                 key={filter}
                 type="button"
@@ -1149,7 +1155,10 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredMemberStats.map(({ member, statsByExercise }) => (
+                {filteredMemberStats.map(({ member, statsByExercise }) => {
+                  // Только упражнения, по которым у участника есть хоть одна запись.
+                  const rowTypes = EXERCISE_ORDER.filter((type) => statsByExercise[type].totalAll > 0);
+                  return (
                   <tr key={member.userId}>
                     <td style={{ ...memberTd, ...memberStickyNameCell }} className="table-sticky-first">
                       <div style={memberNameCell}>
@@ -1159,7 +1168,8 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                     </td>
                     <td style={{ ...memberTd, ...memberStickyExerciseCell }}>
                       <div style={exerciseIconStack}>
-                        {EXERCISE_ORDER.map((type) => (
+                        {rowTypes.length ? null : '—'}
+                        {rowTypes.map((type) => (
                           <Image
                             key={`${member.userId}-${type}`}
                             src={exerciseFeedIcon(type)}
@@ -1174,27 +1184,27 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {EXERCISE_ORDER.map((type) => <span key={`${member.userId}-today-${type}`} style={metricValue}>{statsByExercise[type].totalToday}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-today-${type}`} style={metricValue}>{statsByExercise[type].totalToday}</span>)}
                       </div>
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {EXERCISE_ORDER.map((type) => <span key={`${member.userId}-all-${type}`} style={metricValue}>{statsByExercise[type].totalAll}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-all-${type}`} style={metricValue}>{statsByExercise[type].totalAll}</span>)}
                       </div>
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {EXERCISE_ORDER.map((type) => <span key={`${member.userId}-month-${type}`} style={metricValue}>{statsByExercise[type].totalMonth}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-month-${type}`} style={metricValue}>{statsByExercise[type].totalMonth}</span>)}
                       </div>
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {EXERCISE_ORDER.map((type) => <span key={`${member.userId}-week-${type}`} style={metricValue}>{statsByExercise[type].totalWeek}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-week-${type}`} style={metricValue}>{statsByExercise[type].totalWeek}</span>)}
                       </div>
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {EXERCISE_ORDER.map((type) => <span key={`${member.userId}-streak-${type}`} style={metricValue}>{statsByExercise[type].streak}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-streak-${type}`} style={metricValue}>{statsByExercise[type].streak}</span>)}
                       </div>
                     </td>
                     <td style={memberTd}>
@@ -1205,7 +1215,8 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1496,7 +1507,10 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                           </div>
                         </div>
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={18} height={18} style={feedTypeIcon} unoptimized />
-                        <div style={feedReps}>{formatWorkoutValue(workout, locale)}</div>
+                        <div style={feedReps}>
+                          {formatWorkoutValue(workout, locale, false)}
+                          {formatWorkoutSides(workout, locale) ? <div style={feedSides}>{formatWorkoutSides(workout, locale)}</div> : null}
+                        </div>
                       </div>
                     </article>
                   );
@@ -2300,6 +2314,14 @@ const feedReps: CSSProperties = {
   textAlign: 'right',
   minWidth: 44,
   whiteSpace: 'nowrap',
+};
+
+// Раскладка по рукам — мелко под значением, чтобы длинная запись не сжимала имя.
+const feedSides: CSSProperties = {
+  marginTop: 2,
+  fontSize: 12,
+  fontWeight: 700,
+  color: '#64748b',
 };
 
 

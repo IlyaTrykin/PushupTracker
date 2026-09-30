@@ -34,8 +34,6 @@ import { getIntlLocale } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { EXERCISE_ORDER, isTimedExercise } from '@/lib/exercises';
 
-const EXERCISE_OPTIONS: ExerciseFilter[] = ['all', ...EXERCISE_ORDER];
-
 const pageStyle: CSSProperties = {
   '--analytics-accent': '#b45309',
   '--analytics-accent-soft': 'rgba(180, 83, 9, 0.14)',
@@ -912,6 +910,12 @@ export default function ProgressPage() {
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<PeriodKey>('30d');
   const [exercise, setExercise] = useState<ExerciseFilter>('all');
+
+  // В фильтре — только упражнения, по которым есть записи (и текущий выбор).
+  const exerciseFilterOptions = useMemo<ExerciseFilter[]>(() => {
+    const present = new Set(workouts.map((workout) => toExerciseType(workout.exerciseType)));
+    return ['all', ...EXERCISE_ORDER.filter((type) => present.has(type) || type === exercise)];
+  }, [workouts, exercise]);
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1007,7 +1011,7 @@ export default function ProgressPage() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {EXERCISE_OPTIONS.map((option) => (
+            {exerciseFilterOptions.map((option) => (
               <FilterPill
                 key={option}
                 active={exercise === option}

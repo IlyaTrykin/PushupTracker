@@ -525,6 +525,12 @@ export default function DashboardPage() {
     return out;
   }, [calendarMonth]);
 
+  // Легенда календаря — только упражнения, которые есть в показанном месяце.
+  const calendarTypes = useMemo(
+    () => EXERCISE_ORDER.filter((type) => calendarCells.some((cell) => (dayMap.get(cell.key)?.byExercise.get(type) ?? 0) > 0)),
+    [calendarCells, dayMap],
+  );
+
   // Кнопка сброса в системном календаре/часах очищает поле. Трактуем пустое
   // значение как возврат ввода на «сейчас»: иначе форма застревает на ранее
   // подтверждённой дате и вернуться на сегодня из пикера нечем.
@@ -1063,7 +1069,7 @@ export default function DashboardPage() {
             </div>
 
             <div style={legendWrap}>
-              {EXERCISE_ORDER.map((type) => (
+              {calendarTypes.map((type) => (
                 <div key={type} style={legendItem}>
                   <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={20} height={20} style={legendIcon} unoptimized />
                   <span>{tt(exerciseLabel(type))}</span>
