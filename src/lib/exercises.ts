@@ -16,7 +16,24 @@
 export const REFERENCE_SET_POINTS = 30;
 export const LOAD_EXPONENT = 2;
 
-export const EXERCISE_IDS = ['pushups', 'pullups', 'crunches', 'squats', 'plank', 'kettlebell_press', 'kettlebell_jerk'] as const;
+// Порядок = порядок показа везде; первые FAVORITE_EXERCISE_LIMIT — избранное по умолчанию.
+export const EXERCISE_IDS = [
+  'pushups',
+  'pullups',
+  'crunches',
+  'squats',
+  'plank',
+  'dips',
+  'hanging_leg_raises',
+  'muscle_ups',
+  'lunges',
+  'burpees',
+  'jump_rope',
+  'wall_sit',
+  'kettlebell_press',
+  'kettlebell_jerk',
+  'kettlebell_swing',
+] as const;
 
 export type ExerciseType = (typeof EXERCISE_IDS)[number];
 
@@ -94,6 +111,72 @@ export const EXERCISES: Record<ExerciseType, ExerciseDefinition> = {
     programSupported: true,
     colors: { accent: '#14b8a6', soft: '#ccfbf1', chart: '#7c3aed' },
   },
+  dips: {
+    id: 'dips',
+    label: { ru: 'Брусья', en: 'Dips' },
+    code: 'БРС',
+    unit: 'reps',
+    pointsPerUnit: 2, // ≈15 повторов
+    programSupported: false,
+    colors: { accent: '#0ea5e9', soft: '#e0f2fe', chart: '#0369a1' },
+  },
+  hanging_leg_raises: {
+    id: 'hanging_leg_raises',
+    label: { ru: 'Подъём ног в висе', en: 'Hanging leg raises' },
+    code: 'ПНВ',
+    unit: 'reps',
+    pointsPerUnit: 2.5, // ≈12 повторов
+    programSupported: false,
+    colors: { accent: '#16a34a', soft: '#dcfce7', chart: '#15803d' },
+  },
+  muscle_ups: {
+    id: 'muscle_ups',
+    label: { ru: 'Выход силой', en: 'Muscle-ups' },
+    code: 'ВСЛ',
+    unit: 'reps',
+    pointsPerUnit: 7.5, // ≈4 повтора
+    programSupported: false,
+    colors: { accent: '#be123c', soft: '#ffe4e6', chart: '#9f1239' },
+  },
+  // Повторы считаются на каждую ногу.
+  lunges: {
+    id: 'lunges',
+    label: { ru: 'Выпады', en: 'Lunges' },
+    code: 'ВПД',
+    unit: 'reps',
+    pointsPerUnit: 1.2, // ≈25 повторов на ногу
+    unilateral: true,
+    programSupported: false,
+    colors: { accent: '#a16207', soft: '#fef9c3', chart: '#854d0e' },
+  },
+  burpees: {
+    id: 'burpees',
+    label: { ru: 'Бёрпи', en: 'Burpees' },
+    code: 'БРП',
+    unit: 'reps',
+    pointsPerUnit: 1.5, // ≈20 повторов
+    programSupported: false,
+    colors: { accent: '#dc2626', soft: '#fee2e2', chart: '#b91c1c' },
+  },
+  // Прыжки (обороты скакалки) без остановки.
+  jump_rope: {
+    id: 'jump_rope',
+    label: { ru: 'Скакалка', en: 'Jump rope' },
+    code: 'СКК',
+    unit: 'reps',
+    pointsPerUnit: 0.2, // ≈150 прыжков
+    programSupported: false,
+    colors: { accent: '#db2777', soft: '#fce7f3', chart: '#be185d' },
+  },
+  wall_sit: {
+    id: 'wall_sit',
+    label: { ru: 'Стульчик', en: 'Wall sit' },
+    code: 'СТЛ',
+    unit: 'seconds',
+    pointsPerUnit: 0.25, // ≈120 секунд
+    programSupported: false,
+    colors: { accent: '#4f46e5', soft: '#e0e7ff', chart: '#4338ca' },
+  },
   // Строгий жим одной рукой стоя, без помощи ног. Повторы считаются на каждую руку.
   kettlebell_press: {
     id: 'kettlebell_press',
@@ -118,6 +201,17 @@ export const EXERCISES: Record<ExerciseType, ExerciseDefinition> = {
     unilateral: true,
     programSupported: false,
     colors: { accent: '#ea580c', soft: '#ffedd5', chart: '#9a3412' },
+  },
+  // Махи двумя руками. Упражнение на ноги и спину, поэтому эталон тяжелее, чем в жиме.
+  kettlebell_swing: {
+    id: 'kettlebell_swing',
+    label: { ru: 'Махи гирей', en: 'Kettlebell swing' },
+    code: 'МХГ',
+    unit: 'reps',
+    pointsPerUnit: 1, // ≈30 повторов с гирей 24 кг
+    load: { referenceKg: 24, presetsKg: [12, 16, 20, 24, 28, 32] },
+    programSupported: false,
+    colors: { accent: '#0f766e', soft: '#ccfbf1', chart: '#115e59' },
   },
 };
 

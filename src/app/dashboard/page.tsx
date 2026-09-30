@@ -10,7 +10,7 @@ import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type
 import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, getExercise, toExerciseType } from '@/lib/exercises';
 import { useExerciseLoad } from '@/lib/use-exercise-load';
 import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
-import SideLoadEntry from './SideLoadEntry';
+import SideLoadEntry, { WeightPicker } from './SideLoadEntry';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import styles from './dashboard.module.css';
 
@@ -358,7 +358,8 @@ export default function DashboardPage() {
   const [time, setTime] = useState<string>(normalizeTime(new Date()));
   const [timeTouched, setTimeTouched] = useState(false);
   const [reps, setReps] = useState<number>(0);
-  const plankStopwatch = useStopwatch('dashboardPlankStopwatch');
+  // Ключ исторический (секундомер был только у планки) — не меняем, чтобы не потерять идущий замер.
+  const timedStopwatch = useStopwatch('dashboardPlankStopwatch');
   const activeExercise = getExercise(exerciseType);
   const exerciseLoad = useExerciseLoad(exerciseType);
   const [repsLeft, setRepsLeft] = useState(0);
@@ -366,6 +367,15 @@ export default function DashboardPage() {
   const { favorites: favoriteExercises } = useFavoriteExercises();
   const [moreExercisesOpen, setMoreExercisesOpen] = useState(false);
   const isFavoriteSelected = favoriteExercises.includes(exerciseType);
+
+  useEffect(() => {
+    if (!moreExercisesOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMoreExercisesOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [moreExercisesOpen]);
   const otherExercises = useMemo(
     () => EXERCISE_ORDER.filter((type) => !favoriteExercises.includes(type)),
     [favoriteExercises],
@@ -389,15 +399,16 @@ export default function DashboardPage() {
   const [detailDay, setDetailDay] = useState<string | null>(null);
   const [workoutReactions, setWorkoutReactions] = useState<Record<string, WorkoutReactionPayload>>({});
   const [initialLoadReady, setInitialLoadReady] = useState(false);
-  const isPlankSelected = exerciseType === 'plank';
-  const plankTimerStarted = isPlankSelected && plankStopwatch.started;
+  const isTimedSelected = activeExercise.unit === 'seconds';
+  const timerStarted = isTimedSelected && timedStopwatch.started;
   const workoutsCacheKey = useMemo(
     () => getWorkoutsCacheKey(user?.id, user?.username),
     [user?.id, user?.username],
   );
 
   const handleExerciseTypeChange = (next: ExerciseType) => {
-    if (next !== 'plank') plankStopwatch.reset();
+    // Замер принадлежит выбранному упражнению: при смене упражнения он сбрасывается.
+    if (next !== exerciseType) timedStopwatch.reset();
     persistExerciseType(next);
   };
 
@@ -580,30 +591,30 @@ export default function DashboardPage() {
       return;
     }
     if (!Number.isFinite(reps) || reps <= 0) {
-      setError(isPlankSelected ? tt('Введите корректное количество секунд (> 0)') : 'reps должен быть числом > 0');
+      setError(isTimedSelected ? tt('Введите корректное количество секунд (> 0)') : 'reps должен быть числом > 0');
       return;
     }
 
     try {
-      await submitWorkout(reps, exerciseType);
+      await submitWorkout(reps, exerciseType, activeExercise.load ? { loadKg: exerciseLoad.loadKg } : {});
     } catch (error: unknown) {
       setError(getErrorMessage(error));
     }
   };
 
-  const handlePlankStart = () => {
+  const handleTimerStart = () => {
     setError(null);
     setInfo(null);
-    plankStopwatch.start();
+    timedStopwatch.start();
   };
 
-  const handlePlankStop = async () => {
-    const actual = plankStopwatch.finish();
+  const handleTimerStop = async () => {
+    const actual = timedStopwatch.finish();
     if (actual <= 0) return;
     setError(null);
     setInfo(null);
     try {
-      await submitWorkout(actual, 'plank');
+      await submitWorkout(actual, exerciseType);
     } catch (error: unknown) {
       setError(getErrorMessage(error));
     }
@@ -854,20 +865,29 @@ export default function DashboardPage() {
 
             {!activeExercise.unilateral ? (
             <>
+            {activeExercise.load ? (
+              <WeightPicker
+                exercise={activeExercise}
+                locale={locale}
+                tt={tt}
+                loadKg={exerciseLoad.loadKg}
+                onLoadKgChange={exerciseLoad.setLoadKg}
+              />
+            ) : null}
             <input
               inputMode="numeric"
-              value={plankTimerStarted ? formatClock(plankStopwatch.elapsedSeconds) : String(reps)}
+              value={timerStarted ? formatClock(timedStopwatch.elapsedSeconds) : String(reps)}
               onChange={(e) => {
-                if (plankTimerStarted) return;
+                if (timerStarted) return;
                 const v = e.target.value.replace(/[^\d]/g, '');
                 setReps(v === '' ? 0 : Math.min(9999, parseInt(v, 10)));
               }}
               placeholder="0"
               style={repsInputStyle}
-              readOnly={plankTimerStarted}
+              readOnly={timerStarted}
             />
 
-            {!plankTimerStarted ? (
+            {!timerStarted ? (
               <>
                 <div style={plusButtonsGrid}>
                   <button
@@ -886,11 +906,11 @@ export default function DashboardPage() {
                   </button>
                 </div>
 
-                {isPlankSelected ? (
-                  // Секундомер для замера «сколько простоял»; ручной ввод остаётся
-                  // для записи прошедшей планки. Обратный отсчёт живёт в программе.
-                  <div style={plankActionsGrid}>
-                    <button type="button" onClick={handlePlankStart} style={plankStartButton}>
+                {isTimedSelected ? (
+                  // Секундомер для упражнений на время: замер «сколько простоял»; ручной
+                  // ввод остаётся для записи прошедшего подхода. Обратный отсчёт — в программе.
+                  <div style={timerActionsGrid}>
+                    <button type="button" onClick={handleTimerStart} style={timerStartButton}>
                       ▶ {tt('Старт')}
                     </button>
                     <button type="button" onClick={() => void handleAdd()} style={addButton}>
@@ -908,15 +928,15 @@ export default function DashboardPage() {
                 <div style={plusButtonsGrid}>
                   <button
                     type="button"
-                    onClick={plankStopwatch.running ? plankStopwatch.pause : plankStopwatch.resume}
+                    onClick={timedStopwatch.running ? timedStopwatch.pause : timedStopwatch.resume}
                     style={plus5Button}
                   >
-                    {plankStopwatch.running ? tt('Пауза') : tt('Продолжить')}
+                    {timedStopwatch.running ? tt('Пауза') : tt('Продолжить')}
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      void handlePlankStop();
+                      void handleTimerStop();
                     }}
                     style={plus10Button}
                   >
@@ -1476,7 +1496,7 @@ const addButton: React.CSSProperties = {
   boxShadow: '0 20px 36px rgba(234, 88, 12, 0.24)',
 };
 
-const plankActionsGrid: React.CSSProperties = {
+const timerActionsGrid: React.CSSProperties = {
   width: '100%',
   maxWidth: 520,
   marginInline: 'auto',
@@ -1485,7 +1505,7 @@ const plankActionsGrid: React.CSSProperties = {
   gap: 12,
 };
 
-const plankStartButton: React.CSSProperties = {
+const timerStartButton: React.CSSProperties = {
   ...addButton,
   background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
   boxShadow: '0 20px 36px rgba(13, 148, 136, 0.24)',

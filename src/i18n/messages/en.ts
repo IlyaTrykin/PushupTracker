@@ -251,7 +251,7 @@ export const enMessages: DeepPartial<Messages> = {
       loadUnit: 'points',
       loadInfoLabel: 'What load points mean',
       loadInfoTitle: 'How load points are calculated',
-      loadInfoBody: 'Points put every exercise on one scale: 1 point = 1 push-up, and an average all-out set is worth about 30 points in any exercise. 1 pull-up = 3 points, 1 squat = 0.7, 1 crunch = 0.5, 10 seconds of plank = 1 point. Kettlebell (per one-arm rep with 16 kg): press = 3 points, jerk = 2 points; points grow with the square of the weight — a 24 kg press gives 6.75, an 8 kg press 0.75.',
+      loadInfoBody: 'Points put every exercise on one scale: 1 point = 1 push-up, and an average all-out set is worth about 30 points in any exercise. Per rep: pull-up 3, dip 2, hanging leg raise 2.5, muscle-up 7.5, burpee 1.5, squat 0.7, crunch 0.5, lunge 1.2 (per leg), rope jump 0.2. Per second: plank 0.1, wall sit 0.25. With a kettlebell points grow with the square of the weight: 16 kg press 3 per one-arm rep, 16 kg jerk 2, 24 kg swing 1.',
       byPeriodAndFilter: 'For {period} with filter {filter}.',
       recordWillAppear: 'The record will appear after the first workout.',
       lastRecord: 'Latest record: {value}',
