@@ -627,6 +627,16 @@ export default function ProgramPage() {
     return out;
   }, [calendarMonth, sessionsByDay]);
 
+  // Легенда календаря — только упражнения, чьи иконки видны в показанном месяце.
+  const calendarTypes = useMemo(() => {
+    const present = new Set<string>();
+    calendarCells.forEach((cell) => {
+      if (!cell) return;
+      (sessionsByDay.get(cell.key)?.sessions || []).forEach((session) => present.add(session.exerciseType));
+    });
+    return EXERCISE_ORDER.filter((type) => present.has(type));
+  }, [calendarCells, sessionsByDay]);
+
   const calendarWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
   const todayKey = dayKeyFromIso(new Date().toISOString());
   const selectedDaySessions = selectedDayKey
@@ -766,7 +776,7 @@ export default function ProgramPage() {
               </div>
 
               <div style={calendarLegendWrap}>
-                {EXERCISE_ORDER.map((exerciseType) => (
+                {calendarTypes.map((exerciseType) => (
                   <div key={exerciseType} style={calendarLegendItem}>
                     <Image src={exerciseFeedIcon(exerciseType)} alt={tt(exerciseLabel(exerciseType))} width={24} height={24} style={calendarLegendIcon} unoptimized />
                     <span>{tt(exerciseLabel(exerciseType))}</span>
