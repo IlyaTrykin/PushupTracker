@@ -1,7 +1,10 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { sendWebPushToUsers } from '@/lib/web-push';
+import { EXERCISES, isExerciseType } from '@/lib/exercises';
 
+// Генератор программ рассчитан на упражнения с собственным весом: у каждого типа
+// здесь свой коэффициент готовности, поэтому список задан явно, а не из каталога.
 export type ProgramExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 export type ProgramGoalType = 'reach_target';
 
@@ -18,6 +21,12 @@ const EXERCISE_COEFFICIENTS: Record<ProgramExerciseType, number> = {
   squats: 1.05,
   plank: 0.9,
 };
+
+export function isProgramExerciseType(value: unknown): value is ProgramExerciseType {
+  return isExerciseType(value)
+    && EXERCISES[value].programSupported
+    && Object.prototype.hasOwnProperty.call(EXERCISE_COEFFICIENTS, value);
+}
 
 const GOAL_TEMPLATE: GoalTemplate = {
   // Last set is the key (max-like) set.
@@ -157,12 +166,7 @@ function dayKey(d: Date): string {
 }
 
 function exerciseTypeLabel(exerciseType: string): string {
-  if (exerciseType === 'pushups') return 'отжимания';
-  if (exerciseType === 'pullups') return 'подтягивания';
-  if (exerciseType === 'crunches') return 'скручивания';
-  if (exerciseType === 'squats') return 'приседания';
-  if (exerciseType === 'plank') return 'планка';
-  return exerciseType;
+  return isExerciseType(exerciseType) ? EXERCISES[exerciseType].label.ru.toLowerCase() : exerciseType;
 }
 
 export function deriveAgeFromBirthDate(birthDate?: Date | null): number | null {
@@ -323,7 +327,7 @@ function computeSetTarget(args: {
 function normalizeCreateInput(raw: ProgramCreateInput): NormalizedCreateInput {
   const exerciseType = raw.exerciseType;
 
-  if (!['pushups', 'pullups', 'crunches', 'squats', 'plank'].includes(exerciseType)) {
+  if (!isProgramExerciseType(exerciseType)) {
     throw new ProgramError('Некорректный тип упражнения');
   }
 

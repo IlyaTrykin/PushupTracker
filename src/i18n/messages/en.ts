@@ -1,3 +1,4 @@
+import { exerciseLabelMap } from '@/lib/exercises';
 import type { DeepPartial, Messages } from '@/i18n/messages';
 
 export const enMessages: DeepPartial<Messages> = {
@@ -54,11 +55,7 @@ export const enMessages: DeepPartial<Messages> = {
       support: 'Support the project',
     },
     exercise: {
-      pushups: 'Push-ups',
-      pullups: 'Pull-ups',
-      crunches: 'Crunches',
-      squats: 'Squats',
-      plank: 'Plank',
+      ...exerciseLabelMap('en'),
     },
   },
   feedback: {
@@ -228,11 +225,7 @@ export const enMessages: DeepPartial<Messages> = {
     errorTitle: 'Failed to load the page',
     exercises: {
       all: 'All exercises',
-      pushups: 'Push-ups',
-      pullups: 'Pull-ups',
-      crunches: 'Crunches',
-      squats: 'Squats',
-      plank: 'Plank',
+      ...exerciseLabelMap('en'),
     },
     periods: {
       d7: '7 days',

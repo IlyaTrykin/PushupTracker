@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { sendWebPushToUsers } from '@/lib/web-push';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
+import { isExerciseType } from '@/lib/exercises';
 import { getWorkoutPoints, matchWorkoutReward } from '@/lib/workout-rewards';
 import { GroupError, recordGroupAuditLog, requireManagedGroupMemberAccess } from '@/lib/groups';
 
@@ -291,6 +292,7 @@ export async function POST(request: Request) {
     const date = parseDate(dateStr);
     if (!date) return jsonError('date должен быть в формате YYYY-MM-DD');
     if (!exerciseType) return jsonError('exerciseType обязателен');
+    if (!isExerciseType(exerciseType)) return jsonError('Некорректный тип упражнения');
 
     const dateMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     const performedAt = (timeStr && timeStr.includes('T')) ? new Date(timeStr) : combineDateAndTime(date, timeStr);

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "tsx --test src/lib/analytics/*.test.ts",
+    "test": "tsx --test src/lib/*.test.ts src/lib/analytics/*.test.ts",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {

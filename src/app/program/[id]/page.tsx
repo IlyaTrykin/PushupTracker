@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
+import { exerciseLabel as catalogExerciseLabel } from '@/lib/exercises';
 
 type TrainingSet = {
   id: string;
@@ -67,12 +68,7 @@ async function fetchJson(url: string) {
 }
 
 function exerciseLabel(exerciseType: string) {
-  if (exerciseType === 'pushups') return 'Отжимания';
-  if (exerciseType === 'pullups') return 'Подтягивания';
-  if (exerciseType === 'crunches') return 'Скручивания';
-  if (exerciseType === 'squats') return 'Приседания';
-  if (exerciseType === 'plank') return 'Планка';
-  return exerciseType;
+  return catalogExerciseLabel(exerciseType);
 }
 
 function formatSessionDate(iso: string, locale: string) {

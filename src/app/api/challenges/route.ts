@@ -4,6 +4,7 @@ import { requireUser, AuthError } from '@/lib/auth';
 import { isChannelEnabledForUser } from '@/lib/notification-preferences';
 import { sendChallengeInviteEmail } from '@/lib/notification-email';
 import { sendWebPushToUsers } from '@/lib/web-push';
+import { isExerciseType } from '@/lib/exercises';
 
 type JsonObject = Record<string, unknown>;
 
@@ -25,7 +26,6 @@ function parseISODateOnly(s: string): Date | null {
   return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
 }
 
-const ALLOWED_EXERCISES = new Set(['pushups', 'pullups', 'crunches', 'squats', 'plank']);
 
 export async function GET(request: NextRequest) {
   try {
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
     const endDate = parseISODateOnly(String(body.endDate || '').trim());
 
     if (!name) return jsonError('Введите название соревнования', 400);
-    if (!ALLOWED_EXERCISES.has(exerciseType)) return jsonError('Некорректный тип упражнения', 400);
+    if (!isExerciseType(exerciseType)) return jsonError('Некорректный тип упражнения', 400);
     if (!startDate || !endDate) return jsonError('Даты должны быть в формате YYYY-MM-DD', 400);
     if (endDate < startDate) return jsonError('endDate не может быть раньше startDate', 400);
 

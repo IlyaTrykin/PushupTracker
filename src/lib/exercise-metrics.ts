@@ -1,6 +1,6 @@
-export function isTimedExercise(exerciseType?: string | null): boolean {
-  return exerciseType === 'plank';
-}
+import { isTimedExercise } from '@/lib/exercises';
+
+export { isTimedExercise };
 
 export function exerciseValueLabel(exerciseType?: string | null): string {
   return isTimedExercise(exerciseType) ? 'Секунды' : 'Повторы';

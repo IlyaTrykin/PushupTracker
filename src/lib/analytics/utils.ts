@@ -1,4 +1,5 @@
 import { calculateExercisePoints } from '@/lib/exercise-points';
+import { createByExercise, toExerciseType } from '@/lib/exercises';
 import type {
   ExerciseFilter,
   ExerciseType,
@@ -6,19 +7,10 @@ import type {
   WorkoutRecord,
 } from '@/lib/analytics/types';
 
-export function createZeroByExercise<T>(factory: () => T): Record<ExerciseType, T> {
-  return {
-    pushups: factory(),
-    pullups: factory(),
-    crunches: factory(),
-    squats: factory(),
-    plank: factory(),
-  };
-}
+export { toExerciseType };
 
-export function toExerciseType(value?: string | null): ExerciseType {
-  if (value === 'pullups' || value === 'crunches' || value === 'squats' || value === 'plank') return value;
-  return 'pushups';
+export function createZeroByExercise<T>(factory: () => T): Record<ExerciseType, T> {
+  return createByExercise(() => factory());
 }
 
 export function startOfDay(date: Date): Date {
@@ -46,8 +38,8 @@ export function getWorkoutTimestamp(workout: WorkoutRecord): Date {
   return new Date(workout.time || workout.date);
 }
 
-export function toLoadPoints(reps: number, exerciseType: ExerciseType): number {
-  return calculateExercisePoints(reps, exerciseType);
+export function toLoadPoints(reps: number, exerciseType?: string | null, loadKg?: number | null): number {
+  return calculateExercisePoints(reps, exerciseType, loadKg);
 }
 
 export function normalizeWorkouts(workouts: WorkoutRecord[]): NormalizedWorkout[] {
@@ -64,7 +56,7 @@ export function normalizeWorkouts(workouts: WorkoutRecord[]): NormalizedWorkout[
         date,
         performedAt,
         trainingSessionId: workout.trainingSessionId ?? null,
-        load: toLoadPoints(reps, exerciseType),
+        load: toLoadPoints(reps, exerciseType, workout.loadKg),
       };
     })
     .filter((workout) => Number.isFinite(workout.reps) && workout.reps > 0 && !Number.isNaN(workout.performedAt.getTime()))

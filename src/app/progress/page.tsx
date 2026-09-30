@@ -32,8 +32,9 @@ import { fillTemplate, toExerciseType } from '@/lib/analytics/utils';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
+import { EXERCISE_ORDER, isTimedExercise } from '@/lib/exercises';
 
-const EXERCISE_OPTIONS: ExerciseFilter[] = ['all', 'pushups', 'pullups', 'squats', 'crunches', 'plank'];
+const EXERCISE_OPTIONS: ExerciseFilter[] = ['all', ...EXERCISE_ORDER];
 
 const pageStyle: CSSProperties = {
   '--analytics-accent': '#b45309',
@@ -76,11 +77,7 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 function exerciseLabel(type: ExerciseType, progress: Messages['progress']): string {
-  if (type === 'pushups') return progress.exercises.pushups;
-  if (type === 'pullups') return progress.exercises.pullups;
-  if (type === 'crunches') return progress.exercises.crunches;
-  if (type === 'squats') return progress.exercises.squats;
-  return progress.exercises.plank;
+  return progress.exercises[type];
 }
 
 function filterLabel(filter: ExerciseFilter, progress: Messages['progress']): string {
@@ -122,7 +119,7 @@ function formatLoadNumber(value: number, localeTag: string): string {
 }
 
 function formatExerciseMetric(value: number, exercise: ExerciseFilter | ExerciseType, localeTag: string): string {
-  if (exercise === 'plank') return formatCompactDuration(value, localeTag);
+  if (exercise !== 'all' && isTimedExercise(exercise)) return formatCompactDuration(value, localeTag);
   return Math.round(value).toLocaleString(localeTag);
 }
 

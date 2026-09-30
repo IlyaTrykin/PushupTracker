@@ -1,18 +1,16 @@
-export type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+import { DEFAULT_EXERCISE, isExerciseType, type ExerciseType } from '@/lib/exercises';
+
+export { isExerciseType, type ExerciseType };
 
 const EXERCISE_TYPE_KEY = 'exerciseType';
 
-export function isExerciseType(value: unknown): value is ExerciseType {
-  return value === 'pushups' || value === 'pullups' || value === 'crunches' || value === 'squats' || value === 'plank';
-}
-
 export function getStoredExerciseType(): ExerciseType {
-  if (typeof window === 'undefined') return 'pushups';
+  if (typeof window === 'undefined') return DEFAULT_EXERCISE;
   try {
     const saved = window.localStorage.getItem(EXERCISE_TYPE_KEY);
     if (isExerciseType(saved)) return saved;
   } catch {}
-  return 'pushups';
+  return DEFAULT_EXERCISE;
 }
 
 export function subscribeExerciseType(onStoreChange: () => void) {

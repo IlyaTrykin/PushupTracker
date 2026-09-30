@@ -12,6 +12,7 @@ import { formatExerciseValue } from '@/lib/exercise-metrics';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { t } from '@/i18n/translate';
+import { EXERCISE_ORDER, createByExercise, exerciseIcon, isExerciseType, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 type MemberItem = {
   userId: string;
@@ -75,7 +76,6 @@ type WorkoutStats = {
   streak: number;
 };
 
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 type WorkoutStatsByExercise = Record<ExerciseType, WorkoutStats>;
 
 type GroupChallenge = {
@@ -114,7 +114,6 @@ type GroupAuditLogItem = {
   } | null;
 };
 
-const EXERCISE_ORDER: ExerciseType[] = ['pushups', 'pullups', 'crunches', 'squats', 'plank'];
 const FEED_PERIOD_OPTIONS: PeriodKey[] = ['7d', '30d', '90d', 'all'];
 
 function getErrorMessage(error: unknown): string {
@@ -158,17 +157,11 @@ function getWorkoutDate(value: Pick<GroupWorkout, 'time' | 'date'>) {
 }
 
 function toExerciseType(type: string | undefined): ExerciseType {
-  if (type === 'pullups' || type === 'crunches' || type === 'squats' || type === 'plank') return type;
-  return 'pushups';
+  return catalogToExerciseType(type);
 }
 
 function exerciseFeedIcon(type: ExerciseType): string {
-  const v = '20260315-2';
-  if (type === 'pushups') return `/icons/exercise-types/feed/pushups.svg?v=${v}`;
-  if (type === 'pullups') return `/icons/exercise-types/feed/pullups.svg?v=${v}`;
-  if (type === 'crunches') return `/icons/exercise-types/feed/crunches.svg?v=${v}`;
-  if (type === 'squats') return `/icons/exercise-types/feed/squats.svg?v=${v}`;
-  return `/icons/exercise-types/feed/plank.svg?v=${v}`;
+  return exerciseIcon(type);
 }
 
 function formatDateWithWeekday(dayKey: string, locale: string): string {
@@ -253,14 +246,10 @@ function describeAuditAction(tt: (input: string) => string, log: GroupAuditLogIt
 
 function exerciseLabel(
   filter: ExerciseFilter,
-  localeExercise: { pushups: string; pullups: string; crunches: string; squats: string; plank: string },
+  localeExercise: Record<ExerciseType, string>,
 ) {
   if (filter === 'all') return null;
-  if (filter === 'pushups') return localeExercise.pushups;
-  if (filter === 'pullups') return localeExercise.pullups;
-  if (filter === 'crunches') return localeExercise.crunches;
-  if (filter === 'squats') return localeExercise.squats;
-  return localeExercise.plank;
+  return localeExercise[filter];
 }
 
 function getPeriodLabel(period: PeriodKey, progress: ReturnType<typeof useI18n>['messages']['progress']) {
@@ -297,7 +286,7 @@ function isWorkoutInPeriod(workout: Pick<GroupWorkout, 'date' | 'time'>, period:
 }
 
 function isExerciseFilterValue(value: string | null): value is ExerciseFilter {
-  return value === 'all' || value === 'pushups' || value === 'pullups' || value === 'crunches' || value === 'squats' || value === 'plank';
+  return value === 'all' || isExerciseType(value);
 }
 
 function isPeriodKeyValue(value: string | null): value is PeriodKey {
@@ -352,13 +341,7 @@ function computeStats(workouts: GroupWorkout[]): WorkoutStats {
 }
 
 function computeStatsByExercise(workouts: GroupWorkout[]): WorkoutStatsByExercise {
-  return {
-    pushups: computeStats(workouts.filter((workout) => toExerciseType(workout.exerciseType) === 'pushups')),
-    pullups: computeStats(workouts.filter((workout) => toExerciseType(workout.exerciseType) === 'pullups')),
-    crunches: computeStats(workouts.filter((workout) => toExerciseType(workout.exerciseType) === 'crunches')),
-    squats: computeStats(workouts.filter((workout) => toExerciseType(workout.exerciseType) === 'squats')),
-    plank: computeStats(workouts.filter((workout) => toExerciseType(workout.exerciseType) === 'plank')),
-  };
+  return createByExercise((type) => computeStats(workouts.filter((workout) => toExerciseType(workout.exerciseType) === type)));
 }
 
 function ActivityHeatmap({
@@ -660,7 +643,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       const row = totals.get(item.ownerUserId);
       if (!row) return;
       row.total += deferredExerciseFilter === 'all'
-        ? toLoadPoints(item.reps, item.exerciseType as 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank')
+        ? toLoadPoints(item.reps, item.exerciseType)
         : item.reps;
     });
 
@@ -963,7 +946,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
 
         <div style={filterGroup}>
           <div style={filterRow}>
-            {(['all', 'pushups', 'pullups', 'crunches', 'squats', 'plank'] as ExerciseFilter[]).map((filter) => (
+            {(['all', ...EXERCISE_ORDER] as ExerciseFilter[]).map((filter) => (
               <button
                 key={filter}
                 type="button"
@@ -1534,11 +1517,9 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
             <input value={challengeName} onChange={(event) => setChallengeName(event.target.value)} placeholder={tt('Название')} style={input} />
             <div style={gridCompact}>
               <select value={challengeExercise} onChange={(event) => setChallengeExercise(event.target.value)} style={input}>
-                <option value="pushups">pushups</option>
-                <option value="pullups">pullups</option>
-                <option value="crunches">crunches</option>
-                <option value="squats">squats</option>
-                <option value="plank">plank</option>
+                {EXERCISE_ORDER.map((type) => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
               </select>
               <select value={challengeMode} onChange={(event) => setChallengeMode(event.target.value)} style={input}>
                 <option value="most">most</option>

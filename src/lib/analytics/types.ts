@@ -1,4 +1,6 @@
-export type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+import type { ExerciseType } from '@/lib/exercises';
+
+export type { ExerciseType };
 export type ExerciseFilter = ExerciseType | 'all';
 export type PeriodKey = '7d' | '30d' | '90d' | 'all';
 export type MetricKind = 'count' | 'exercise' | 'load' | 'percent' | 'duration' | 'rate';
@@ -10,6 +12,7 @@ export type WorkoutRecord = {
   date: string | Date;
   time?: string | Date | null;
   exerciseType?: string | null;
+  loadKg?: number | null;
   trainingSessionId?: string | null;
 };
 

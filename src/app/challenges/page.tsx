@@ -14,6 +14,7 @@ import {
   challengeTargetLabel,
   challengeTargetPromptLabel,
 } from '@/lib/exercise-metrics';
+import { EXERCISE_ORDER, exerciseLabel, isExerciseType as isCatalogExerciseType, type ExerciseType } from '@/lib/exercises';
 
 type Friend = {
   friendshipId: string;
@@ -21,7 +22,6 @@ type Friend = {
   since: string;
 };
 type ChallengeMode = 'most' | 'target' | 'daily_min' | 'sets_min';
-type ExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
 
 type ChallengeListItem = {
   id: string;
@@ -106,7 +106,7 @@ function isChallengeMode(value: string): value is ChallengeMode {
 }
 
 function isExerciseType(value: string): value is ExerciseType {
-  return ['pushups', 'pullups', 'crunches', 'squats', 'plank'].includes(value);
+  return isCatalogExerciseType(value);
 }
 
 function badge(text: string, tone: 'gray' | 'green' | 'amber' | 'red') {
@@ -437,11 +437,9 @@ export default function ChallengesPage() {
                 }}
                 style={input}
               >
-                <option value="pushups">{tt('Отжимания')}</option>
-                <option value="pullups">{tt('Подтягивания')}</option>
-                <option value="crunches">{tt('Скручивания')}</option>
-                <option value="squats">{tt('Приседания')}</option>
-                <option value="plank">{tt('Планка')}</option>
+                {EXERCISE_ORDER.map((type) => (
+                  <option key={type} value={type}>{tt(exerciseLabel(type))}</option>
+                ))}
               </select>
             </div>
 
