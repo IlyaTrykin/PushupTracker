@@ -1,12 +1,13 @@
 'use client';
 
 import Image from 'next/image';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
+import { useStopwatch } from '@/lib/use-stopwatch';
 import styles from './dashboard.module.css';
 
 type Workout = {
@@ -353,9 +354,7 @@ export default function DashboardPage() {
   const [time, setTime] = useState<string>(normalizeTime(new Date()));
   const [timeTouched, setTimeTouched] = useState(false);
   const [reps, setReps] = useState<number>(0);
-  const [plankSecondsLeft, setPlankSecondsLeft] = useState(0);
-  const [plankTimerActive, setPlankTimerActive] = useState(false);
-  const [plankTimerStarted, setPlankTimerStarted] = useState(false);
+  const plankStopwatch = useStopwatch('dashboardPlankStopwatch');
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -372,29 +371,15 @@ export default function DashboardPage() {
   const [detailDay, setDetailDay] = useState<string | null>(null);
   const [workoutReactions, setWorkoutReactions] = useState<Record<string, WorkoutReactionPayload>>({});
   const [initialLoadReady, setInitialLoadReady] = useState(false);
-  const repsRef = useRef(reps);
-  const plankSecondsLeftRef = useRef(plankSecondsLeft);
   const isPlankSelected = exerciseType === 'plank';
-  const plankElapsedSeconds = useMemo(
-    () => Math.max(0, Math.max(0, reps) - Math.max(0, plankSecondsLeft)),
-    [reps, plankSecondsLeft],
-  );
+  const plankTimerStarted = isPlankSelected && plankStopwatch.started;
   const workoutsCacheKey = useMemo(
     () => getWorkoutsCacheKey(user?.id, user?.username),
     [user?.id, user?.username],
   );
 
-  useEffect(() => {
-    repsRef.current = reps;
-    plankSecondsLeftRef.current = plankSecondsLeft;
-  }, [reps, plankSecondsLeft]);
-
   const handleExerciseTypeChange = (next: ExerciseType) => {
-    if (next !== 'plank') {
-      setPlankTimerActive(false);
-      setPlankTimerStarted(false);
-      setPlankSecondsLeft(0);
-    }
+    if (next !== 'plank') plankStopwatch.reset();
     persistExerciseType(next);
   };
 
@@ -552,9 +537,6 @@ export default function DashboardPage() {
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);
-    setPlankSecondsLeft(0);
-    setPlankTimerActive(false);
-    setPlankTimerStarted(false);
     await loadWorkouts();
   }, [date, loadWorkouts, time, timeTouched, tt]);
 
@@ -577,53 +559,20 @@ export default function DashboardPage() {
   const handlePlankStart = () => {
     setError(null);
     setInfo(null);
-    const target = Math.max(0, reps || 0);
-    if (!Number.isFinite(target) || target <= 0) {
-      setError(tt('Введите корректное количество секунд (> 0)'));
-      return;
-    }
-    setPlankSecondsLeft(target);
-    setPlankTimerStarted(true);
-    setPlankTimerActive(true);
+    plankStopwatch.start();
   };
 
-  const stopPlankWithActual = useCallback(async (actual: number) => {
-    if (!Number.isFinite(actual) || actual <= 0) {
-      setPlankTimerActive(false);
-      setPlankTimerStarted(false);
-      setPlankSecondsLeft(0);
-      return;
-    }
+  const handlePlankStop = async () => {
+    const actual = plankStopwatch.finish();
+    if (actual <= 0) return;
     setError(null);
     setInfo(null);
-    setPlankTimerActive(false);
-    setPlankTimerStarted(false);
     try {
       await submitWorkout(actual, 'plank');
     } catch (error: unknown) {
       setError(getErrorMessage(error));
     }
-  }, [submitWorkout]);
-
-  const handlePlankStop = useCallback(async () => {
-    if (!isPlankSelected) return;
-    await stopPlankWithActual(plankElapsedSeconds);
-  }, [isPlankSelected, plankElapsedSeconds, stopPlankWithActual]);
-
-  useEffect(() => {
-    if (!isPlankSelected || !plankTimerActive || !plankTimerStarted) return;
-    const timerId = window.setInterval(() => {
-      const currentLeft = plankSecondsLeftRef.current;
-      if (currentLeft <= 1) {
-        window.clearInterval(timerId);
-        setPlankSecondsLeft(0);
-        void stopPlankWithActual(repsRef.current);
-        return;
-      }
-      setPlankSecondsLeft(currentLeft - 1);
-    }, 1000);
-    return () => window.clearInterval(timerId);
-  }, [isPlankSelected, plankTimerActive, plankTimerStarted, stopPlankWithActual]);
+  };
 
   function formatClock(totalSeconds: number) {
     const safe = Math.max(0, totalSeconds);
@@ -799,15 +748,15 @@ export default function DashboardPage() {
 
             <input
               inputMode="numeric"
-              value={isPlankSelected && plankTimerStarted ? formatClock(plankSecondsLeft) : String(reps)}
+              value={plankTimerStarted ? formatClock(plankStopwatch.elapsedSeconds) : String(reps)}
               onChange={(e) => {
-                if (isPlankSelected && plankTimerStarted) return;
+                if (plankTimerStarted) return;
                 const v = e.target.value.replace(/[^\d]/g, '');
                 setReps(v === '' ? 0 : Math.min(9999, parseInt(v, 10)));
               }}
               placeholder="0"
               style={repsInputStyle}
-              readOnly={isPlankSelected && plankTimerStarted}
+              readOnly={plankTimerStarted}
             />
 
             {!plankTimerStarted ? (
@@ -829,32 +778,32 @@ export default function DashboardPage() {
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isPlankSelected) {
-                      handlePlankStart();
-                      return;
-                    }
-                    void handleAdd();
-                  }}
-                  style={addButton}
-                >
-                  {isPlankSelected ? tt('Старт') : tt('Добавить')}
-                </button>
+                {isPlankSelected ? (
+                  // Секундомер для замера «сколько простоял»; ручной ввод остаётся
+                  // для записи прошедшей планки. Обратный отсчёт живёт в программе.
+                  <div style={plankActionsGrid}>
+                    <button type="button" onClick={handlePlankStart} style={plankStartButton}>
+                      ▶ {tt('Старт')}
+                    </button>
+                    <button type="button" onClick={() => void handleAdd()} style={addButton}>
+                      {tt('Добавить')}
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => void handleAdd()} style={addButton}>
+                    {tt('Добавить')}
+                  </button>
+                )}
               </>
             ) : (
               <>
-                <div style={{ fontSize: 14, fontWeight: 800, color: '#475569' }}>
-                  {tt('Сделал')}: {formatExerciseValue(plankElapsedSeconds, 'plank', true)}
-                </div>
                 <div style={plusButtonsGrid}>
                   <button
                     type="button"
-                    onClick={() => setPlankTimerActive((prev) => !prev)}
+                    onClick={plankStopwatch.running ? plankStopwatch.pause : plankStopwatch.resume}
                     style={plus5Button}
                   >
-                    {plankTimerActive ? tt('Пауза') : tt('Продолжить')}
+                    {plankStopwatch.running ? tt('Пауза') : tt('Продолжить')}
                   </button>
                   <button
                     type="button"
@@ -1317,6 +1266,21 @@ const addButton: React.CSSProperties = {
   fontSize: 20,
   cursor: 'pointer',
   boxShadow: '0 20px 36px rgba(234, 88, 12, 0.24)',
+};
+
+const plankActionsGrid: React.CSSProperties = {
+  width: '100%',
+  maxWidth: 520,
+  marginInline: 'auto',
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: 12,
+};
+
+const plankStartButton: React.CSSProperties = {
+  ...addButton,
+  background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+  boxShadow: '0 20px 36px rgba(13, 148, 136, 0.24)',
 };
 
 const card: React.CSSProperties = {
