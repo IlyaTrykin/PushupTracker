@@ -144,6 +144,26 @@ export function pointsPerUnit(value?: string | null, loadKg?: number | null): nu
   return exercise.pointsPerUnit * (kg / exercise.load.referenceKg) ** LOAD_EXPONENT;
 }
 
+// Сколько упражнений закреплено на экране тренировки; остальные — под кнопкой «Ещё».
+export const FAVORITE_EXERCISE_LIMIT = 4;
+
+// Чистит сохранённый список: только известные упражнения, без повторов, не больше лимита.
+export function normalizeFavoriteExercises(value: unknown): ExerciseType[] {
+  if (!Array.isArray(value)) return [];
+  const out: ExerciseType[] = [];
+  for (const item of value) {
+    if (isExerciseType(item) && !out.includes(item)) out.push(item);
+    if (out.length >= FAVORITE_EXERCISE_LIMIT) break;
+  }
+  return out;
+}
+
+// Что показывать на главной: выбор пользователя, а если он пуст — начало каталога.
+export function resolveFavoriteExercises(value: unknown): ExerciseType[] {
+  const saved = normalizeFavoriteExercises(value);
+  return saved.length ? saved : EXERCISE_IDS.slice(0, FAVORITE_EXERCISE_LIMIT);
+}
+
 export function exerciseLabelMap(locale: 'ru' | 'en'): Record<ExerciseType, string> {
   return createByExercise((type) => EXERCISES[type].label[locale]);
 }

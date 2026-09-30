@@ -35,6 +35,7 @@ export async function POST(request: Request) {
         isAdmin: true,
         avatarPath: true,
         language: true,
+        favoriteExercises: true,
         deletedAt: true,
       },
     });
@@ -73,6 +74,7 @@ export async function POST(request: Request) {
         isAdmin: user.isAdmin,
         avatarPath: user.avatarPath ?? null,
         language: user.language,
+        favoriteExercises: user.favoriteExercises,
       },
     });
 

@@ -7,7 +7,9 @@ import {
   useEffect,
   useMemo,
   useState,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from 'react';
 
 export type AuthUserState = {
@@ -17,11 +19,12 @@ export type AuthUserState = {
   isAdmin?: boolean;
   avatarPath?: string | null;
   language?: string;
+  favoriteExercises?: string[];
 } | null;
 
 type AuthContextValue = {
   user: AuthUserState;
-  setUser: (user: AuthUserState) => void;
+  setUser: Dispatch<SetStateAction<AuthUserState>>;
   refreshUser: () => Promise<void>;
 };
 

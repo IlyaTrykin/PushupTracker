@@ -20,6 +20,8 @@ model User {
   birthDate    DateTime?
   weightKg     Int?
   avatarPath   String?
+  // Упражнения на экране тренировки; пусто — порядок каталога по умолчанию.
+  favoriteExercises String[] @default([])
   deletedAt    DateTime?
   deletedById  String?
   deletedBy    User?     @relation("UserDeletedBy", fields: [deletedById], references: [id])

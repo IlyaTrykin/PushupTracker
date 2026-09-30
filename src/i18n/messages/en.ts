@@ -53,6 +53,7 @@ export const enMessages: DeepPartial<Messages> = {
       login: 'Log in',
       feedback: 'Feedback',
       support: 'Support the project',
+      favoriteExercises: 'My exercises',
     },
     exercise: {
       ...exerciseLabelMap('en'),
@@ -67,6 +68,15 @@ export const enMessages: DeepPartial<Messages> = {
     sent: 'Thanks! Your message has been sent.',
     error: "Couldn't send. Please try again later.",
     close: 'Close',
+  },
+  favoriteExercises: {
+    title: 'My exercises',
+    hint: 'Pick up to {limit} exercises to keep them at hand on the workout screen. The rest are under the “More” button.',
+    selected: '{count} of {limit} selected',
+    limitReached: 'You can pick at most {limit}. Unmark another exercise first.',
+    error: "Couldn't save. Please try again.",
+    more: 'More exercises',
+    empty: 'All exercises are already on the main screen.',
   },
   auth: {
     login: {
