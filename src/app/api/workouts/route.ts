@@ -4,10 +4,23 @@ import { requireUser, AuthError } from '@/lib/auth';
 import { sendWebPushToUsers } from '@/lib/web-push';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
 import { isExerciseType } from '@/lib/exercises';
+import { parseWorkoutLoadFields } from '@/lib/workout-input';
 import { getWorkoutPoints, matchWorkoutReward } from '@/lib/workout-rewards';
 import { GroupError, recordGroupAuditLog, requireManagedGroupMemberAccess } from '@/lib/groups';
 
 export const dynamic = 'force-dynamic';
+
+const WORKOUT_SELECT = {
+  id: true,
+  reps: true,
+  loadKg: true,
+  repsLeft: true,
+  repsRight: true,
+  date: true,
+  time: true,
+  exerciseType: true,
+  trainingSessionId: true,
+} as const;
 
 type WorkoutActor = {
   id: string;
@@ -256,7 +269,7 @@ export async function GET(request: Request) {
         ...(exerciseType ? { exerciseType } : {}),
       },
       orderBy: [{ date: 'desc' }, { time: 'desc' }, { id: 'desc' }],
-      select: { id: true, reps: true, date: true, time: true, exerciseType: true, trainingSessionId: true },
+      select: WORKOUT_SELECT,
     });
 
     return NextResponse.json(workouts);
@@ -283,20 +296,21 @@ export async function POST(request: Request) {
 
     const { targetUserId, groupId, managedByGroup } = await resolveWorkoutWriteAccess(actor, body);
     const owner = await getWorkoutOwnerUserOrThrow(targetUserId);
-    const reps = Number(body.reps);
     const dateStr = String(body.date || '');
     const timeStr = body.time ? String(body.time) : null;
     const exerciseType = String(body.exerciseType || '').trim();
 
-    if (!Number.isFinite(reps) || reps <= 0) return jsonError('reps должен быть числом > 0');
-    const date = parseDate(dateStr);
-    if (!date) return jsonError('date должен быть в формате YYYY-MM-DD');
     if (!exerciseType) return jsonError('exerciseType обязателен');
     if (!isExerciseType(exerciseType)) return jsonError('Некорректный тип упражнения');
+    const parsedLoad = parseWorkoutLoadFields(exerciseType, body);
+    if (!parsedLoad.ok) return jsonError(parsedLoad.error);
+    const { reps, loadKg, repsLeft, repsRight } = parsedLoad.value;
+    const date = parseDate(dateStr);
+    if (!date) return jsonError('date должен быть в формате YYYY-MM-DD');
 
     const dateMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     const performedAt = (timeStr && timeStr.includes('T')) ? new Date(timeStr) : combineDateAndTime(date, timeStr);
-    const { earnedPoints, earnedPointsTenths } = getWorkoutPoints(reps, exerciseType);
+    const { earnedPoints, earnedPointsTenths } = getWorkoutPoints(reps, exerciseType, loadKg);
 
     const activeChallenges = await prisma.challengeParticipant.findMany({
       where: {
@@ -323,11 +337,14 @@ export async function POST(request: Request) {
       data: {
         userId: owner.id,
         reps,
+        loadKg,
+        repsLeft,
+        repsRight,
         exerciseType,
         date: dateMidnight,
         time: performedAt,
       },
-      select: { id: true, reps: true, date: true, time: true, exerciseType: true, trainingSessionId: true },
+      select: WORKOUT_SELECT,
     });
 
     if (managedByGroup && groupId) {
@@ -340,6 +357,7 @@ export async function POST(request: Request) {
         entityId: created.id,
         metadata: {
           reps,
+          loadKg,
           date: dateMidnight.toISOString(),
           time: performedAt.toISOString(),
           exerciseType,
@@ -359,7 +377,9 @@ export async function POST(request: Request) {
     try {
       const notifications: Array<{ userId: string; type: string; title: string; body: string; link: string }> = [];
       const pushMessages = new Map<string, { title: string; body: string; link: string; tag: string }>();
-      const workoutValue = formatExerciseValue(reps, exerciseType, true);
+      const workoutValue = loadKg != null
+        ? `${formatExerciseValue(reps, exerciseType, true)} × ${loadKg} кг`
+        : formatExerciseValue(reps, exerciseType, true);
 
       const followers = await prisma.friendFollow.findMany({
         where: { friendId: owner.id },
@@ -459,7 +479,7 @@ export async function PUT(request: Request) {
 
     const existing = await prisma.workout.findUnique({
       where: { id },
-      select: { id: true, userId: true, date: true, time: true, reps: true, exerciseType: true },
+      select: { id: true, userId: true, date: true, time: true, reps: true, loadKg: true, repsLeft: true, repsRight: true, exerciseType: true },
     });
     if (!existing) return jsonError('Запись не найдена', 404);
 
@@ -472,16 +492,14 @@ export async function PUT(request: Request) {
       groupId = access.group.id;
     }
 
-    const reps = body.reps !== undefined ? Number(body.reps) : undefined;
     const dateStr = body.date !== undefined ? String(body.date) : undefined;
     const timeStr = body.time !== undefined ? String(body.time) : undefined;
 
-    const data: { reps?: number; date?: Date; time?: Date } = {};
+    const data: { reps?: number; loadKg?: number | null; repsLeft?: number | null; repsRight?: number | null; date?: Date; time?: Date } = {};
 
-    if (reps !== undefined) {
-      if (!Number.isFinite(reps) || reps <= 0) return jsonError('reps должен быть числом > 0');
-      data.reps = reps;
-    }
+    const parsedLoad = parseWorkoutLoadFields(existing.exerciseType, body, existing);
+    if (!parsedLoad.ok) return jsonError(parsedLoad.error);
+    Object.assign(data, parsedLoad.value);
 
     let newDate = existing.date;
     if (dateStr !== undefined) {
@@ -509,7 +527,7 @@ export async function PUT(request: Request) {
     const updated = await prisma.workout.update({
       where: { id },
       data,
-      select: { id: true, reps: true, date: true, time: true, exerciseType: true },
+      select: WORKOUT_SELECT,
     });
 
     if (managedByGroup && groupId) {

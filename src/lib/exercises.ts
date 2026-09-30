@@ -16,7 +16,7 @@
 export const REFERENCE_SET_POINTS = 30;
 export const LOAD_EXPONENT = 2;
 
-export const EXERCISE_IDS = ['pushups', 'pullups', 'crunches', 'squats', 'plank'] as const;
+export const EXERCISE_IDS = ['pushups', 'pullups', 'crunches', 'squats', 'plank', 'kettlebell_press', 'kettlebell_jerk'] as const;
 
 export type ExerciseType = (typeof EXERCISE_IDS)[number];
 
@@ -93,6 +93,31 @@ export const EXERCISES: Record<ExerciseType, ExerciseDefinition> = {
     pointsPerUnit: 0.1, // ≈300 секунд
     programSupported: true,
     colors: { accent: '#14b8a6', soft: '#ccfbf1', chart: '#7c3aed' },
+  },
+  // Строгий жим одной рукой стоя, без помощи ног. Повторы считаются на каждую руку.
+  kettlebell_press: {
+    id: 'kettlebell_press',
+    label: { ru: 'Жим гири', en: 'Kettlebell press' },
+    code: 'ЖГР',
+    unit: 'reps',
+    pointsPerUnit: 3, // ≈10 повторов на руку с гирей 16 кг
+    load: { referenceKg: 16, presetsKg: [8, 12, 16, 20, 24, 28, 32] },
+    unilateral: true,
+    programSupported: false,
+    colors: { accent: '#7c3aed', soft: '#ede9fe', chart: '#6d28d9' },
+  },
+  // Толчок одной рукой: подсед и выталкивание ногами, затем фиксация над головой.
+  // Ноги берут часть работы, поэтому повторов до отказа больше, чем в жиме.
+  kettlebell_jerk: {
+    id: 'kettlebell_jerk',
+    label: { ru: 'Толчок гири', en: 'Kettlebell jerk' },
+    code: 'ТГР',
+    unit: 'reps',
+    pointsPerUnit: 2, // ≈15 повторов на руку с гирей 16 кг
+    load: { referenceKg: 16, presetsKg: [8, 12, 16, 20, 24, 28, 32] },
+    unilateral: true,
+    programSupported: false,
+    colors: { accent: '#ea580c', soft: '#ffedd5', chart: '#9a3412' },
   },
 };
 

@@ -7,10 +7,10 @@ import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, use
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
-import { formatExerciseValue } from '@/lib/exercise-metrics';
+import { formatExerciseValue, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
-import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
+import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, isLoadedExercise, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 type MemberItem = {
   userId: string;
@@ -36,6 +36,9 @@ type GroupDetail = {
 type GroupWorkout = {
   id: string;
   reps: number;
+  loadKg?: number | null;
+  repsLeft?: number | null;
+  repsRight?: number | null;
   date: string;
   time: string | null;
   exerciseType: string;
@@ -358,6 +361,7 @@ export default function GroupMemberDetailPage() {
   const [workoutTime, setWorkoutTime] = useState(normalizeTime(new Date()));
   const [workoutExercise, setWorkoutExercise] = useState('pushups');
   const [workoutReps, setWorkoutReps] = useState('20');
+  const [workoutLoadKg, setWorkoutLoadKg] = useState('');
   const [editingWorkoutId, setEditingWorkoutId] = useState('');
   const [programExercise, setProgramExercise] = useState('pushups');
   const [programBaseline, setProgramBaseline] = useState('20');
@@ -573,6 +577,7 @@ export default function GroupMemberDetailPage() {
     setWorkoutTime(normalizeTime(new Date()));
     setWorkoutExercise('pushups');
     setWorkoutReps('20');
+    setWorkoutLoadKg('');
   }
 
   function startEditWorkout(workout: GroupWorkout) {
@@ -581,6 +586,7 @@ export default function GroupMemberDetailPage() {
     setWorkoutTime(normalizeTime(new Date(workout.time || workout.date)));
     setWorkoutExercise(workout.exerciseType);
     setWorkoutReps(String(workout.reps));
+    setWorkoutLoadKg(workout.loadKg != null ? String(workout.loadKg) : '');
   }
 
   async function saveManagedWorkout(event: FormEvent) {
@@ -597,6 +603,7 @@ export default function GroupMemberDetailPage() {
           userId: memberId,
           groupId,
           reps: Number(workoutReps),
+          ...(isLoadedExercise(workoutExercise) ? { loadKg: Number(workoutLoadKg) } : {}),
           date: workoutDate,
           time: toIsoTime(workoutDate, workoutTime),
           exerciseType: workoutExercise,
@@ -1015,7 +1022,7 @@ export default function GroupMemberDetailPage() {
                           </div>
                         </div>
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={18} height={18} style={feedTypeIcon} unoptimized />
-                        <div style={feedReps}>{formatExerciseValue(workout.reps, type, true)}</div>
+                        <div style={feedReps}>{formatWorkoutValue(workout, locale)}</div>
                       </div>
                     </article>
                   );
@@ -1042,6 +1049,15 @@ export default function GroupMemberDetailPage() {
               </select>
               <input value={workoutReps} onChange={(event) => setWorkoutReps(event.target.value)} placeholder={tt('Повторы')} style={input} />
             </div>
+            {isLoadedExercise(workoutExercise) ? (
+              <input
+                inputMode="decimal"
+                value={workoutLoadKg}
+                onChange={(event) => setWorkoutLoadKg(event.target.value)}
+                placeholder={`${tt('Вес')}, ${tt('кг')}`}
+                style={input}
+              />
+            ) : null}
             <div style={actionRow}>
               <button type="submit" style={btnPrimary}>{editingWorkoutId ? tt('Сохранить') : tt('Добавить')}</button>
               {editingWorkoutId ? <button type="button" style={btnSecondary} onClick={resetWorkoutForm}>{tt('Отмена')}</button> : null}
@@ -1053,7 +1069,7 @@ export default function GroupMemberDetailPage() {
               <div key={workout.id} style={rowCard}>
                 <div style={{ display: 'grid', gap: 4 }}>
                   <strong>{exerciseLabel(workout.exerciseType as ExerciseFilter, messages.nav.exercise) || workout.exerciseType}</strong>
-                  <span style={metaLine}>{formatExerciseValue(workout.reps, workout.exerciseType, true)} · {new Date(workout.time || workout.date).toLocaleString(localeTag)}</span>
+                  <span style={metaLine}>{formatWorkoutValue(workout, locale)} · {new Date(workout.time || workout.date).toLocaleString(localeTag)}</span>
                 </div>
                 <div style={actionRow}>
                   <button type="button" style={btnSecondary} onClick={() => startEditWorkout(workout)}>{tt('Редактировать')}</button>
@@ -1148,7 +1164,7 @@ export default function GroupMemberDetailPage() {
                         <span style={metaLine}>
                           {tt('Время')}: <b>{formatTimeHHMM(workout.time || workout.date)}</b>
                         </span>
-                        <span style={metaLine}>{formatExerciseValue(workout.reps, type, true)}</span>
+                        <span style={metaLine}>{formatWorkoutValue(workout, locale)}</span>
                       </div>
                     </div>
                   );

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateExercisePoints } from './exercise-points';
+import { parseWorkoutLoadFields } from './workout-input';
 import {
   EXERCISE_IDS,
   EXERCISES,
@@ -43,4 +44,37 @@ test('favorites keep known unique exercises up to the limit', () => {
 test('empty favorites resolve to the start of the catalog', () => {
   assert.deepEqual(resolveFavoriteExercises([]), EXERCISE_IDS.slice(0, FAVORITE_EXERCISE_LIMIT));
   assert.deepEqual(resolveFavoriteExercises(['plank']), ['plank']);
+});
+
+test('kettlebell points scale with the square of the weight', () => {
+  assert.equal(calculateExercisePoints(10, 'kettlebell_press', 16), 30);
+  assert.equal(calculateExercisePoints(10, 'kettlebell_jerk', 16), 20);
+  assert.equal(calculateExercisePoints(1, 'kettlebell_press', 24), 6.8);
+  assert.equal(calculateExercisePoints(10, 'kettlebell_press', 8), 7.5);
+  assert.equal(calculateExercisePoints(10, 'kettlebell_press', null), 0);
+});
+
+test('one-arm sets add up both sides and require a weight', () => {
+  assert.deepEqual(
+    parseWorkoutLoadFields('kettlebell_press', { repsLeft: 5, repsRight: 6, loadKg: 16 }),
+    { ok: true, value: { reps: 11, loadKg: 16, repsLeft: 5, repsRight: 6 } },
+  );
+  assert.equal(parseWorkoutLoadFields('kettlebell_press', { repsLeft: 5, repsRight: 6 }).ok, false);
+  assert.equal(parseWorkoutLoadFields('kettlebell_press', { repsLeft: 0, repsRight: 0, loadKg: 16 }).ok, false);
+});
+
+test('bodyweight sets ignore weight and sides', () => {
+  assert.deepEqual(
+    parseWorkoutLoadFields('pushups', { reps: 20, loadKg: 16, repsLeft: 3 }),
+    { ok: true, value: { reps: 20, loadKg: null, repsLeft: null, repsRight: null } },
+  );
+});
+
+test('editing only the total keeps the arm split when the total is unchanged', () => {
+  const existing = { reps: 11, loadKg: 16, repsLeft: 5, repsRight: 6 };
+  assert.deepEqual(parseWorkoutLoadFields('kettlebell_press', { reps: 11 }, existing), { ok: true, value: existing });
+  assert.deepEqual(
+    parseWorkoutLoadFields('kettlebell_press', { reps: 12 }, existing),
+    { ok: true, value: { reps: 12, loadKg: 16, repsLeft: null, repsRight: null } },
+  );
 });

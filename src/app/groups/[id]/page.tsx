@@ -8,7 +8,7 @@ import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
 import { toLoadPoints } from '@/lib/analytics/utils';
-import { formatExerciseValue } from '@/lib/exercise-metrics';
+import { formatExerciseValue, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { t } from '@/i18n/translate';
@@ -56,6 +56,9 @@ type GroupDetail = {
 type GroupWorkout = {
   id: string;
   reps: number;
+  loadKg?: number | null;
+  repsLeft?: number | null;
+  repsRight?: number | null;
   date: string;
   time: string | null;
   exerciseType: string;
@@ -643,7 +646,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       const row = totals.get(item.ownerUserId);
       if (!row) return;
       row.total += deferredExerciseFilter === 'all'
-        ? toLoadPoints(item.reps, item.exerciseType)
+        ? toLoadPoints(item.reps, item.exerciseType, item.loadKg)
         : item.reps;
     });
 
@@ -1293,7 +1296,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                       <div key={item.id} style={leaderRow}>
                         <strong>{exerciseLabel(item.exerciseType as ExerciseFilter, messages.nav.exercise) || item.exerciseType}</strong>
                         <span style={metaLine}>
-                          {formatExerciseValue(item.reps, item.exerciseType, true)} · {new Date(item.time || item.date).toLocaleDateString(localeTag)}
+                          {formatWorkoutValue(item, locale)} · {new Date(item.time || item.date).toLocaleDateString(localeTag)}
                         </span>
                       </div>
                     ))}
@@ -1493,7 +1496,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                           </div>
                         </div>
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={18} height={18} style={feedTypeIcon} unoptimized />
-                        <div style={feedReps}>{formatExerciseValue(workout.reps, type, true)}</div>
+                        <div style={feedReps}>{formatWorkoutValue(workout, locale)}</div>
                       </div>
                     </article>
                   );

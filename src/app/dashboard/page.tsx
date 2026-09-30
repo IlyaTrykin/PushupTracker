@@ -5,16 +5,21 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
-import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
+import { exerciseValueLabel, formatExerciseValue, isTimedExercise, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
-import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, toExerciseType } from '@/lib/exercises';
+import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, getExercise, toExerciseType } from '@/lib/exercises';
+import { useExerciseLoad } from '@/lib/use-exercise-load';
 import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
+import SideLoadEntry from './SideLoadEntry';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import styles from './dashboard.module.css';
 
 type Workout = {
   id: string;
   reps: number;
+  loadKg?: number | null;
+  repsLeft?: number | null;
+  repsRight?: number | null;
   date: string;
   time?: string;
   exerciseType?: string;
@@ -342,6 +347,10 @@ export default function DashboardPage() {
   const [timeTouched, setTimeTouched] = useState(false);
   const [reps, setReps] = useState<number>(0);
   const plankStopwatch = useStopwatch('dashboardPlankStopwatch');
+  const activeExercise = getExercise(exerciseType);
+  const exerciseLoad = useExerciseLoad(exerciseType);
+  const [repsLeft, setRepsLeft] = useState(0);
+  const [repsRight, setRepsRight] = useState(0);
   const { favorites: favoriteExercises } = useFavoriteExercises();
   const [moreExercisesOpen, setMoreExercisesOpen] = useState(false);
   const isFavoriteSelected = favoriteExercises.includes(exerciseType);
@@ -359,6 +368,9 @@ export default function DashboardPage() {
   const [editTime, setEditTime] = useState<string>(normalizeTime(new Date()));
   const [editReps, setEditReps] = useState<number>(0);
   const [editExerciseType, setEditExerciseType] = useState<ExerciseType>('pushups');
+  const [editRepsLeft, setEditRepsLeft] = useState(0);
+  const [editRepsRight, setEditRepsRight] = useState(0);
+  const [editLoadKg, setEditLoadKg] = useState<number | null>(null);
 
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => monthStart(new Date()));
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -511,18 +523,24 @@ export default function DashboardPage() {
     setTimeTouched(false);
   }, []);
 
-  const submitWorkout = useCallback(async (value: number, selectedType: ExerciseType) => {
+  const submitWorkout = useCallback(async (
+    value: number,
+    selectedType: ExerciseType,
+    extra: { loadKg?: number | null; repsLeft?: number; repsRight?: number } = {},
+  ) => {
     const timeToSend = timeTouched ? time : normalizeTime(new Date());
     const data = await fetchJsonSafe('/api/workouts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reps: value, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType }),
+      body: JSON.stringify({ reps: value, ...extra, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType }),
     });
     setInfo(tt('Добавлено'));
     setToastMessage(readWorkoutReward(data)?.message ?? null);
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);
+    setRepsLeft(0);
+    setRepsRight(0);
     await loadWorkouts();
   }, [date, loadWorkouts, time, timeTouched, tt]);
 
@@ -530,6 +548,19 @@ export default function DashboardPage() {
     if (e) e.preventDefault();
     setError(null);
     setInfo(null);
+    if (activeExercise.unilateral) {
+      const total = repsLeft + repsRight;
+      if (total <= 0) {
+        setError(tt('Укажите повторы хотя бы для одной руки'));
+        return;
+      }
+      try {
+        await submitWorkout(total, exerciseType, { loadKg: exerciseLoad.loadKg, repsLeft, repsRight });
+      } catch (error: unknown) {
+        setError(getErrorMessage(error));
+      }
+      return;
+    }
     if (!Number.isFinite(reps) || reps <= 0) {
       setError(isPlankSelected ? tt('Введите корректное количество секунд (> 0)') : 'reps должен быть числом > 0');
       return;
@@ -572,6 +603,9 @@ export default function DashboardPage() {
     setEditDate(normalizeDate(new Date(w.time || w.date)));
     setEditTime(normalizeTime(new Date(w.time || w.date)));
     setEditReps(w.reps || 0);
+    setEditRepsLeft(w.repsLeft ?? 0);
+    setEditRepsRight(w.repsRight ?? 0);
+    setEditLoadKg(w.loadKg ?? null);
     setEditExerciseType(normalizeExerciseType(w.exerciseType));
   };
 
@@ -590,7 +624,10 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editingId,
-          reps: editReps,
+          ...(getExercise(editExerciseType).unilateral
+            ? { repsLeft: editRepsLeft, repsRight: editRepsRight }
+            : { reps: editReps }),
+          ...(editLoadKg != null ? { loadKg: editLoadKg } : {}),
           date: editDate,
           time: toIsoTime(editDate, editTime),
           exerciseType: editExerciseType,
@@ -774,6 +811,28 @@ export default function DashboardPage() {
               ) : null}
             </div>
 
+            {activeExercise.unilateral ? (
+              // Упражнения на одну руку: вес снаряда и повторы отдельно для каждой руки.
+              <>
+                <SideLoadEntry
+                  exercise={activeExercise}
+                  locale={locale}
+                  tt={tt}
+                  loadKg={exerciseLoad.loadKg}
+                  onLoadKgChange={exerciseLoad.setLoadKg}
+                  repsLeft={repsLeft}
+                  repsRight={repsRight}
+                  onRepsLeftChange={setRepsLeft}
+                  onRepsRightChange={setRepsRight}
+                />
+                <button type="button" onClick={() => void handleAdd()} style={addButton}>
+                  {tt('Добавить')}
+                </button>
+              </>
+            ) : null}
+
+            {!activeExercise.unilateral ? (
+            <>
             <input
               inputMode="numeric"
               value={plankTimerStarted ? formatClock(plankStopwatch.elapsedSeconds) : String(reps)}
@@ -845,6 +904,8 @@ export default function DashboardPage() {
                 </div>
               </>
             )}
+            </>
+            ) : null}
           </div>
 
           {(error || info) ? (
@@ -1055,15 +1116,35 @@ export default function DashboardPage() {
                               <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} style={editInput} />
                             </div>
 
-                            <div style={{ display: 'grid', gap: 4 }}>
-                              <label>{tt(exerciseValueLabel(editExerciseType))}</label>
-                              <input
-                                type="number"
-                                value={editReps}
-                                onChange={(e) => setEditReps(Number(e.target.value))}
-                                style={editInput}
-                              />
-                            </div>
+                            {getExercise(editExerciseType).unilateral ? (
+                              <>
+                                <div style={{ display: 'grid', gap: 4 }}>
+                                  <label>{tt('Левая')}</label>
+                                  <input type="number" value={editRepsLeft} onChange={(e) => setEditRepsLeft(Number(e.target.value))} style={editInput} />
+                                </div>
+                                <div style={{ display: 'grid', gap: 4 }}>
+                                  <label>{tt('Правая')}</label>
+                                  <input type="number" value={editRepsRight} onChange={(e) => setEditRepsRight(Number(e.target.value))} style={editInput} />
+                                </div>
+                              </>
+                            ) : (
+                              <div style={{ display: 'grid', gap: 4 }}>
+                                <label>{tt(exerciseValueLabel(editExerciseType))}</label>
+                                <input
+                                  type="number"
+                                  value={editReps}
+                                  onChange={(e) => setEditReps(Number(e.target.value))}
+                                  style={editInput}
+                                />
+                              </div>
+                            )}
+
+                            {editLoadKg != null ? (
+                              <div style={{ display: 'grid', gap: 4 }}>
+                                <label>{tt('Вес')}, {tt('кг')}</label>
+                                <input type="number" step="0.5" value={editLoadKg} onChange={(e) => setEditLoadKg(Number(e.target.value))} style={editInput} />
+                              </div>
+                            ) : null}
                           </div>
 
                           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1080,7 +1161,7 @@ export default function DashboardPage() {
                                 <span style={{ fontWeight: 800 }}>{tt(exerciseLabel(w.exerciseType))}</span>
                               </div>
                               <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag)}</b></div>
-                              <div>{tt(exerciseValueLabel(w.exerciseType))}: <b>{formatExerciseValue(w.reps, w.exerciseType, true)}</b></div>
+                              <div>{tt(exerciseValueLabel(w.exerciseType))}: <b>{formatWorkoutValue(w, locale)}</b></div>
                             </div>
 
                             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

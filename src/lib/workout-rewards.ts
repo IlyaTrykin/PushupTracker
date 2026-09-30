@@ -44,8 +44,12 @@ export function parseRewardMinPoints(raw: unknown): { minPoints: number; minPoin
   };
 }
 
-export function getWorkoutPoints(reps: number, exerciseType?: string | null): { earnedPoints: number; earnedPointsTenths: number } {
-  const earnedPoints = calculateExercisePoints(reps, exerciseType);
+export function getWorkoutPoints(
+  reps: number,
+  exerciseType?: string | null,
+  loadKg?: number | null,
+): { earnedPoints: number; earnedPointsTenths: number } {
+  const earnedPoints = calculateExercisePoints(reps, exerciseType, loadKg);
   return {
     earnedPoints,
     earnedPointsTenths: pointsToTenths(earnedPoints),
