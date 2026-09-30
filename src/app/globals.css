@@ -785,8 +785,13 @@ button.app-drawer__btn--danger {
   justify-content: flex-start;
 }
 
+/* Разбивка по упражнениям: число строк зависит от того, по скольким упражнениям
+   есть записи, поэтому плитка растёт по содержимому, а не держит квадрат. */
 .app-tile--breakdown {
   align-items: stretch;
+  aspect-ratio: auto;
+  min-height: var(--tile-size);
+  overflow: visible;
 }
 
 .app-tile__title {
