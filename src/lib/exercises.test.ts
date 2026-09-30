@@ -21,9 +21,9 @@ test('bodyweight exercises keep their historical point factors', () => {
 });
 
 test('unknown exercise types fall back to push-ups', () => {
-  assert.equal(isExerciseType('burpees'), false);
-  assert.equal(toExerciseType('burpees'), 'pushups');
-  assert.equal(calculateExercisePoints(10, 'burpees'), 10);
+  assert.equal(isExerciseType('yoga_flow'), false);
+  assert.equal(toExerciseType('yoga_flow'), 'pushups');
+  assert.equal(calculateExercisePoints(10, 'yoga_flow'), 10);
 });
 
 test('every catalog entry is internally consistent', () => {
@@ -36,7 +36,7 @@ test('every catalog entry is internally consistent', () => {
 });
 
 test('favorites keep known unique exercises up to the limit', () => {
-  assert.deepEqual(normalizeFavoriteExercises(['plank', 'burpees', 'plank', 'pushups']), ['plank', 'pushups']);
+  assert.deepEqual(normalizeFavoriteExercises(['plank', 'yoga_flow', 'plank', 'pushups']), ['plank', 'pushups']);
   assert.equal(normalizeFavoriteExercises(EXERCISE_IDS).length, FAVORITE_EXERCISE_LIMIT);
   assert.deepEqual(normalizeFavoriteExercises('pushups'), []);
 });
@@ -77,4 +77,26 @@ test('editing only the total keeps the arm split when the total is unchanged', (
     parseWorkoutLoadFields('kettlebell_press', { reps: 12 }, existing),
     { ok: true, value: { reps: 12, loadKg: 16, repsLeft: null, repsRight: null } },
   );
+});
+
+test('one-leg sets work without a weight', () => {
+  assert.deepEqual(
+    parseWorkoutLoadFields('lunges', { repsLeft: 12, repsRight: 10 }),
+    { ok: true, value: { reps: 22, loadKg: null, repsLeft: 12, repsRight: 10 } },
+  );
+  assert.equal(calculateExercisePoints(22, 'lunges'), 26.4);
+});
+
+test('two-hand loaded sets keep a single total', () => {
+  assert.deepEqual(
+    parseWorkoutLoadFields('kettlebell_swing', { reps: 30, loadKg: 24, repsLeft: 5 }),
+    { ok: true, value: { reps: 30, loadKg: 24, repsLeft: null, repsRight: null } },
+  );
+  assert.equal(calculateExercisePoints(30, 'kettlebell_swing', 24), 30);
+  assert.equal(calculateExercisePoints(30, 'kettlebell_swing', 16), 13.3);
+});
+
+test('wall sit is timed like the plank', () => {
+  assert.equal(EXERCISES.wall_sit.unit, 'seconds');
+  assert.equal(calculateExercisePoints(120, 'wall_sit'), 30);
 });

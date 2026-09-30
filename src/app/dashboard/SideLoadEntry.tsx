@@ -26,7 +26,34 @@ function parseDigits(raw: string) {
   return digits === '' ? 0 : clampReps(parseInt(digits, 10));
 }
 
-/** Ввод подхода для упражнений со снарядом и/или на каждую руку отдельно. */
+type WeightPickerProps = Pick<Props, 'exercise' | 'locale' | 'tt' | 'loadKg' | 'onLoadKgChange'>;
+
+/** Выбор веса снаряда из пресетов упражнения; для упражнений без снаряда ничего не рисует. */
+export function WeightPicker({ exercise, locale, tt, loadKg, onLoadKgChange }: WeightPickerProps) {
+  if (!exercise.load) return null;
+  const kg = locale === 'en' ? 'kg' : 'кг';
+  return (
+    <div style={weightRow} role="radiogroup" aria-label={tt('Вес')}>
+      {exercise.load.presetsKg.map((preset) => {
+        const active = loadKg === preset;
+        return (
+          <button
+            key={preset}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onLoadKgChange(preset)}
+            style={weightChip(active)}
+          >
+            {preset} {kg}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Ввод подхода на каждую сторону отдельно (руку или ногу), при необходимости — с весом снаряда. */
 export default function SideLoadEntry({
   exercise,
   locale,
@@ -63,25 +90,7 @@ export default function SideLoadEntry({
 
   return (
     <div style={wrap}>
-      {exercise.load ? (
-        <div style={weightRow} role="radiogroup" aria-label={tt('Вес')}>
-          {exercise.load.presetsKg.map((preset) => {
-            const active = loadKg === preset;
-            return (
-              <button
-                key={preset}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => onLoadKgChange(preset)}
-                style={weightChip(active)}
-              >
-                {preset} {kg}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      <WeightPicker exercise={exercise} locale={locale} tt={tt} loadKg={loadKg} onLoadKgChange={onLoadKgChange} />
 
       <div style={sidesGrid}>
         {side(tt('Левая'), repsLeft, onRepsLeftChange)}
@@ -106,6 +115,9 @@ const wrap: React.CSSProperties = {
 };
 
 const weightRow: React.CSSProperties = {
+  width: '100%',
+  maxWidth: 520,
+  marginInline: 'auto',
   display: 'flex',
   gap: 8,
   overflowX: 'auto',
