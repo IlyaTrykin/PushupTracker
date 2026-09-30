@@ -7,7 +7,7 @@ import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
-import { formatExerciseValue } from '@/lib/exercise-metrics';
+import { formatWorkoutValue } from '@/lib/exercise-metrics';
 import { EXERCISES, EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 interface Friend {
@@ -59,6 +59,9 @@ function AvatarCircle({ src, size = 28 }: { src?: string | null; size?: number }
 interface Workout {
   id: string;
   reps: number;
+  loadKg?: number | null;
+  repsLeft?: number | null;
+  repsRight?: number | null;
   date: string;          // ISO date
   time?: string | null;  // ISO datetime (если есть)
   exerciseType?: ExerciseType;
@@ -1220,7 +1223,7 @@ export default function FriendsPage() {
 
                         <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={18} height={18} style={feedTypeIcon} unoptimized />
 
-                        <div style={feedReps}>{formatExerciseValue(w.reps, type, true)}</div>
+                        <div style={feedReps}>{formatWorkoutValue(w, locale)}</div>
                       </div>
 
                       {summaryItems.length ? (
@@ -1467,7 +1470,7 @@ export default function FriendsPage() {
                           <Image src={exerciseFeedIcon(workoutType)} alt={tt(exerciseLabel(workoutType))} width={16} height={16} style={friendWorkoutTypeIcon} unoptimized />
                         </div>
                         <div>{formatTimeHHMM(w.time || w.date)}</div>
-                        <div style={{ fontWeight: 900 }}>{formatExerciseValue(w.reps, workoutType, true)}</div>
+                        <div style={{ fontWeight: 900 }}>{formatWorkoutValue(w, locale)}</div>
                       </div>
 
                       {reaction?.summary?.length ? (

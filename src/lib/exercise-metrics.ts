@@ -24,6 +24,28 @@ export function formatExerciseValue(
   return `${value} ${exerciseValueShort(exerciseType)}`;
 }
 
+type WorkoutValueFields = {
+  reps: number;
+  exerciseType?: string | null;
+  loadKg?: number | null;
+  repsLeft?: number | null;
+  repsRight?: number | null;
+};
+
+// Значение подхода для детализации: итог, вес снаряда и раскладка по рукам.
+// В сводной статистике используется только итог (reps).
+export function formatWorkoutValue(workout: WorkoutValueFields, locale: string = 'ru'): string {
+  const isEnglish = locale === 'en';
+  let out = formatExerciseValue(workout.reps, workout.exerciseType, true);
+  if (workout.loadKg != null) out += ` × ${workout.loadKg} ${isEnglish ? 'kg' : 'кг'}`;
+  if (workout.repsLeft != null || workout.repsRight != null) {
+    const left = workout.repsLeft ?? 0;
+    const right = workout.repsRight ?? 0;
+    out += isEnglish ? ` (L ${left} / R ${right})` : ` (Л ${left} / П ${right})`;
+  }
+  return out;
+}
+
 export function challengeMostLabel(exerciseType?: string | null): string {
   return isTimedExercise(exerciseType) ? 'Кто дольше за период' : 'Кто больше за период';
 }

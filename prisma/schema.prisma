@@ -150,7 +150,13 @@ model Workout {
   date              DateTime
   time              DateTime          @default(now())
   exerciseType      String
+  // Итог подхода; у упражнений на одну руку — сумма левой и правой.
   reps              Int
+  // Вес снаряда (кг) для упражнений со снарядом.
+  loadKg            Float?
+  // Раскладка по рукам для упражнений, выполняемых поочерёдно каждой рукой.
+  repsLeft          Int?
+  repsRight         Int?
   trainingSessionId String?
   trainingSession   TrainingSession?  @relation(fields: [trainingSessionId], references: [id], onDelete: SetNull)
   reactions         WorkoutReaction[]

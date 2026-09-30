@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Workout" ADD COLUMN "loadKg" DOUBLE PRECISION,
+ADD COLUMN "repsLeft" INTEGER,
+ADD COLUMN "repsRight" INTEGER;
