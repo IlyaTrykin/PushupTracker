@@ -8,6 +8,7 @@ import { getIntlLocale, t } from '@/i18n/translate';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
 import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, toExerciseType } from '@/lib/exercises';
+import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import styles from './dashboard.module.css';
 
@@ -341,6 +342,13 @@ export default function DashboardPage() {
   const [timeTouched, setTimeTouched] = useState(false);
   const [reps, setReps] = useState<number>(0);
   const plankStopwatch = useStopwatch('dashboardPlankStopwatch');
+  const { favorites: favoriteExercises } = useFavoriteExercises();
+  const [moreExercisesOpen, setMoreExercisesOpen] = useState(false);
+  const isFavoriteSelected = favoriteExercises.includes(exerciseType);
+  const otherExercises = useMemo(
+    () => EXERCISE_ORDER.filter((type) => !favoriteExercises.includes(type)),
+    [favoriteExercises],
+  );
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -656,7 +664,7 @@ export default function DashboardPage() {
         <div className={styles.entryCard}>
           <div className={styles.entryBody}>
             <div style={exerciseTypePickerWrap} role="tablist" aria-label={tt('Упражнение')}>
-              {EXERCISE_ORDER.map((type) => {
+              {favoriteExercises.map((type) => {
                 const active = exerciseType === type;
                 return (
                   <button
@@ -672,6 +680,51 @@ export default function DashboardPage() {
                   </button>
                 );
               })}
+
+              {/* Пятая кнопка — быстрый доступ ко всем остальным упражнениям без
+                  перенастройки избранного. Если выбрано упражнение не из избранного,
+                  кнопка показывает его, чтобы было видно, что сейчас активно. */}
+              <button
+                type="button"
+                onClick={() => setMoreExercisesOpen((prev) => !prev)}
+                style={exerciseTypePickerButton(!isFavoriteSelected)}
+                title={messages.favoriteExercises.more}
+                aria-label={messages.favoriteExercises.more}
+                aria-expanded={moreExercisesOpen}
+                aria-haspopup="true"
+              >
+                {isFavoriteSelected ? (
+                  <span style={moreExercisesGlyph} aria-hidden="true">⋯</span>
+                ) : (
+                  <Image src={exerciseFeedIcon(exerciseType)} alt="" aria-hidden="true" width={38} height={38} style={exerciseTypePickerIcon} unoptimized />
+                )}
+              </button>
+
+              {moreExercisesOpen ? (
+                <>
+                  <div style={moreExercisesBackdrop} onClick={() => setMoreExercisesOpen(false)} aria-hidden="true" />
+                  <div style={moreExercisesMenu} role="menu" aria-label={messages.favoriteExercises.more}>
+                    {otherExercises.length ? otherExercises.map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={exerciseType === type}
+                        onClick={() => {
+                          handleExerciseTypeChange(type);
+                          setMoreExercisesOpen(false);
+                        }}
+                        style={moreExercisesItem(exerciseType === type)}
+                      >
+                        <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={30} height={30} unoptimized />
+                        <span>{tt(exerciseLabel(type))}</span>
+                      </button>
+                    )) : (
+                      <div style={moreExercisesEmpty}>{messages.favoriteExercises.empty}</div>
+                    )}
+                  </div>
+                </>
+              ) : null}
             </div>
 
             <div
@@ -1073,6 +1126,7 @@ export default function DashboardPage() {
 }
 
 const exerciseTypePickerWrap: React.CSSProperties = {
+  position: 'relative',
   display: 'grid',
   gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
   gap: 'clamp(6px, 1.6vw, 10px)',
@@ -1098,6 +1152,60 @@ function exerciseTypePickerButton(active: boolean): React.CSSProperties {
     padding: 0,
   };
 }
+
+const moreExercisesGlyph: React.CSSProperties = {
+  fontSize: 'clamp(24px, 7vw, 32px)',
+  fontWeight: 900,
+  lineHeight: 1,
+  color: '#475569',
+};
+
+const moreExercisesBackdrop: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 20,
+};
+
+const moreExercisesMenu: React.CSSProperties = {
+  position: 'absolute',
+  top: 'calc(100% + 8px)',
+  right: 0,
+  zIndex: 21,
+  width: 'min(280px, 100%)',
+  maxHeight: '60vh',
+  overflowY: 'auto',
+  display: 'grid',
+  gap: 6,
+  padding: 8,
+  borderRadius: 20,
+  border: '1px solid rgba(148, 163, 184, 0.28)',
+  background: 'rgba(255, 255, 255, 0.98)',
+  boxShadow: '0 24px 48px rgba(15, 23, 42, 0.18)',
+};
+
+function moreExercisesItem(active: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 48,
+    padding: '8px 12px',
+    borderRadius: 14,
+    border: `1px solid ${active ? 'rgba(249, 115, 22, 0.34)' : 'transparent'}`,
+    background: active ? 'rgba(255, 237, 213, 0.9)' : 'transparent',
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: 800,
+    textAlign: 'left',
+    cursor: 'pointer',
+  };
+}
+
+const moreExercisesEmpty: React.CSSProperties = {
+  padding: '10px 12px',
+  color: '#64748b',
+  fontSize: 13,
+};
 
 const exerciseTypePickerIcon: React.CSSProperties = {
   width: 'clamp(24px, 8vw, 38px)',

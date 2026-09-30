@@ -18,6 +18,7 @@ export type AuthUser = {
   isAdmin: boolean;
   avatarPath: string | null;
   language: string;
+  favoriteExercises: string[];
 };
 
 type RequestWithOptionalCookies = Request & {
@@ -33,6 +34,7 @@ const authUserSelect = {
   isAdmin: true,
   avatarPath: true,
   language: true,
+  favoriteExercises: true,
   deletedAt: true,
 } as const;
 
@@ -65,6 +67,7 @@ async function getAuthUserByToken(token: string): Promise<AuthUser | null> {
     isAdmin: session.user.isAdmin,
     avatarPath: session.user.avatarPath ?? null,
     language: session.user.language || 'ru',
+    favoriteExercises: session.user.favoriteExercises ?? [],
   };
 }
 

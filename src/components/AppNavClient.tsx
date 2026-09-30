@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { clearClientDataCaches } from '@/lib/client-cache';
 import { SUPPORT_URL } from '@/lib/support';
+import ExerciseFavoritesSheet from '@/components/ExerciseFavoritesSheet';
 import FeedbackSheet from '@/components/FeedbackSheet';
 import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
@@ -79,6 +80,7 @@ export default function AppNavClient() {
   const isAuthRoute = pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
   const [open, setOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
   const [updatingLanguage, setUpdatingLanguage] = useState(false);
   const [pageTitleOverride, setPageTitleOverride] = useState<string | null>(null);
   const [pageHeaderActionLabel, setPageHeaderActionLabel] = useState<string | null>(null);
@@ -170,14 +172,15 @@ export default function AppNavClient() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Failed to update language');
       if (data?.user) {
-        setUser({
+        setUser((prev) => ({
+          ...prev,
           id: data.user.id,
           email: data.user.email,
           username: data.user.username,
           isAdmin: data.user.isAdmin,
           avatarPath: data.user.avatarPath,
           language: data.user.language,
-        });
+        }));
       } else {
         await refreshUser();
       }
@@ -290,6 +293,19 @@ export default function AppNavClient() {
                 </Link>
               ) : null}
 
+              {me?.username ? (
+                <button
+                  type="button"
+                  className="app-drawer__btn"
+                  onClick={() => {
+                    setFavoritesOpen(true);
+                    setOpen(false);
+                  }}
+                >
+                  {messages.nav.drawer.favoriteExercises}
+                </button>
+              ) : null}
+
               {me?.isAdmin ? (
                 <Link className={linkClass('/admin/users')} href="/admin/users" onClick={() => setOpen(false)}>
                   {messages.nav.drawer.admin}
@@ -347,6 +363,7 @@ export default function AppNavClient() {
       ) : null}
 
       <FeedbackSheet open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      <ExerciseFavoritesSheet open={favoritesOpen} onClose={() => setFavoritesOpen(false)} />
     </>
   );
 }

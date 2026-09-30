@@ -18,6 +18,7 @@ export async function GET(request: Request) {
         gender: true,
         birthDate: true,
         avatarPath: true,
+        favoriteExercises: true,
       },
     });
 

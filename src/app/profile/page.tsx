@@ -94,14 +94,15 @@ export default function ProfilePage() {
 
   const applyProfile = useCallback((nextProfile: Profile) => {
     setProfile(nextProfile);
-    setUser({
+    setUser((prev) => ({
+      ...prev,
       id: nextProfile.id,
       email: nextProfile.email,
       username: nextProfile.username,
       isAdmin: nextProfile.isAdmin,
       avatarPath: nextProfile.avatarPath,
       language: nextProfile.language,
-    });
+    }));
     setUsername(nextProfile.username || '');
     setGender(nextProfile.gender || '');
     setBirthDate(toDateInputValue(nextProfile.birthDate));
@@ -157,14 +158,15 @@ export default function ProfilePage() {
         setError(data.error || messages.profile.errors.save);
       } else {
         if (data.user) {
-          setUser({
+          setUser((prev) => ({
+            ...prev,
             id: data.user.id,
             email: data.user.email,
             username: data.user.username,
             isAdmin: data.user.isAdmin,
             avatarPath: data.user.avatarPath,
             language: data.user.language,
-          });
+          }));
         }
         await load();
       }
