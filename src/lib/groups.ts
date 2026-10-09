@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma';
 import type { AuthUser } from '@/lib/auth';
 import { isChannelEnabledForUser } from '@/lib/notification-preferences';
 import { sendGroupJoinRequestEmail, sendGroupJoinResolvedEmail } from '@/lib/notification-email';
-import { sendWebPushToUsers } from '@/lib/web-push';
+import { queueWebPushToUsers } from '@/lib/web-push';
+import { addDays, dayKeyInZone, dayKeyToDbDate } from '@/lib/calendar-day';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
 export type GroupActor = Pick<AuthUser, 'id' | 'isAdmin' | 'username'>;
@@ -13,11 +14,6 @@ const memberUserPublicSelect = {
   id: true,
   username: true,
   avatarPath: true,
-} as const;
-
-const memberUserPrivateSelect = {
-  ...memberUserPublicSelect,
-  email: true,
 } as const;
 
 const groupBaseSelect = {
@@ -57,7 +53,7 @@ const joinRequestSelect = {
   updatedAt: true,
   resolvedAt: true,
   resolvedById: true,
-  user: { select: memberUserPrivateSelect },
+  user: { select: memberUserPublicSelect },
 } as const;
 
 const auditLogSelect = {
@@ -107,6 +103,41 @@ export function normalizeGroupName(value: unknown): string {
 export function assertValidGroupName(name: string): void {
   if (!name) throw new GroupError('Название группы обязательно', 400, 'GROUP_NAME_REQUIRED');
   if (name.length > 120) throw new GroupError('Название группы слишком длинное', 400, 'GROUP_NAME_TOO_LONG');
+}
+
+// Повторная заявка (в друзья или в группу) после отказа — не раньше чем через 7 дней (S05).
+export const SOCIAL_RETRY_COOLDOWN_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Сколько дней ещё ждать после отказа `declinedAt` (0 — можно). */
+export function cooldownRetryDays(
+  declinedAt: Date | null | undefined,
+  now: Date,
+  days = SOCIAL_RETRY_COOLDOWN_DAYS,
+): number {
+  if (!declinedAt) return 0;
+  const leftMs = declinedAt.getTime() + days * DAY_MS - now.getTime();
+  return leftMs > 0 ? Math.ceil(leftMs / DAY_MS) : 0;
+}
+
+// Заявка в друзья: «отменить и отправить снова» не должно каждый раз будить адресата —
+// уведомление (in-app, push, письмо) для пары requester→target не чаще раза в 7 дней.
+export function friendRequestNotifyKey(requesterId: string, targetId: string): string {
+  return `friend-request:${requesterId}:${targetId}`;
+}
+
+export function shouldNotifyFriendRequest(lastNotifiedAt: Date | null | undefined, now: Date): boolean {
+  return cooldownRetryDays(lastNotifiedAt, now) === 0;
+}
+
+export function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
+}
+
+function sendInBackground(label: string, task: () => Promise<unknown>): void {
+  void Promise.resolve()
+    .then(task)
+    .catch((e) => console.error(`${label}:`, e));
 }
 
 function makeInviteToken(): string {
@@ -481,125 +512,146 @@ export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, re
   const token = String(rawToken ?? '').trim();
   if (!token) throw new GroupError('Ссылка-приглашение недействительна', 400, 'GROUP_INVITE_INVALID');
 
-  const result = await prisma.$transaction(async (tx) => {
-    const invite = await tx.groupInviteLink.findUnique({
-      where: { token },
-      select: {
-        token: true,
-        group: {
-          select: {
-            ...groupBaseSelect,
-            owner: {
-              select: {
-                id: true,
-                username: true,
-                avatarPath: true,
-                email: true,
-              },
-            },
-          },
+  let result: {
+    request: { id: string; groupId: string; userId: string; status: string; createdAt: Date; updatedAt: Date };
+    group: { id: string; name: string; ownerId: string; owner: { id: string; username: string; avatarPath: string | null } };
+    notifyOwner: boolean;
+  };
+
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const invite = await tx.groupInviteLink.findUnique({
+        where: { token },
+        select: {
+          token: true,
+          group: { select: groupBaseSelect },
         },
-      },
-    });
+      });
 
-    if (!invite?.group || invite.group.deletedAt) {
-      throw new GroupError('Ссылка-приглашение недействительна', 404, 'GROUP_INVITE_NOT_FOUND');
-    }
+      if (!invite?.group || invite.group.deletedAt) {
+        throw new GroupError('Ссылка-приглашение недействительна', 404, 'GROUP_INVITE_NOT_FOUND');
+      }
 
-    const membership = await tx.groupMembership.findUnique({
-      where: { groupId_userId: { groupId: invite.group.id, userId: actor.id } },
-      select: { status: true },
-    });
+      const membership = await tx.groupMembership.findUnique({
+        where: { groupId_userId: { groupId: invite.group.id, userId: actor.id } },
+        select: { status: true },
+      });
 
-    if (membership?.status === 'active') {
-      throw new GroupError('Вы уже состоите в этой группе', 409, 'GROUP_ALREADY_MEMBER');
-    }
+      if (membership?.status === 'active') {
+        throw new GroupError('Вы уже состоите в этой группе', 409, 'GROUP_ALREADY_MEMBER');
+      }
 
-    const request = await tx.groupJoinRequest.upsert({
-      where: {
-        groupId_userId: {
-          groupId: invite.group.id,
-          userId: actor.id,
-        },
-      },
-      update: {
-        status: 'pending',
-        resolvedAt: null,
-        resolvedById: null,
-      },
-      create: {
-        groupId: invite.group.id,
-        userId: actor.id,
-        status: 'pending',
-      },
-      select: {
+      const requestSelect = {
         id: true,
         groupId: true,
         userId: true,
         status: true,
         createdAt: true,
         updatedAt: true,
-      },
-    });
-
-    await tx.notification.create({
-      data: {
-        userId: invite.group.ownerId,
-        type: 'group_join_request',
-        title: 'Новая заявка в группу',
-        body: `${actor.username} хочет вступить в группу ${invite.group.name}`,
-        link: `/groups/${invite.group.id}`,
-      },
-    }).catch(() => {});
-
-    await createAuditLog(tx, {
-      groupId: invite.group.id,
-      actorId: actor.id,
-      targetUserId: actor.id,
-      action: 'group_join_requested',
-      entityType: 'group_join_request',
-      entityId: request.id,
-      metadata: { tokenSuffix: token.slice(-6) },
-    });
-
-    return {
-      request,
-      group: {
+      } as const;
+      const group = {
         id: invite.group.id,
         name: invite.group.name,
         ownerId: invite.group.ownerId,
         owner: invite.group.owner,
-      },
-    };
-  });
+      };
 
-  try {
-    await sendWebPushToUsers(
+      const existing = await tx.groupJoinRequest.findUnique({
+        where: { groupId_userId: { groupId: invite.group.id, userId: actor.id } },
+        select: { ...requestSelect, resolvedAt: true },
+      });
+
+      // Повторное нажатие: заявка уже ждёт — владельца заново не уведомляем.
+      if (existing?.status === 'pending') {
+        const pending = {
+          id: existing.id,
+          groupId: existing.groupId,
+          userId: existing.userId,
+          status: existing.status,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+        };
+        return { request: pending, group, notifyOwner: false };
+      }
+
+      if (existing?.status === 'rejected') {
+        const waitDays = cooldownRetryDays(existing.resolvedAt ?? existing.updatedAt, new Date());
+        if (waitDays > 0) {
+          throw new GroupError(
+            `Заявку отклонили. Повторить можно через ${waitDays} дн.`,
+            400,
+            'GROUP_JOIN_REQUEST_COOLDOWN',
+            { retryAfterDays: waitDays },
+          );
+        }
+      }
+
+      const saved = existing
+        ? await tx.groupJoinRequest.update({
+            where: { id: existing.id },
+            data: { status: 'pending', resolvedAt: null, resolvedById: null },
+            select: requestSelect,
+          })
+        : await tx.groupJoinRequest.create({
+            data: { groupId: invite.group.id, userId: actor.id, status: 'pending' },
+            select: requestSelect,
+          });
+
+      await createAuditLog(tx, {
+        groupId: invite.group.id,
+        actorId: actor.id,
+        targetUserId: actor.id,
+        action: 'group_join_requested',
+        entityType: 'group_join_request',
+        entityId: saved.id,
+        metadata: { tokenSuffix: token.slice(-6) },
+      });
+
+      return { request: saved, group, notifyOwner: true };
+    });
+  } catch (e) {
+    // Две одновременные заявки одного пользователя: вторая упирается в unique (groupId, userId).
+    if (isUniqueViolation(e)) {
+      throw new GroupError('Заявка уже отправлена', 409, 'GROUP_JOIN_REQUEST_PENDING');
+    }
+    throw e;
+  }
+
+  if (result.notifyOwner) {
+    const title = 'Новая заявка в группу';
+    const body = `${actor.username} хочет вступить в группу ${result.group.name}`;
+    const link = `/groups/${result.group.id}`;
+
+    // Уведомление пишется после транзакции: сбой здесь не должен откатывать заявку (B28).
+    await prisma.notification
+      .create({ data: { userId: result.group.ownerId, type: 'group_join_request', title, body, link } })
+      .catch((e) => console.error('GROUP JOIN REQUEST NOTIFICATION ERROR:', e));
+
+    queueWebPushToUsers(
       [result.group.ownerId],
-      {
-        title: 'Новая заявка в группу',
-        body: `${actor.username} хочет вступить в группу ${result.group.name}`,
-        link: `/groups/${result.group.id}`,
-        tag: `group-join-request-${result.request.id}`,
-      },
+      { title, body, link, tag: `group-join-request-${result.request.id}` },
       'group_join_request',
     );
 
-    if (result.group.owner.email && (await isChannelEnabledForUser(result.group.ownerId, 'group_join_request', 'email'))) {
+    sendInBackground('GROUP JOIN REQUEST EMAIL ERROR', async () => {
+      const owner = await prisma.user.findUnique({
+        where: { id: result.group.ownerId },
+        select: { email: true, deletedAt: true },
+      });
+      if (!owner?.email || owner.deletedAt) return;
+      if (!(await isChannelEnabledForUser(result.group.ownerId, 'group_join_request', 'email'))) return;
       await sendGroupJoinRequestEmail({
-        to: result.group.owner.email,
+        to: owner.email,
         ownerUsername: result.group.owner.username,
         requesterUsername: actor.username,
         groupId: result.group.id,
         groupName: result.group.name,
         request,
       });
-    }
-  } catch (e) {
-    console.error('GROUP JOIN REQUEST NOTIFY ERROR:', e);
+    });
   }
 
-  return result;
+  return { request: result.request, group: result.group };
 }
 
 export async function listPendingJoinRequests(actor: GroupActor, groupId: string) {
@@ -613,6 +665,27 @@ export async function listPendingJoinRequests(actor: GroupActor, groupId: string
     },
     orderBy: { createdAt: 'asc' },
     select: joinRequestSelect,
+  });
+}
+
+/**
+ * Добавляет участника во все ещё идущие челленджи группы (B11). «Идущий» — последний день
+ * не раньше вчерашнего по UTC, чтобы не потерять челлендж, который у пользователя ещё сегодня.
+ */
+async function enrollInActiveGroupChallenges(db: DbClient, groupId: string, userId: string, now: Date) {
+  const earliestEnd = dayKeyToDbDate(addDays(dayKeyInZone(now, 'UTC'), -1));
+  const challenges = await db.challenge.findMany({
+    where: { groupId, endDate: { gte: earliestEnd } },
+    select: { id: true },
+  });
+  if (!challenges.length) return;
+  await db.challengeParticipant.createMany({
+    data: challenges.map((challenge) => ({ challengeId: challenge.id, userId, status: 'accepted' })),
+    skipDuplicates: true,
+  });
+  await db.challengeParticipant.updateMany({
+    where: { userId, challengeId: { in: challenges.map((challenge) => challenge.id) }, status: { not: 'accepted' } },
+    data: { status: 'accepted' },
   });
 }
 
@@ -636,7 +709,7 @@ export async function resolveJoinRequest(
         groupId: true,
         userId: true,
         status: true,
-        user: { select: memberUserPrivateSelect },
+        user: { select: memberUserPublicSelect },
       },
     });
 
@@ -646,13 +719,21 @@ export async function resolveJoinRequest(
     const now = new Date();
     const nextStatus = action === 'approve' ? 'approved' : 'rejected';
 
-    const resolved = await tx.groupJoinRequest.update({
-      where: { id: request.id },
+    // Условное обновление: из двух одновременных решений проходит только первое.
+    const claimed = await tx.groupJoinRequest.updateMany({
+      where: { id: request.id, status: 'pending' },
       data: {
         status: nextStatus,
         resolvedAt: now,
         resolvedById: actor.id,
       },
+    });
+    if (claimed.count === 0) {
+      throw new GroupError('Заявка уже обработана', 409, 'GROUP_JOIN_REQUEST_ALREADY_RESOLVED');
+    }
+
+    const resolved = await tx.groupJoinRequest.findUniqueOrThrow({
+      where: { id: request.id },
       select: {
         id: true,
         groupId: true,
@@ -688,20 +769,8 @@ export async function resolveJoinRequest(
           joinedAt: now,
         },
       });
+      await enrollInActiveGroupChallenges(tx, group.id, request.userId, now);
     }
-
-    await tx.notification.create({
-      data: {
-        userId: request.userId,
-        type: action === 'approve' ? 'group_join_request_approved' : 'group_join_request_rejected',
-        title: action === 'approve' ? 'Заявка в группу одобрена' : 'Заявка в группу отклонена',
-        body:
-          action === 'approve'
-            ? `Вы вступили в группу ${group.name}`
-            : `Вступление в группу ${group.name} отклонено`,
-        link: `/groups/${group.id}`,
-      },
-    }).catch(() => {});
 
     await createAuditLog(tx, {
       groupId: group.id,
@@ -722,42 +791,38 @@ export async function resolveJoinRequest(
     };
   });
 
-  try {
-    const approved = action === 'approve';
-    await sendWebPushToUsers(
-      [result.user.id],
-      {
-        title: approved ? 'Заявка в группу одобрена' : 'Заявка в группу отклонена',
-        body: approved
-          ? `Вы вступили в группу ${result.group.name}`
-          : `Вступление в группу ${result.group.name} отклонено`,
-        link: `/groups/${result.group.id}`,
-        tag: `group-join-${action}-${result.request.id}`,
-      },
-      approved ? 'group_join_request_approved' : 'group_join_request_rejected',
-    );
+  const approved = action === 'approve';
+  const eventType = approved ? 'group_join_request_approved' : 'group_join_request_rejected';
+  const title = approved ? 'Заявка в группу одобрена' : 'Заявка в группу отклонена';
+  const body = approved
+    ? `Вы вступили в группу ${result.group.name}`
+    : `Вступление в группу ${result.group.name} отклонено`;
+  const link = `/groups/${result.group.id}`;
 
-    if (
-      result.user.email &&
-      (await isChannelEnabledForUser(
-        result.user.id,
-        approved ? 'group_join_request_approved' : 'group_join_request_rejected',
-        'email',
-      ))
-    ) {
-      await sendGroupJoinResolvedEmail({
-        to: result.user.email,
-        targetUsername: result.user.username,
-        ownerUsername: actor.username,
-        groupId: result.group.id,
-        groupName: result.group.name,
-        approved,
-        request,
-      });
-    }
-  } catch (e) {
-    console.error('GROUP JOIN RESOLVED NOTIFY ERROR:', e);
-  }
+  // После транзакции (B28): сбой уведомления не откатывает решение по заявке.
+  await prisma.notification
+    .create({ data: { userId: result.user.id, type: eventType, title, body, link } })
+    .catch((e) => console.error('GROUP JOIN RESOLVED NOTIFICATION ERROR:', e));
+
+  queueWebPushToUsers([result.user.id], { title, body, link, tag: `group-join-${action}-${result.request.id}` }, eventType);
+
+  sendInBackground('GROUP JOIN RESOLVED EMAIL ERROR', async () => {
+    const target = await prisma.user.findUnique({
+      where: { id: result.user.id },
+      select: { email: true, deletedAt: true },
+    });
+    if (!target?.email || target.deletedAt) return;
+    if (!(await isChannelEnabledForUser(result.user.id, eventType, 'email'))) return;
+    await sendGroupJoinResolvedEmail({
+      to: target.email,
+      targetUsername: result.user.username,
+      ownerUsername: actor.username,
+      groupId: result.group.id,
+      groupName: result.group.name,
+      approved,
+      request,
+    });
+  });
 
   return result;
 }

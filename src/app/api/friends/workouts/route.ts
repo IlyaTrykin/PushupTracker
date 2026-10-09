@@ -16,13 +16,8 @@ type WorkoutResponseItem = {
 };
 
 
-function jsonError(message: string, status: number, details?: string) {
-  return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return String(error);
+function jsonError(message: string, status: number) {
+  return NextResponse.json({ error: message }, { status });
 }
 
 function toIsoString(value: Date | string) {
@@ -96,6 +91,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(byUser);
   } catch (e) {
     console.error('FRIENDS WORKOUTS GET ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (GET /api/friends/workouts)', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }

@@ -38,6 +38,22 @@ function getErrorMessage(error: unknown) {
   return String(error);
 }
 
+// Таймаут одного запроса к push-сервису: медленный или «зависший» endpoint не держит обработчик.
+export const PUSH_SEND_TIMEOUT_MS = 5000;
+
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('push send deadline exceeded')), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Отправляет push пользователям (с учётом NotificationPreference) параллельно, с таймаутом
+ * 5 с на подписку. Удалённым (deletedAt) пользователям ничего не уходит. Ошибки не бросает.
+ * В обработчиках API используйте `queueWebPushToUsers` — он не задерживает ответ.
+ */
 export async function sendWebPushToUsers(
   userIds: string[],
   payload: PushPayload,
@@ -50,15 +66,15 @@ export async function sendWebPushToUsers(
   const webPush = await import('web-push');
   webPush.setVapidDetails(subject, publicKey, privateKey);
 
-  let allowedUserIds = userIds;
+  let allowedUserIds = Array.from(new Set(userIds));
   if (eventType) {
-    allowedUserIds = await filterUsersByChannel(userIds, eventType, 'push');
+    allowedUserIds = await filterUsersByChannel(allowedUserIds, eventType, 'push');
   }
 
   if (!allowedUserIds.length) return;
 
   const subscriptions = await prisma.pushSubscription.findMany({
-    where: { userId: { in: allowedUserIds }, isActive: true },
+    where: { userId: { in: allowedUserIds }, isActive: true, user: { deletedAt: null } },
     select: { id: true, endpoint: true, p256dh: true, auth: true },
   });
 
@@ -71,22 +87,37 @@ export async function sendWebPushToUsers(
     tag: payload.tag || 'pushup-general',
   });
 
-  for (const sub of subscriptions) {
-    try {
-      await webPush.sendNotification(
-        {
-          endpoint: sub.endpoint,
-          keys: { p256dh: sub.p256dh, auth: sub.auth },
-        },
-        body,
-      );
-    } catch (e) {
-      const code = getStatusCode(e);
-      if (code === 404 || code === 410) {
-        await prisma.pushSubscription.deleteMany({ where: { id: sub.id } }).catch(() => {});
-      } else {
-        console.error('WEB PUSH SEND ERROR:', getErrorMessage(e));
+  await Promise.all(
+    subscriptions.map(async (sub) => {
+      try {
+        await withDeadline(
+          webPush.sendNotification(
+            {
+              endpoint: sub.endpoint,
+              keys: { p256dh: sub.p256dh, auth: sub.auth },
+            },
+            body,
+            { timeout: PUSH_SEND_TIMEOUT_MS },
+          ),
+          // timeout у web-push — таймаут простоя сокета; общий срок не даёт «капающему» ответу тянуть дольше
+          PUSH_SEND_TIMEOUT_MS * 2,
+        );
+      } catch (e) {
+        const code = getStatusCode(e);
+        if (code === 404 || code === 410) {
+          await prisma.pushSubscription.deleteMany({ where: { id: sub.id } }).catch(() => {});
+        } else {
+          console.error('WEB PUSH SEND ERROR:', getErrorMessage(e));
+        }
       }
-    }
-  }
+    }),
+  );
+}
+
+/** Push в фоне: обработчик API не ждёт push-сервисы. Ошибки только в лог. */
+export function queueWebPushToUsers(userIds: string[], payload: PushPayload, eventType?: PushEventType): void {
+  if (!userIds.length) return;
+  void sendWebPushToUsers(userIds, payload, eventType).catch((e) => {
+    console.error('WEB PUSH QUEUE ERROR:', getErrorMessage(e));
+  });
 }

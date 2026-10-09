@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
-import { sendWebPushToUsers } from '@/lib/web-push';
+import { queueWebPushToUsers } from '@/lib/web-push';
+import { isUniqueViolation } from '@/lib/groups';
 
 const ALLOWED_EMOJI = ['👍', '🔥', '👎', '💩'] as const;
 const ALLOWED_EMOJI_SET = new Set<string>(ALLOWED_EMOJI);
@@ -26,6 +27,16 @@ function jsonError(message: string, status = 400) {
 function parseWorkoutIds(request: NextRequest): string[] {
   const raw = request.nextUrl.searchParams.get('ids') || '';
   return Array.from(new Set(raw.split(',').map((x) => x.trim()).filter(Boolean))).slice(0, 120);
+}
+
+async function claimReactionNotification(workoutId: string, userId: string): Promise<boolean> {
+  try {
+    await prisma.notificationDispatch.create({ data: { key: `friend-reaction:${workoutId}:${userId}` } });
+    return true;
+  } catch (e) {
+    if (isUniqueViolation(e)) return false;
+    throw e;
+  }
 }
 
 function emptyPayload(): ReactionPayload {
@@ -232,23 +243,29 @@ export async function POST(request: NextRequest) {
       select: { id: true, emoji: true },
     });
 
-    let shouldNotifyOwner = false;
+    // Владельца уведомляем один раз на пару (тренировка, автор реакции): смена эмодзи
+    // и «снять → поставить снова» не шлют повторный push (S05, B21).
+    let reacted = false;
     if (existing?.emoji === emoji) {
-      await prisma.workoutReaction.delete({ where: { id: existing.id } });
+      await prisma.workoutReaction.deleteMany({ where: { id: existing.id } });
     } else if (existing) {
-      await prisma.workoutReaction.update({
+      await prisma.workoutReaction.updateMany({
         where: { id: existing.id },
         data: { emoji },
       });
-      shouldNotifyOwner = workout.userId !== userId;
     } else {
-      await prisma.workoutReaction.create({
-        data: { workoutId, userId, emoji },
-      });
-      shouldNotifyOwner = workout.userId !== userId;
+      try {
+        await prisma.workoutReaction.create({
+          data: { workoutId, userId, emoji },
+        });
+        reacted = true;
+      } catch (e) {
+        // Двойной тап: реакция уже создана параллельным запросом — отдаём текущее состояние.
+        if (!isUniqueViolation(e)) throw e;
+      }
     }
 
-    if (shouldNotifyOwner) {
+    if (reacted && workout.userId !== userId && (await claimReactionNotification(workoutId, userId))) {
       const title = 'Новая реакция на тренировку';
       const bodyText = `${authUser.username} ${emoji} на вашу тренировку (${workout.reps})`;
       const link = '/dashboard';
@@ -264,11 +281,7 @@ export async function POST(request: NextRequest) {
         },
       }).catch((e) => console.error('WORKOUT REACTION NOTIFICATION CREATE ERROR:', e));
 
-      await sendWebPushToUsers(
-        [workout.userId],
-        { title, body: bodyText, link, tag },
-        'friend_reaction',
-      ).catch((e) => console.error('WORKOUT REACTION PUSH ERROR:', e));
+      queueWebPushToUsers([workout.userId], { title, body: bodyText, link, tag }, 'friend_reaction');
     }
 
     const byWorkout = await buildReactionMap(userId, [workoutId]);

@@ -18,6 +18,29 @@ type PageTitleOverrideDetail = string | { title?: string | null } | null;
 type PageHeaderActionDetail = string | { label?: string | null } | null;
 const APP_SHELL_PREWARM_VERSION = '20260327-1';
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  return Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms))]);
+}
+
+async function unsubscribeThisDeviceFromPush(): Promise<void> {
+  try {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const registration = await withTimeout(navigator.serviceWorker.getRegistration(), 1500);
+    const subscription = registration ? await withTimeout(registration.pushManager.getSubscription(), 1500) : null;
+    if (!subscription) return;
+    await withTimeout(
+      fetch('/api/push/subscriptions', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ endpoint: subscription.endpoint }),
+      }),
+      3000,
+    );
+    await withTimeout(subscription.unsubscribe(), 1500);
+  } catch {}
+}
+
 function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles']) {
   if (!pathname || pathname === '/') return titles.home;
   if (pathname.startsWith('/dashboard')) return titles.dashboard;
@@ -145,6 +168,9 @@ export default function AppNavClient() {
   }, [me?.id, me?.isAdmin, me?.username]);
 
   const logout = async () => {
+    // Отписать это устройство от push до выхода (B19): иначе на общем устройстве
+    // продолжат приходить уведомления вышедшего пользователя.
+    await unsubscribeThisDeviceFromPush();
     try {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
     } catch {}

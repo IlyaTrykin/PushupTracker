@@ -3,6 +3,9 @@ import { AuthError, requireUser } from '@/lib/auth';
 import { GroupError, getGroupWorkoutScope, recordGroupAuditLog, requireGroupManageAccess } from '@/lib/groups';
 import { prisma } from '@/lib/prisma';
 import { isExerciseType } from '@/lib/exercises';
+import { dayKeyToDbDate, parseDayKey } from '@/lib/calendar-day';
+import { hitRateLimit, tooManyRequests } from '@/lib/rate-limit';
+import { CHALLENGE_CREATE_LIMIT_PER_DAY, CHALLENGE_NAME_MAX_LENGTH, isChallengeMode } from '@/lib/challenge-scoring';
 
 type JsonObject = Record<string, unknown>;
 
@@ -10,12 +13,10 @@ function jsonError(message: string, status: number, code?: string, details?: Rec
   return NextResponse.json(code ? { error: message, code, details } : { error: message, details }, { status });
 }
 
-function parseISODateOnly(s: string): Date | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const [y, m, d] = s.split('-').map(Number);
-  const dt = new Date(y, (m || 1) - 1, d || 1);
-  if (Number.isNaN(dt.getTime())) return null;
-  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+// Календарный день челленджа хранится как полночь UTC — как Workout.date.
+function parseChallengeDay(raw: unknown): Date | null {
+  const key = parseDayKey(String(raw ?? '').trim());
+  return key ? dayKeyToDbDate(key) : null;
 }
 
 
@@ -74,25 +75,28 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       return jsonError('Некорректный JSON', 400, 'BAD_JSON');
     }
 
-    const name = String(body.name || '').trim();
+    const name = String(body.name || '').trim().replace(/\s+/g, ' ');
     const exerciseType = String(body.exerciseType || 'pushups').trim() || 'pushups';
-    const startDate = parseISODateOnly(String(body.startDate || '').trim());
-    const endDate = parseISODateOnly(String(body.endDate || '').trim());
+    const startDate = parseChallengeDay(body.startDate);
+    const endDate = parseChallengeDay(body.endDate);
 
     if (!name) return jsonError('Введите название соревнования', 400);
+    if (name.length > CHALLENGE_NAME_MAX_LENGTH) {
+      return jsonError(`Название соревнования — не длиннее ${CHALLENGE_NAME_MAX_LENGTH} символов`, 400, 'CHALLENGE_NAME_TOO_LONG');
+    }
     if (!isExerciseType(exerciseType)) return jsonError('Некорректный тип упражнения', 400);
     if (!startDate || !endDate) return jsonError('Даты должны быть в формате YYYY-MM-DD', 400);
     if (endDate < startDate) return jsonError('endDate не может быть раньше startDate', 400);
 
     const mode = String(body.mode || 'most').trim();
-    if (!['most', 'target', 'daily_min', 'sets_min'].includes(mode)) {
+    if (!isChallengeMode(mode)) {
       return jsonError('mode должен быть most, target, daily_min или sets_min', 400);
     }
 
     let targetReps: number | null = null;
     if (mode === 'target' || mode === 'daily_min' || mode === 'sets_min') {
       const target = Number(body.targetReps);
-      if (!Number.isFinite(target) || target <= 0 || !Number.isInteger(target)) {
+      if (!Number.isFinite(target) || target <= 0 || !Number.isInteger(target) || target > 1_000_000) {
         return jsonError('targetReps должен быть целым числом > 0', 400);
       }
       targetReps = target;
@@ -101,6 +105,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     const { members } = await getGroupWorkoutScope(actor, id);
     const participantIds = members.map((membership) => membership.userId);
     if (!participantIds.length) return jsonError('В группе нет участников для соревнования', 400, 'GROUP_CHALLENGE_EMPTY');
+
+    const limit = await hitRateLimit(`challenge-create:${actor.id}`, CHALLENGE_CREATE_LIMIT_PER_DAY, 24 * 60 * 60);
+    if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
 
     const created = await prisma.challenge.create({
       data: {

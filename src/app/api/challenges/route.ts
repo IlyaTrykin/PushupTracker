@@ -3,27 +3,29 @@ import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { isChannelEnabledForUser } from '@/lib/notification-preferences';
 import { sendChallengeInviteEmail } from '@/lib/notification-email';
-import { sendWebPushToUsers } from '@/lib/web-push';
+import { queueWebPushToUsers } from '@/lib/web-push';
 import { isExerciseType } from '@/lib/exercises';
+import { dayKeyToDbDate, parseDayKey } from '@/lib/calendar-day';
+import { hitRateLimit, tooManyRequests } from '@/lib/rate-limit';
+import {
+  CHALLENGE_CREATE_LIMIT_PER_DAY,
+  CHALLENGE_NAME_MAX_LENGTH,
+  CHALLENGE_PARTICIPANTS_MAX,
+  isChallengeMode,
+  splitChallengeInvitees,
+} from '@/lib/challenge-scoring';
 
 type JsonObject = Record<string, unknown>;
 
 
-function jsonError(message: string, status: number, details?: string) {
-  return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
+function jsonError(message: string, status: number, details?: string, code?: string) {
+  return NextResponse.json({ error: message, ...(code ? { code } : {}), ...(details ? { details } : {}) }, { status });
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-function parseISODateOnly(s: string): Date | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const [y, m, d] = s.split('-').map(Number);
-  const dt = new Date(y, (m || 1) - 1, d || 1);
-  if (Number.isNaN(dt.getTime())) return null;
-  return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+// Календарный день челленджа хранится как полночь UTC — как Workout.date.
+function parseChallengeDay(raw: unknown): Date | null {
+  const key = parseDayKey(String(raw ?? '').trim());
+  return key ? dayKeyToDbDate(key) : null;
 }
 
 
@@ -91,7 +93,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(withMyStatus);
   } catch (e) {
     console.error('CHALLENGES GET ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (GET /api/challenges)', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }
 
@@ -114,31 +116,34 @@ export async function POST(request: NextRequest) {
       return jsonError('Некорректный JSON', 400);
     }
 
-    const name = String(body.name || '').trim();
+    const name = String(body.name || '').trim().replace(/\s+/g, ' ');
     const exerciseType = String(body.exerciseType || 'pushups').trim() || 'pushups';
 
-    const startDate = parseISODateOnly(String(body.startDate || '').trim());
-    const endDate = parseISODateOnly(String(body.endDate || '').trim());
+    const startDate = parseChallengeDay(body.startDate);
+    const endDate = parseChallengeDay(body.endDate);
 
     if (!name) return jsonError('Введите название соревнования', 400);
+    if (name.length > CHALLENGE_NAME_MAX_LENGTH) {
+      return jsonError(`Название соревнования — не длиннее ${CHALLENGE_NAME_MAX_LENGTH} символов`, 400, undefined, 'CHALLENGE_NAME_TOO_LONG');
+    }
     if (!isExerciseType(exerciseType)) return jsonError('Некорректный тип упражнения', 400);
     if (!startDate || !endDate) return jsonError('Даты должны быть в формате YYYY-MM-DD', 400);
     if (endDate < startDate) return jsonError('endDate не может быть раньше startDate', 400);
 
     const mode = String(body.mode || 'most').trim(); // most | target | daily_min | sets_min
-    if (!['most', 'target', 'daily_min', 'sets_min'].includes(mode)) return jsonError('mode должен быть most, target, daily_min или sets_min', 400);
+    if (!isChallengeMode(mode)) return jsonError('mode должен быть most, target, daily_min или sets_min', 400);
 
     let targetReps: number | null = null;
     if (mode === 'target' || mode === 'daily_min' || mode === 'sets_min') {
       const t = Number(body.targetReps);
-      if (!Number.isFinite(t) || t <= 0 || !Number.isInteger(t)) {
+      if (!Number.isFinite(t) || t <= 0 || !Number.isInteger(t) || t > 1_000_000) {
         return jsonError('targetReps должен быть целым числом > 0', 400);
       }
       targetReps = t;
     }
 
-    const participantsUsernames: string[] = Array.isArray(body.participantsUsernames)
-      ? body.participantsUsernames.map((x) => String(x).trim()).filter(Boolean)
+    const requestedUsernames: string[] = Array.isArray(body.participantsUsernames)
+      ? body.participantsUsernames.slice(0, 500).map((x) => String(x).trim().slice(0, 64)).filter(Boolean)
       : [];
 
     const me = await prisma.user.findUnique({
@@ -147,18 +152,39 @@ export async function POST(request: NextRequest) {
     });
     if (!me?.username) return jsonError('Пользователь не найден', 404);
 
-    const allUsernames = Array.from(new Set([me.username, ...participantsUsernames]));
-
-    const users = await prisma.user.findMany({
-      where: { username: { in: allUsernames } },
-      select: { id: true, username: true, email: true },
+    // Приглашать можно только подтверждённых друзей, не удалённых (S05, B34).
+    const friendships = await prisma.friendship.findMany({
+      where: { status: 'accepted', OR: [{ userId }, { friendId: userId }] },
+      select: {
+        userId: true,
+        user: { select: { id: true, username: true, deletedAt: true } },
+        friend: { select: { id: true, username: true, deletedAt: true } },
+      },
     });
-
-    if (users.length !== allUsernames.length) {
-      const found = new Set(users.map((u) => u.username));
-      const missing = allUsernames.filter((u) => !found.has(u));
-      return jsonError('Некоторые пользователи не найдены', 400, `Не найдены: ${missing.join(', ')}`);
+    const friends = new Map<string, string>(); // username → id
+    for (const f of friendships) {
+      const other = f.userId === userId ? f.friend : f.user;
+      if (!other.deletedAt) friends.set(other.username, other.id);
     }
+
+    const { invited, notFriends } = splitChallengeInvitees(requestedUsernames, Array.from(friends.keys()), me.username);
+    if (notFriends.length) {
+      const shown = notFriends.slice(0, 20).join(', ') + (notFriends.length > 20 ? '…' : '');
+      return jsonError('Пригласить можно только друзей', 400, `Не в друзьях: ${shown}`, 'CHALLENGE_NOT_FRIENDS');
+    }
+    if (invited.length + 1 > CHALLENGE_PARTICIPANTS_MAX) {
+      return jsonError(
+        `В соревновании может быть не больше ${CHALLENGE_PARTICIPANTS_MAX} участников`,
+        400,
+        undefined,
+        'CHALLENGE_TOO_MANY_PARTICIPANTS',
+      );
+    }
+
+    const limit = await hitRateLimit(`challenge-create:${userId}`, CHALLENGE_CREATE_LIMIT_PER_DAY, 24 * 60 * 60);
+    if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
+
+    const invitedIds = invited.map((username) => friends.get(username) as string);
 
     const created = await prisma.challenge.create({
       data: {
@@ -170,63 +196,58 @@ export async function POST(request: NextRequest) {
         targetReps,
         creatorId: userId,
         participants: {
-          create: users.map((u) => ({
-            userId: u.id,
-            status: u.id === userId ? 'accepted' : 'pending',
-          })),
+          create: [
+            { userId, status: 'accepted' },
+            ...invitedIds.map((id) => ({ userId: id, status: 'pending' })),
+          ],
         },
       },
       select: { id: true, name: true },
     });
 
-    
-    // Notifications: отправляем приглашения всем участникам со статусом pending
-    try {
-      const creatorName = me.username;
-      const pendingUsers = users.filter((u) => u.id !== userId);
-      if (pendingUsers.length) {
-        await prisma.notification.createMany({
-          data: pendingUsers.map((u) => ({
-            userId: u.id,
-            type: 'challenge_invite',
-            title: 'Приглашение в соревнование',
-            body: `${creatorName} пригласил вас в соревнование: ${name}`,
-            link: `/challenges/${created.id}`,
-          })),
+    // Уведомления: in-app сразу, push и письма — в фоне, ответ их не ждёт (S09, B34).
+    if (invitedIds.length) {
+      const title = 'Приглашение в соревнование';
+      const notifyBody = `${me.username} пригласил вас в соревнование: ${name}`;
+      await prisma.notification.createMany({
+        data: invitedIds.map((id) => ({
+          userId: id,
+          type: 'challenge_invite',
+          title,
+          body: notifyBody,
+          link: `/challenges/${created.id}`,
+        })),
+      }).catch((e) => console.error('CHALLENGE INVITE NOTIFICATION ERROR:', e));
+
+      queueWebPushToUsers(
+        invitedIds,
+        { title, body: notifyBody, link: `/challenges?invite=${created.id}`, tag: `challenge-invite-${created.id}` },
+        'challenge_invite',
+      );
+
+      void (async () => {
+        const recipients = await prisma.user.findMany({
+          where: { id: { in: invitedIds }, deletedAt: null },
+          select: { id: true, username: true, email: true },
         });
-
-        await sendWebPushToUsers(
-          pendingUsers.map((u) => u.id),
-          {
-            title: 'Приглашение в соревнование',
-            body: `${creatorName} пригласил вас в соревнование: ${name}`,
-            link: `/challenges?invite=${created.id}`,
-            tag: `challenge-invite-${created.id}`,
-          },
-          'challenge_invite',
-        ).catch((e) => console.error('CHALLENGE INVITE PUSH ERROR:', e));
-
-        for (const u of pendingUsers) {
+        for (const u of recipients) {
           if (!u.email) continue;
-          const emailEnabled = await isChannelEnabledForUser(u.id, 'challenge_invite', 'email');
-          if (!emailEnabled) continue;
+          if (!(await isChannelEnabledForUser(u.id, 'challenge_invite', 'email'))) continue;
           await sendChallengeInviteEmail({
             to: u.email,
             invitedUsername: u.username,
-            creatorUsername: creatorName,
+            creatorUsername: me.username,
             challengeId: created.id,
             challengeName: name,
             request,
           }).catch((e) => console.error('CHALLENGE INVITE EMAIL ERROR:', e));
         }
-      }
-    } catch (e) {
-      console.error('NOTIFY INVITE ERROR:', e);
+      })().catch((e) => console.error('CHALLENGE INVITE EMAIL ERROR:', e));
     }
 
     return NextResponse.json(created);
   } catch (e) {
     console.error('CHALLENGES POST ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (POST /api/challenges)', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }

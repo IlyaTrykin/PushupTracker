@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { GroupError, recordGroupAuditLog, requireGroupAccess, requireGroupManageAccess } from '@/lib/groups';
+import { challengeTotalDays, challengeUsesPoints, scoreChallenge } from '@/lib/challenge-scoring';
 
 type ChallengeProgressRow = {
   userId: string;
@@ -15,11 +16,6 @@ type ChallengeProgressRow = {
 
 function jsonError(message: string, status: number, code?: string, details?: string | Record<string, unknown>) {
   return NextResponse.json(code ? { error: message, code, details } : { error: message, details }, { status });
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return String(error);
 }
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -83,121 +79,44 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
       .map((p) => p.userId);
 
-    const totalDays = (() => {
-      const s = new Date(challenge.startDate.getFullYear(), challenge.startDate.getMonth(), challenge.startDate.getDate());
-      const e = new Date(challenge.endDate.getFullYear(), challenge.endDate.getMonth(), challenge.endDate.getDate());
-      const diff = Math.floor((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24));
-      return diff >= 0 ? diff + 1 : 0;
-    })();
+    const totalDays = challengeTotalDays(challenge.startDate, challenge.endDate);
 
     if (!acceptedIds.length) {
       const myStatus = challenge.participants
         .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
         .find((p) => p.userId === actor.id)?.status ?? null;
-      return NextResponse.json({ challenge, myStatus, progress: [] });
+      return NextResponse.json({ challenge, myStatus, progress: [], scoring: challengeUsesPoints(challenge.exerciseType) ? 'points' : 'reps' });
     }
 
-    // mode calculations:
-    // most/target: total reps in period
-    // daily_min: credited days with dayTotal >= targetReps
-    // sets_min: count of sets with reps >= targetReps (tie-breaker: sum reps of qualified sets)
-    let progress: ChallengeProgressRow[] = [];
+    // Подсчёт — в challenge-scoring.ts: упражнения с весом в баллах, sets_min по слабейшей стороне (B10).
+    const workouts = await prisma.workout.findMany({
+      where: {
+        userId: { in: acceptedIds },
+        exerciseType: challenge.exerciseType,
+        date: { gte: challenge.startDate, lte: challenge.endDate },
+      },
+      select: { userId: true, date: true, reps: true, loadKg: true, repsLeft: true, repsRight: true },
+    });
 
-    if (challenge.mode === 'daily_min') {
-      const threshold = Number(challenge.targetReps ?? 0);
-      const byDay = await prisma.workout.groupBy({
-        by: ['userId', 'date'],
-        where: {
-          userId: { in: acceptedIds },
-          exerciseType: challenge.exerciseType,
-          date: { gte: challenge.startDate, lte: challenge.endDate },
-        },
-        _sum: { reps: true },
-      });
-
-      const credited = new Map<string, number>();
-      byDay.forEach((row) => {
-        const reps = row._sum.reps ?? 0;
-        if (reps >= threshold) credited.set(row.userId, (credited.get(row.userId) ?? 0) + 1);
-      });
-
-      progress = challenge.participants
-        .filter((p) => p.status === 'accepted')
-        .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
-        .map((p) => ({
-          userId: p.userId,
-          username: p.user.username,
-          total: credited.get(p.userId) ?? 0, // creditedDays
-          creditedDays: credited.get(p.userId) ?? 0,
-          totalDays,
-        }))
-        .sort((a, b) => b.total - a.total);
-    } else if (challenge.mode === 'sets_min') {
-      const threshold = Number(challenge.targetReps ?? 0);
-
-      const grouped = await prisma.workout.groupBy({
-        by: ['userId'],
-        where: {
-          userId: { in: acceptedIds },
-          exerciseType: challenge.exerciseType,
-          date: { gte: challenge.startDate, lte: challenge.endDate },
-          reps: { gte: threshold },
-        },
-        _count: { _all: true },
-        _sum: { reps: true },
-      });
-
-      const setsMap = new Map<string, { sets: number; reps: number }>();
-      grouped.forEach((g) => setsMap.set(g.userId, { sets: g._count._all ?? 0, reps: g._sum.reps ?? 0 }));
-
-      progress = challenge.participants
-        .filter((p) => p.status === 'accepted')
-        .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
-        .map((p) => {
-          const v = setsMap.get(p.userId) ?? { sets: 0, reps: 0 };
-          return {
-            userId: p.userId,
-            username: p.user.username,
-            total: v.sets, // qualifiedSets
-            qualifiedSets: v.sets,
-            qualifiedReps: v.reps, // tie-breaker
-          };
-        })
-        .sort((a, b) => (b.total - a.total) || ((b.qualifiedReps ?? 0) - (a.qualifiedReps ?? 0)));
-    } else {
-      const sums = await prisma.workout.groupBy({
-        by: ['userId'],
-        where: {
-          userId: { in: acceptedIds },
-          exerciseType: challenge.exerciseType,
-          date: { gte: challenge.startDate, lte: challenge.endDate },
-        },
-        _sum: { reps: true },
-      });
-
-      const map = new Map<string, number>();
-      sums.forEach((s) => map.set(s.userId, s._sum.reps ?? 0));
-
-      progress = challenge.participants
-        .filter((p) => p.status === 'accepted')
-        .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
-        .map((p) => ({
-          userId: p.userId,
-          username: p.user.username,
-          total: map.get(p.userId) ?? 0,
-        }))
-        .sort((a, b) => b.total - a.total);
-    }
+    const usernames = new Map(challenge.participants.map((p) => [p.userId, p.user.username]));
+    const progress: ChallengeProgressRow[] = scoreChallenge({
+      mode: challenge.mode,
+      exerciseType: challenge.exerciseType,
+      targetReps: challenge.targetReps,
+      participantIds: acceptedIds,
+      workouts,
+      totalDays,
+    }).map((row) => ({ ...row, username: usernames.get(row.userId) ?? '' }));
 
     const myStatus = challenge.participants
       .filter((p) => !activeGroupMemberIds || activeGroupMemberIds.has(p.userId))
       .find((p) => p.userId === actor.id)?.status ?? null;
 
-    return NextResponse.json({ challenge, myStatus, progress });
+    return NextResponse.json({ challenge, myStatus, progress, scoring: challengeUsesPoints(challenge.exerciseType) ? 'points' : 'reps' });
   } catch (e) {
     if (e instanceof GroupError) return jsonError(e.message, e.status, e.code, e.details);
     console.error('CHALLENGE GET ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (GET /api/challenges/[id])', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }
 
@@ -243,6 +162,6 @@ export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: 
   } catch (e) {
     if (e instanceof GroupError) return jsonError(e.message, e.status, e.code, e.details);
     console.error('CHALLENGE DELETE ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (DELETE /api/challenges/[id])', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }

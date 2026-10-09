@@ -15,6 +15,14 @@ import {
   challengeTargetPromptLabel,
 } from '@/lib/exercise-metrics';
 import { EXERCISE_ORDER, exerciseLabel, isExerciseType as isCatalogExerciseType, type ExerciseType } from '@/lib/exercises';
+import { dayKeyInZone } from '@/lib/calendar-day';
+import {
+  CHALLENGE_NAME_MAX_LENGTH,
+  challengeDayKey,
+  challengeDayStatus,
+  challengeUsesPoints,
+  formatChallengeDay,
+} from '@/lib/challenge-scoring';
 
 type Friend = {
   friendshipId: string;
@@ -87,18 +95,13 @@ function endOfMonthISO() {
 }
 
 
+// Статус по календарным дням (B09): последний день челленджа — ещё «идёт».
+function todayKey() {
+  return dayKeyInZone(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+}
+
 function challengeStatus(startISO: string, endISO: string) {
-  const now = new Date();
-  const start = new Date(startISO);
-  const end = new Date(endISO);
-  const active = now >= start && now <= end;
-  const finished = now > end;
-
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-  const daysLeft = Math.max(0, Math.ceil((endDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
-
-  return { active, finished, daysLeft, start, end };
+  return challengeDayStatus(startISO, endISO, todayKey());
 }
 
 function isChallengeMode(value: string): value is ChallengeMode {
@@ -253,15 +256,15 @@ export default function ChallengesPage() {
 
       if (aStatus.active !== bStatus.active) return aStatus.active ? -1 : 1;
       if (!aStatus.active && !bStatus.active) {
-        return new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+        return challengeDayKey(a.startDate).localeCompare(challengeDayKey(b.startDate));
       }
-      return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
+      return challengeDayKey(a.endDate).localeCompare(challengeDayKey(b.endDate));
     });
   }, [acceptedChallenges]);
 
   const historyChallenges = useMemo(() => {
     const arr = acceptedChallenges.filter((c) => challengeStatus(c.startDate, c.endDate).finished);
-    return arr.sort((a, b) => new Date(b.endDate).getTime() - new Date(a.endDate).getTime());
+    return arr.sort((a, b) => challengeDayKey(b.endDate).localeCompare(challengeDayKey(a.endDate)));
   }, [acceptedChallenges]);
 
   const createChallenge = async (e: React.FormEvent) => {
@@ -357,7 +360,7 @@ export default function ChallengesPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label>{tt('Название')}</label>
-                <input value={name} onChange={e => setName(e.target.value)} style={input} />
+                <input value={name} maxLength={CHALLENGE_NAME_MAX_LENGTH} onChange={e => setName(e.target.value)} style={input} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label>{tt('Старт')}</label>
@@ -441,6 +444,13 @@ export default function ChallengesPage() {
                   <option key={type} value={type}>{tt(exerciseLabel(type))}</option>
                 ))}
               </select>
+              {challengeUsesPoints(exerciseType) ? (
+                <div style={{ color: '#6b7280', fontSize: 12 }}>
+                  {locale === 'en'
+                    ? 'Weighted exercise: totals and daily targets are counted in points (1 point = 1 push-up), so heavier weight counts more.'
+                    : 'Упражнение с весом: суммы и дневная норма считаются в баллах (1 балл = 1 отжимание), больший вес даёт больше.'}
+                </div>
+              ) : null}
             </div>
 
             <div>
@@ -491,7 +501,7 @@ export default function ChallengesPage() {
                         {badge(tt('Ожидает подтверждения'), 'amber')}
                       </div>
                       <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
-                        {new Date(c.startDate).toLocaleDateString(localeTag)} → {new Date(c.endDate).toLocaleDateString(localeTag)} · {tt('создатель')}: {c.creator.username}
+                        {formatChallengeDay(c.startDate, localeTag)} → {formatChallengeDay(c.endDate, localeTag)} · {tt('создатель')}: {c.creator.username}
                       </div>
                       <div style={{ color: '#374151', fontSize: 12, marginTop: 6 }}>
                         {tt('Подтверждено')}: <b>{acceptedCount}</b> · {tt('Ожидает ответа')}: <b>{pendingCount}</b>
@@ -529,7 +539,7 @@ export default function ChallengesPage() {
                         {warn ? <span style={{ marginLeft: 6 }}>{warn}</span> : null}
                       </div>
                       <div style={{ color: '#6b7280', fontSize: 12 }}>
-                        {new Date(c.startDate).toLocaleDateString(localeTag)} → {new Date(c.endDate).toLocaleDateString(localeTag)} · {tt('создатель')}: {c.creator.username}
+                        {formatChallengeDay(c.startDate, localeTag)} → {formatChallengeDay(c.endDate, localeTag)} · {tt('создатель')}: {c.creator.username}
                       </div>
                     </div>
 
@@ -560,7 +570,7 @@ export default function ChallengesPage() {
                       {badge(tt('Ожидает ответа'), 'amber')}
                     </div>
                     <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
-                      {new Date(c.startDate).toLocaleDateString(localeTag)} → {new Date(c.endDate).toLocaleDateString(localeTag)} · {tt('создатель')}: {c.creator.username}
+                      {formatChallengeDay(c.startDate, localeTag)} → {formatChallengeDay(c.endDate, localeTag)} · {tt('создатель')}: {c.creator.username}
                     </div>
                   </div>
 
@@ -592,7 +602,7 @@ export default function ChallengesPage() {
                         {badge(tt('завершён'), 'red')}
                       </div>
                       <div style={{ color: '#6b7280', fontSize: 12 }}>
-                        {new Date(c.startDate).toLocaleDateString(localeTag)} → {new Date(c.endDate).toLocaleDateString(localeTag)} · {tt('создатель')}: {c.creator.username}
+                        {formatChallengeDay(c.startDate, localeTag)} → {formatChallengeDay(c.endDate, localeTag)} · {tt('создатель')}: {c.creator.username}
                       </div>
                     </div>
 

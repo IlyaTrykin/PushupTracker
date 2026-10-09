@@ -10,6 +10,8 @@ import {
   formatExerciseValue,
   isTimedExercise,
 } from '@/lib/exercise-metrics';
+import { dayKeyInZone } from '@/lib/calendar-day';
+import { challengeDayStatus, challengeUsesPoints, formatChallengeDay } from '@/lib/challenge-scoring';
 
 type ProgressRow = { userId: string; username: string; total: number; creditedDays?: number; totalDays?: number; qualifiedSets?: number; qualifiedReps?: number };
 
@@ -51,14 +53,14 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
   return data;
 }
 
-function statusLabel(startISO: string, endISO: string) {
-  const now = new Date();
-  const start = new Date(startISO);
-  const end = new Date(endISO);
-  if (now < start) return { text: 'Ещё не начался', color: '#6b7280' as const };
-  if (now > end) return { text: 'Завершён', color: '#6b7280' as const };
+// Статус по календарным дням (B09): последний день челленджа — ещё «Идёт».
+function statusLabel(status: ReturnType<typeof challengeDayStatus>) {
+  if (status.upcoming) return { text: 'Ещё не начался', color: '#6b7280' as const };
+  if (status.finished) return { text: 'Завершён', color: '#6b7280' as const };
   return { text: 'Идёт', color: '#16a34a' as const };
 }
+
+const roundTenth = (value: number) => Math.round(value * 10) / 10;
 
 function pct(total: number, target: number) {
   if (target <= 0) return 0;
@@ -116,16 +118,10 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
 
   const meta = useMemo(() => {
     if (!challenge) return null;
-    const st = statusLabel(challenge.startDate, challenge.endDate);
-    const start = new Date(challenge.startDate);
-    const end = new Date(challenge.endDate);
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-    const daysLeft = Math.max(0, Math.ceil((endDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
-
-    return { st, start, end, daysLeft };
+    const today = dayKeyInZone(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+    const status = challengeDayStatus(challenge.startDate, challenge.endDate, today);
+    const st = statusLabel(status);
+    return { st, daysLeft: status.daysLeft, usesPoints: challengeUsesPoints(challenge.exerciseType) };
   }, [challenge]);
 
   const leader = progressSorted.length ? progressSorted[0] : null;
@@ -150,7 +146,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
             <div>
               <div style={{ fontWeight: 900, fontSize: 18 }}>{challenge.name}</div>
               <div style={{ color: '#6b7280', fontSize: 12 }}>
-                {meta.start.toLocaleDateString(localeTag)} → {meta.end.toLocaleDateString(localeTag)} · {tt('создатель')}: {challenge.creator.username}
+                {formatChallengeDay(challenge.startDate, localeTag)} → {formatChallengeDay(challenge.endDate, localeTag)} · {tt('создатель')}: {challenge.creator.username}
               </div>
               <div style={{ marginTop: 8, fontSize: 12 }}>
                 {tt('Статус')}: <span style={{ color: meta.st.color, fontWeight: 800 }}>{tt(meta.st.text)}</span>
@@ -162,6 +158,13 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                   ? tt(challengeMostLabel(challenge.exerciseType))
                   : `${tt('цель')} ${formatExerciseValue(challenge.targetReps, challenge.exerciseType, true)}`}</b>
               </div>
+              {meta.usesPoints && challenge.mode !== 'sets_min' ? (
+                <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+                  {locale === 'en'
+                    ? 'Weighted exercise: counted in points (1 point = 1 push-up).'
+                    : 'Упражнение с весом: считается в баллах (1 балл = 1 отжимание).'}
+                </div>
+              ) : null}
             </div>
 
             {leader && (
@@ -209,10 +212,10 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                   const target = isTarget ? (challenge!.targetReps as number) : 0;
 
                   const percent = isTarget ? pct(p.total, target) : null;
-                  const remaining = isTarget ? Math.max(0, target - p.total) : null;
+                  const remaining = isTarget ? roundTenth(Math.max(0, target - p.total)) : null;
 
                   // delta = myTotal - hisTotal
-                  const delta = isMe ? null : (myTotal - p.total);
+                  const delta = isMe ? null : roundTenth(myTotal - p.total);
                   const deltaColor =
                     delta === null ? '#6b7280' :
                     delta < 0 ? '#dc2626' : '#16a34a';

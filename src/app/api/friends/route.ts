@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
+import { cooldownRetryDays, friendRequestNotifyKey, isUniqueViolation, shouldNotifyFriendRequest } from '@/lib/groups';
 import { sendFriendRequestEmail } from '@/lib/notification-email';
 import { isChannelEnabledForUser } from '@/lib/notification-preferences';
-import { sendWebPushToUsers } from '@/lib/web-push';
+import { queueWebPushToUsers } from '@/lib/web-push';
 
 type JsonObject = Record<string, unknown>;
+// Чужой email в ответах не отдаём (S04): только ник и аватар.
 type FriendDirectoryUser = {
   id: string;
   username: string;
-  email: string | null;
   avatarPath: string | null;
   deletedAt: Date | null;
 };
@@ -17,19 +19,32 @@ type FriendListItem = {
   friendshipId: string;
   userId: string;
   username: string;
-  email: string | null;
   avatarPath: string | null;
   since: Date;
   isFollowing: boolean;
 };
 
-function jsonError(message: string, status = 400, details?: string) {
-  return NextResponse.json(details ? { error: message, details } : { error: message }, { status });
+const publicUserSelect = { id: true, username: true, avatarPath: true, deletedAt: true } as const;
+
+function jsonError(message: string, status = 400, code?: string, details?: Record<string, unknown>) {
+  return NextResponse.json(code ? { error: message, code, details } : { error: message }, { status });
 }
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+// Сериализует операции над одной парой пользователей (A→B и B→A одновременно) до конца транзакции.
+async function lockFriendPair(tx: Prisma.TransactionClient, a: string, b: string) {
+  const key = [a, b].sort().join(':');
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`friend-pair:${key}`}))`;
+}
+
+class FriendRequestRejection extends Error {
+  constructor(public readonly userMessage: string, public readonly status: number, public readonly code: string, public readonly details?: Record<string, unknown>) {
+    super(code);
+  }
 }
 
 async function parseBody(request: NextRequest): Promise<JsonObject> {
@@ -66,8 +81,8 @@ export async function GET(request: NextRequest) {
         OR: [{ userId }, { friendId: userId }],
       },
       include: {
-        user: { select: { id: true, username: true, email: true, avatarPath: true, deletedAt: true } },
-        friend: { select: { id: true, username: true, email: true, avatarPath: true, deletedAt: true } },
+        user: { select: publicUserSelect },
+        friend: { select: publicUserSelect },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -82,7 +97,6 @@ export async function GET(request: NextRequest) {
         friendshipId: f.id,
         userId: other.id,
         username: other.username,
-        email: other.email,
         avatarPath: other.avatarPath ?? null,
         since: f.createdAt,
         isFollowing: false,
@@ -103,7 +117,7 @@ export async function GET(request: NextRequest) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
     if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
     console.error('FRIENDS GET ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (GET /api/friends)', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }
 
@@ -119,72 +133,140 @@ export async function POST(request: NextRequest) {
     const requester = await prisma.user.findUnique({ where: { id: userId }, select: { username: true } });
     const target = await prisma.user.findUnique({
       where: { username },
-      select: { id: true, username: true, email: true, avatarPath: true, deletedAt: true },
+      select: { id: true, username: true, deletedAt: true },
     });
 
     if (!target || target.deletedAt) return jsonError('Пользователь с таким ником не найден', 404);
     if (target.id === userId) return jsonError('Нельзя добавить в друзья самого себя', 400);
 
-    const existing = await prisma.friendship.findFirst({
-      where: {
-        OR: [
-          { userId, friendId: target.id },
-          { userId: target.id, friendId: userId },
-        ],
-      },
+    const outcome = await prisma.$transaction(async (tx) => {
+      await lockFriendPair(tx, userId, target.id);
+
+      const existing = await tx.friendship.findFirst({
+        where: {
+          OR: [
+            { userId, friendId: target.id },
+            { userId: target.id, friendId: userId },
+          ],
+        },
+      });
+
+      if (existing) {
+        if (existing.status === 'accepted') throw new FriendRequestRejection('Вы уже друзья', 409, 'FRIEND_ALREADY');
+        if (existing.userId === userId) {
+          throw new FriendRequestRejection('Заявка уже отправлена и ожидает подтверждения', 409, 'FRIEND_REQUEST_PENDING');
+        }
+        // Встречная заявка уже ждёт: обе стороны хотят дружить — сразу принимаем (B21).
+        const accepted = await tx.friendship.update({ where: { id: existing.id }, data: { status: 'accepted' } });
+        return { kind: 'merged' as const, friendship: accepted };
+      }
+
+      const cooldown = await tx.friendRequestCooldown.findUnique({
+        where: { requesterId_targetId: { requesterId: userId, targetId: target.id } },
+        select: { declinedAt: true },
+      });
+      const waitDays = cooldownRetryDays(cooldown?.declinedAt, new Date());
+      if (waitDays > 0) {
+        throw new FriendRequestRejection(
+          `Пользователь отклонил вашу заявку. Повторить можно через ${waitDays} дн.`,
+          400,
+          'FRIEND_REQUEST_COOLDOWN',
+          { retryAfterDays: waitDays },
+        );
+      }
+
+      const created = await tx.friendship.create({
+        data: { userId, friendId: target.id, status: 'pending' },
+      });
+
+      // Под блокировкой пары: решаем, будить ли адресата (не чаще раза в 7 дней на пару).
+      const now = new Date();
+      const dispatchKey = friendRequestNotifyKey(userId, target.id);
+      const lastDispatch = await tx.notificationDispatch.findUnique({
+        where: { key: dispatchKey },
+        select: { createdAt: true },
+      });
+      const notify = shouldNotifyFriendRequest(lastDispatch?.createdAt, now);
+      if (notify) {
+        await tx.notificationDispatch.upsert({
+          where: { key: dispatchKey },
+          update: { createdAt: now },
+          create: { key: dispatchKey, createdAt: now },
+        });
+      }
+      return { kind: 'created' as const, friendship: created, notify };
     });
 
-    if (existing) {
-      if (existing.status === 'accepted') return jsonError('Вы уже друзья', 400);
-      if (existing.userId === userId) return jsonError('Заявка уже отправлена и ожидает подтверждения', 400);
-      return jsonError('Этот пользователь уже отправил вам заявку. Подтвердите её во входящих запросах.', 400);
-    }
+    const requesterName = requester?.username || 'Пользователь';
 
-    const friendship = await prisma.friendship.create({
-      data: { userId, friendId: target.id, status: 'pending' },
-    });
+    if (outcome.kind === 'merged') {
+      await prisma.notification.create({
+        data: {
+          userId: target.id,
+          type: 'friend_request_accepted',
+          title: 'Запрос в друзья принят',
+          body: `${requesterName} принял ваш запрос в друзья`,
+          link: '/friends',
+        },
+      }).catch((e) => console.error('FRIEND MERGE NOTIFICATION ERROR:', e));
 
-    await prisma.notification.create({
-      data: {
+      return NextResponse.json({
+        friendshipId: outcome.friendship.id,
         userId: target.id,
-        type: 'friend_request',
-        title: 'Новый запрос в друзья',
-        body: `${requester?.username || 'Пользователь'} отправил вам запрос в друзья`,
-        link: '/friends',
-      },
-    }).catch(() => {});
-
-    await sendWebPushToUsers([target.id], {
-      title: 'Новый запрос в друзья',
-      body: `${requester?.username || 'Пользователь'} отправил вам запрос в друзья`,
-      link: '/friends',
-      tag: `friend-request-${friendship.id}`,
-    }, 'friend_request').catch((e) => console.error('FRIEND REQUEST PUSH ERROR:', e));
-
-    if (target.email && (await isChannelEnabledForUser(target.id, 'friend_request', 'email'))) {
-      await sendFriendRequestEmail({
-        to: target.email,
-        inviterUsername: requester?.username || 'Пользователь',
-        invitedUsername: target.username,
-        requestId: friendship.id,
-        request,
-      }).catch((e) => console.error('FRIEND REQUEST EMAIL ERROR:', e));
+        username: target.username,
+        since: outcome.friendship.createdAt,
+        status: 'accepted',
+      });
     }
 
-    return NextResponse.json({
+    const friendship = outcome.friendship;
+    const pendingResponse = NextResponse.json({
       friendshipId: friendship.id,
       userId: target.id,
       username: target.username,
-      email: target.email,
       since: friendship.createdAt,
       status: 'pending',
     });
+    // Повторная заявка после отмены в течение 7 дней: заявка есть, но адресата не будим снова.
+    if (!outcome.notify) return pendingResponse;
+
+    const title = 'Новый запрос в друзья';
+    const notifyBody = `${requesterName} отправил вам запрос в друзья`;
+
+    await prisma.notification.create({
+      data: { userId: target.id, type: 'friend_request', title, body: notifyBody, link: '/friends' },
+    }).catch((e) => console.error('FRIEND REQUEST NOTIFICATION ERROR:', e));
+
+    queueWebPushToUsers([target.id], {
+      title,
+      body: notifyBody,
+      link: '/friends',
+      tag: `friend-request-${friendship.id}`,
+    }, 'friend_request');
+
+    // Письмо — в фоне: медленный SMTP не задерживает ответ.
+    void (async () => {
+      const recipient = await prisma.user.findUnique({ where: { id: target.id }, select: { email: true } });
+      if (!recipient?.email) return;
+      if (!(await isChannelEnabledForUser(target.id, 'friend_request', 'email'))) return;
+      await sendFriendRequestEmail({
+        to: recipient.email,
+        inviterUsername: requesterName,
+        invitedUsername: target.username,
+        requestId: friendship.id,
+        request,
+      });
+    })().catch((e) => console.error('FRIEND REQUEST EMAIL ERROR:', e));
+
+    return pendingResponse;
   } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
     if (getErrorMessage(e) === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
     if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
+    if (e instanceof FriendRequestRejection) return jsonError(e.userMessage, e.status, e.code, e.details);
+    if (isUniqueViolation(e)) return jsonError('Заявка уже отправлена и ожидает подтверждения', 409, 'FRIEND_REQUEST_PENDING');
     console.error('FRIENDS POST ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (POST /api/friends)', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }
 
@@ -206,8 +288,14 @@ export async function PATCH(request: NextRequest) {
     if (!friendship) return jsonError('Связь дружбы не найдена', 404);
 
     if (action === 'accept') {
-      if (friendship.friendId !== userId || friendship.status !== 'pending') return jsonError('Нет доступа', 403);
-      await prisma.friendship.update({ where: { id: friendshipId }, data: { status: 'accepted' } });
+      if (friendship.friendId !== userId) return jsonError('Нет доступа', 403);
+      if (friendship.status === 'accepted') return NextResponse.json({ ok: true, status: 'accepted' });
+      // Условное обновление: повторное или параллельное «принять» не шлёт второе уведомление.
+      const claimed = await prisma.friendship.updateMany({
+        where: { id: friendshipId, status: 'pending' },
+        data: { status: 'accepted' },
+      });
+      if (claimed.count === 0) return NextResponse.json({ ok: true, status: 'accepted' });
 
       const me = await prisma.user.findUnique({ where: { id: userId }, select: { username: true } });
       await prisma.notification.create({
@@ -218,14 +306,22 @@ export async function PATCH(request: NextRequest) {
           body: `${me?.username || 'Пользователь'} принял ваш запрос в друзья`,
           link: '/friends',
         },
-      }).catch(() => {});
+      }).catch((e) => console.error('FRIEND ACCEPT NOTIFICATION ERROR:', e));
 
       return NextResponse.json({ ok: true, status: 'accepted' });
     }
 
     if (action === 'decline') {
       if (friendship.friendId !== userId || friendship.status !== 'pending') return jsonError('Нет доступа', 403);
-      await prisma.friendship.delete({ where: { id: friendshipId } });
+      await prisma.$transaction(async (tx) => {
+        await tx.friendship.deleteMany({ where: { id: friendshipId, status: 'pending' } });
+        // Отправитель сможет повторить заявку не раньше чем через 7 дней (S05).
+        await tx.friendRequestCooldown.upsert({
+          where: { requesterId_targetId: { requesterId: friendship.userId, targetId: userId } },
+          update: { declinedAt: new Date() },
+          create: { requesterId: friendship.userId, targetId: userId },
+        });
+      });
       return NextResponse.json({ ok: true, status: 'declined' });
     }
 
@@ -237,10 +333,9 @@ export async function PATCH(request: NextRequest) {
       const friendId = friendship.userId === userId ? friendship.friendId : friendship.userId;
 
       if (follow) {
-        await prisma.friendFollow.upsert({
-          where: { followerId_friendId: { followerId: userId, friendId } },
-          update: {},
-          create: { followerId: userId, friendId },
+        await prisma.friendFollow.createMany({
+          data: [{ followerId: userId, friendId }],
+          skipDuplicates: true,
         });
       } else {
         await prisma.friendFollow.deleteMany({ where: { followerId: userId, friendId } });
@@ -254,8 +349,9 @@ export async function PATCH(request: NextRequest) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
     if (getErrorMessage(e) === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
     if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
+    if (isUniqueViolation(e)) return jsonError('Конфликт одновременных изменений, повторите', 409, 'CONFLICT');
     console.error('FRIENDS PATCH ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (PATCH /api/friends)', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }
 
@@ -277,7 +373,7 @@ export async function DELETE(request: NextRequest) {
     if (friendship.userId !== userId && friendship.friendId !== userId) return jsonError('Нет доступа', 403);
 
     await prisma.$transaction(async (tx) => {
-      await tx.friendship.delete({ where: { id: friendshipId } });
+      await tx.friendship.deleteMany({ where: { id: friendshipId } });
       await tx.friendFollow.deleteMany({
         where: {
           OR: [
@@ -294,6 +390,6 @@ export async function DELETE(request: NextRequest) {
     if (getErrorMessage(e) === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
     if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
     console.error('FRIENDS DELETE ERROR:', e);
-    return jsonError('Внутренняя ошибка сервера (DELETE /api/friends)', 500, getErrorMessage(e));
+    return jsonError('Внутренняя ошибка сервера', 500);
   }
 }

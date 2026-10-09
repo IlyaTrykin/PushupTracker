@@ -15,22 +15,23 @@ export async function GET(request: NextRequest) {
     return jsonError('Внутренняя ошибка сервера', 500);
   }
 
+  // Чужой email не отдаём (S04); удалённые пользователи из заявок скрыты.
   const [incoming, outgoing] = await Promise.all([
     prisma.friendship.findMany({
-      where: { friendId: userId, status: 'pending' },
+      where: { friendId: userId, status: 'pending', user: { deletedAt: null } },
       select: {
         id: true,
         createdAt: true,
-        user: { select: { id: true, username: true, email: true, avatarPath: true } },
+        user: { select: { id: true, username: true, avatarPath: true } },
       },
       orderBy: { createdAt: 'desc' },
     }),
     prisma.friendship.findMany({
-      where: { userId, status: 'pending' },
+      where: { userId, status: 'pending', friend: { deletedAt: null } },
       select: {
         id: true,
         createdAt: true,
-        friend: { select: { id: true, username: true, email: true, avatarPath: true } },
+        friend: { select: { id: true, username: true, avatarPath: true } },
       },
       orderBy: { createdAt: 'desc' },
     }),
@@ -41,7 +42,6 @@ export async function GET(request: NextRequest) {
       friendshipId: r.id,
       userId: r.user.id,
       username: r.user.username,
-      email: r.user.email,
       avatarPath: r.user.avatarPath,
       createdAt: r.createdAt,
     })),
@@ -49,7 +49,6 @@ export async function GET(request: NextRequest) {
       friendshipId: r.id,
       userId: r.friend.id,
       username: r.friend.username,
-      email: r.friend.email,
       avatarPath: r.friend.avatarPath,
       createdAt: r.createdAt,
     })),

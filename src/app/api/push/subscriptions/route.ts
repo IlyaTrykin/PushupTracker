@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
 import { isPushConfigured } from '@/lib/web-push';
+import { isUniqueViolation } from '@/lib/groups';
+import {
+  MAX_PUSH_SUBSCRIPTIONS_PER_USER,
+  isAllowedPushEndpoint,
+  isValidPushKey,
+  subscriptionsToEvict,
+} from '@/lib/push-endpoint';
 
 type JsonObject = Record<string, unknown>;
 type PushSubscriptionBody = JsonObject & {
@@ -61,25 +68,35 @@ export async function POST(request: NextRequest) {
   const auth = String(body.keys?.auth || '').trim();
 
   if (!endpoint || !p256dh || !auth) return jsonError('Некорректная push-подписка', 400);
+  // Только https на хосты push-сервисов браузеров (S09): иначе сервер стучался бы куда скажут.
+  if (!isAllowedPushEndpoint(endpoint)) return jsonError('Адрес push-подписки не поддерживается', 400);
+  if (!isValidPushKey(p256dh) || !isValidPushKey(auth)) return jsonError('Некорректная push-подписка', 400);
 
-  await prisma.pushSubscription.upsert({
-    where: { endpoint },
-    update: {
-      userId,
-      p256dh,
-      auth,
-      isActive: true,
-      userAgent: request.headers.get('user-agent') || null,
-    },
-    create: {
-      userId,
-      endpoint,
-      p256dh,
-      auth,
-      userAgent: request.headers.get('user-agent') || null,
-      isActive: true,
-    },
+  const userAgent = (request.headers.get('user-agent') || '').slice(0, 512) || null;
+  const data = { userId, p256dh, auth, userAgent, isActive: true };
+
+  try {
+    await prisma.pushSubscription.upsert({
+      where: { endpoint },
+      update: data,
+      create: { ...data, endpoint },
+    });
+  } catch (e) {
+    // Две одновременные регистрации одного устройства: вторая упирается в unique(endpoint).
+    if (!isUniqueViolation(e)) {
+      console.error('PUSH SUBSCRIBE ERROR:', e);
+      return jsonError('Внутренняя ошибка сервера', 500);
+    }
+    await prisma.pushSubscription.updateMany({ where: { endpoint }, data });
+  }
+
+  // Не больше 10 устройств на пользователя: самые давние вытесняются.
+  const subs = await prisma.pushSubscription.findMany({
+    where: { userId },
+    select: { id: true, updatedAt: true },
   });
+  const evict = subscriptionsToEvict(subs, MAX_PUSH_SUBSCRIPTIONS_PER_USER);
+  if (evict.length) await prisma.pushSubscription.deleteMany({ where: { id: { in: evict } } });
 
   return NextResponse.json({ ok: true });
 }
