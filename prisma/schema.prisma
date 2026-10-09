@@ -9,23 +9,23 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  username     String    @unique
-  passwordHash String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  language     String    @default("ru")
-  gender       String?
-  birthDate    DateTime?
-  weightKg     Int?
-  avatarPath   String?
+  id                String    @id @default(uuid())
+  email             String    @unique
+  username          String    @unique
+  passwordHash      String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
+  language          String    @default("ru")
+  gender            String?
+  birthDate         DateTime?
+  weightKg          Int?
+  avatarPath        String?
   // Упражнения на экране тренировки; пусто — порядок каталога по умолчанию.
-  favoriteExercises String[] @default([])
-  deletedAt    DateTime?
-  deletedById  String?
-  deletedBy    User?     @relation("UserDeletedBy", fields: [deletedById], references: [id])
-  deletedUsers User[]    @relation("UserDeletedBy")
+  favoriteExercises String[]  @default([])
+  deletedAt         DateTime?
+  deletedById       String?
+  deletedBy         User?     @relation("UserDeletedBy", fields: [deletedById], references: [id])
+  deletedUsers      User[]    @relation("UserDeletedBy")
 
   workouts                Workout[]
   friendships             Friendship[]           @relation("UserFriendships")
@@ -48,12 +48,29 @@ model User {
   groupJoinRequests        GroupJoinRequest[]
   groupAuditLogsAuthored   GroupAuditLog[]          @relation("GroupAuditActor")
   groupAuditLogsTargeting  GroupAuditLog[]          @relation("GroupAuditTargetUser")
+  /// deprecated: replaced by NotificationPreference; kept to preserve data.
   pushFriendRequest        Boolean                  @default(true)
+  /// deprecated: replaced by NotificationPreference; kept to preserve data.
   pushChallengeInvite      Boolean                  @default(true)
+  /// deprecated: replaced by NotificationPreference; kept to preserve data.
   pushChallengeRankChange  Boolean                  @default(true)
   notificationPreferences  NotificationPreference[]
   trainingPrograms         TrainingProgram[]
   assignedTrainingPrograms TrainingProgram[]        @relation("TrainingProgramAssignedByUser")
+
+  // IANA time zone of the user's calendar days (see src/lib/calendar-day.ts).
+  timeZone          String    @default("Europe/Moscow")
+  // Daily goal in points; null = disabled.
+  dailyGoalPoints   Int?
+  // Local reminder time "HH:MM"; null = default.
+  dailyReminderTime String?
+  telegramChatId    String?   @unique
+  telegramLinkedAt  DateTime?
+
+  achievements      UserAchievement[]
+  telegramLinkCodes TelegramLinkCode[]
+
+  @@index([deletedAt])
 }
 
 model Group {
@@ -71,22 +88,23 @@ model Group {
   auditLogs       GroupAuditLog[]
   challenges      Challenge[]
   managedPrograms TrainingProgram[]  @relation("GroupManagedPrograms")
+  goals           GroupGoal[]
 
   @@index([ownerId, createdAt])
   @@index([deletedAt, createdAt])
 }
 
 model GroupMembership {
-  id        String    @id @default(uuid())
-  groupId   String
-  userId    String
-  status    String    @default("active") // active | left | removed
-  includeInStats Boolean @default(true)
-  joinedAt  DateTime?
-  leftAt    DateTime?
-  removedAt DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id             String    @id @default(uuid())
+  groupId        String
+  userId         String
+  status         String    @default("active") // active | left | removed
+  includeInStats Boolean   @default(true)
+  joinedAt       DateTime?
+  leftAt         DateTime?
+  removedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -157,10 +175,16 @@ model Workout {
   // Раскладка по рукам для упражнений, выполняемых поочерёдно каждой рукой.
   repsLeft          Int?
   repsRight         Int?
+  // Optional duration of the set (cardio: total time), seconds.
+  durationSeconds   Int?
+  // Client-generated idempotency key: a retried POST returns the existing workout.
+  clientRequestId   String?
   trainingSessionId String?
   trainingSession   TrainingSession?  @relation(fields: [trainingSessionId], references: [id], onDelete: SetNull)
   reactions         WorkoutReaction[]
+  achievements      UserAchievement[]
 
+  @@unique([userId, clientRequestId])
   @@index([userId, exerciseType, time])
   @@index([userId, time])
   @@index([trainingSessionId])
@@ -219,7 +243,10 @@ model FriendFollow {
 
 model Session {
   id        String   @id @default(uuid())
-  token     String   @unique
+  // SHA-256 (hex) of the cookie token; the raw token is not stored.
+  tokenHash String   @unique
+  // Legacy raw token; nulled by 20261009120000_audit_and_features.
+  token     String?  @unique
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
   createdAt DateTime @default(now())
@@ -321,14 +348,15 @@ model PushSubscription {
 }
 
 model NotificationPreference {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  eventType    String
-  pushEnabled  Boolean  @default(true)
-  emailEnabled Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventType       String
+  pushEnabled     Boolean  @default(true)
+  emailEnabled    Boolean  @default(false)
+  telegramEnabled Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@unique([userId, eventType])
   @@index([eventType])
@@ -356,7 +384,7 @@ model TrainingProgram {
   needsRetest        Boolean   @default(false)
   lastRecalculatedAt DateTime?
   createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  updatedAt          DateTime  @default(now()) @updatedAt
   isActive           Boolean   @default(true)
 
   sessions TrainingSession[]
@@ -379,11 +407,12 @@ model TrainingSession {
   shiftedCount   Int             @default(0)
   reminderSentAt DateTime?
   createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  updatedAt      DateTime        @default(now()) @updatedAt
 
   sets     TrainingSet[]
   workouts Workout[]
 
+  @@unique([programId, sessionNumber])
   @@index([programId, scheduledAt])
   @@index([programId, completed, scheduledAt])
 }
@@ -399,8 +428,68 @@ model TrainingSet {
   completedAt DateTime?
   isKeySet    Boolean         @default(false)
   createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  updatedAt   DateTime        @default(now()) @updatedAt
 
   @@unique([sessionId, setNumber])
   @@index([sessionId, setNumber])
+}
+
+model UserAchievement {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind         String // badge | record
+  code         String
+  exerciseType String?
+  value        Float?
+  workoutId    String?
+  workout      Workout? @relation(fields: [workoutId], references: [id], onDelete: SetNull)
+  achievedAt   DateTime @default(now())
+  uniqueKey    String?  @unique
+
+  @@index([userId, achievedAt])
+}
+
+model GroupGoal {
+  id           String    @id @default(cuid())
+  groupId      String
+  group        Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  title        String
+  targetPoints Int
+  exerciseType String?
+  startDate    DateTime
+  endDate      DateTime
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+  deletedAt    DateTime?
+
+  @@index([groupId])
+}
+
+model TelegramLinkCode {
+  code      String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model FriendRequestCooldown {
+  requesterId String
+  targetId    String
+  declinedAt  DateTime @default(now())
+
+  @@id([requesterId, targetId])
+}
+
+model NotificationDispatch {
+  key       String   @id
+  createdAt DateTime @default(now())
+}
+
+model RateLimitBucket {
+  key         String   @id
+  windowStart DateTime
+  count       Int
 }

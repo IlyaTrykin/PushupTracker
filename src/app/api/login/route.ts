@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { normalizeLocale } from '@/i18n/locale';
 import { setPreferredLocaleCookie } from '@/i18n/server';
+import { hashSessionToken } from '@/lib/auth';
 
 function isHttps(request: Request) {
   const xfProto = request.headers.get('x-forwarded-proto');
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30); // +30 дней
 
     await prisma.session.create({
-      data: { token, userId: user.id, expiresAt },
+      data: { token, tokenHash: hashSessionToken(token), userId: user.id, expiresAt },
     });
 
     const res = NextResponse.json({

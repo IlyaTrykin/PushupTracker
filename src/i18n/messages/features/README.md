@@ -1,0 +1,1 @@
+UI strings of new features, one file per feature (`<slug>.ts` exporting `xMessages = { ru: {…}, en: {…} } as const`, used as `xMessages[locale]`); see `_example.ts`, do not edit shared `ru.ts`/`en.ts` for them.

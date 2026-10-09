@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
@@ -38,11 +39,16 @@ const authUserSelect = {
   deletedAt: true,
 } as const;
 
+/** Sessions are looked up by SHA-256 (hex) of the cookie token (`Session.tokenHash`). */
+export function hashSessionToken(token: string): string {
+  return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
 async function getAuthUserByToken(token: string): Promise<AuthUser | null> {
+  const tokenHash = hashSessionToken(token);
   const session = await prisma.session.findUnique({
-    where: { token },
+    where: { tokenHash },
     select: {
-      token: true,
       expiresAt: true,
       user: { select: authUserSelect },
     },
@@ -51,12 +57,12 @@ async function getAuthUserByToken(token: string): Promise<AuthUser | null> {
   if (!session?.user) return null;
 
   if (session.expiresAt && session.expiresAt.getTime() < Date.now()) {
-    await prisma.session.deleteMany({ where: { token } }).catch(() => {});
+    await prisma.session.deleteMany({ where: { tokenHash } }).catch(() => {});
     return null;
   }
 
   if (session.user.deletedAt) {
-    await prisma.session.deleteMany({ where: { token } }).catch(() => {});
+    await prisma.session.deleteMany({ where: { tokenHash } }).catch(() => {});
     return null;
   }
 
@@ -126,7 +132,7 @@ export async function requireAdmin(request: Request): Promise<AuthUser> {
 export async function invalidateSession(request: Request): Promise<void> {
   const token = getSessionToken(request);
   if (!token) return;
-  await prisma.session.deleteMany({ where: { token } }).catch(() => {});
+  await prisma.session.deleteMany({ where: { tokenHash: hashSessionToken(token) } }).catch(() => {});
 }
 
 export function setSessionCookie(
