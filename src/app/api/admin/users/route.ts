@@ -1,9 +1,17 @@
 import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { requireAdmin as requireAdminUser, AuthError } from '@/lib/auth';
+import { requireAdmin as requireAdminUser, AuthError, deleteUserSessions, getSessionToken } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
-import { buildPasswordResetUrl, createPasswordResetToken, sendPasswordResetEmail } from '@/lib/password-reset';
+import { normalizeEmail, PASSWORD_MIN_LENGTH, validateNewPassword } from '@/lib/account-validation';
+import {
+  buildPasswordResetUrl,
+  createPasswordResetToken,
+  PasswordResetConfigError,
+  sendPasswordResetEmail,
+} from '@/lib/password-reset';
+
+const PASSWORD_RULE_TEXT = `password: от ${PASSWORD_MIN_LENGTH} до 128 символов`;
 
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -57,13 +65,14 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   if (!body) return jsonError('Некорректный JSON');
 
-  const email = String(body.email || '').trim().toLowerCase();
+  if (!String(body.email || '').trim()) return jsonError('email обязателен');
+  const email = normalizeEmail(body.email);
+  if (!email) return jsonError('Некорректный email');
   const password = String(body.password || '');
   const isAdmin = Boolean(body.isAdmin);
   const username = String(body.username || '').trim() || usernameFromEmail(email);
 
-  if (!email) return jsonError('email обязателен');
-  if (!password || password.length < 6) return jsonError('password минимум 6 символов');
+  if (!validateNewPassword(password).ok) return jsonError(PASSWORD_RULE_TEXT);
   if (!username) return jsonError('username обязателен');
 
   const existsEmail = await prisma.user.findUnique({ where: { email } });
@@ -104,8 +113,19 @@ export async function PATCH(request: Request) {
 
     if (!target || target.deletedAt) return jsonError('Пользователь не найден', 404);
 
-    const { token, expiresAt } = await createPasswordResetToken(target.id);
-    const resetUrl = buildPasswordResetUrl(token, request);
+    let resetUrl: string;
+    let expiresAt: Date;
+    try {
+      const issued = await createPasswordResetToken(target.id);
+      expiresAt = issued.expiresAt;
+      resetUrl = buildPasswordResetUrl(issued.token, request);
+    } catch (e) {
+      if (e instanceof PasswordResetConfigError) {
+        console.error('ADMIN RESET LINK CONFIG ERROR:', e.message);
+        return jsonError('APP_URL не задан: ссылку на сброс нельзя построить', 500);
+      }
+      throw e;
+    }
     await sendPasswordResetEmail({
       to: target.email,
       username: target.username,
@@ -137,13 +157,18 @@ export async function PATCH(request: Request) {
   }
 
   const data: Prisma.UserUpdateInput = {};
-  if (body.email !== undefined) data.email = String(body.email || '').trim().toLowerCase();
+  if (body.email !== undefined) {
+    const email = normalizeEmail(body.email);
+    if (!email) return jsonError('Некорректный email');
+    data.email = email;
+  }
   if (body.username !== undefined) data.username = String(body.username || '').trim();
   if (body.isAdmin !== undefined) data.isAdmin = Boolean(body.isAdmin);
 
-  if (body.password !== undefined) {
+  const passwordChanged = body.password !== undefined;
+  if (passwordChanged) {
     const pw = String(body.password || '');
-    if (pw.length < 6) return jsonError('password минимум 6 символов');
+    if (!validateNewPassword(pw).ok) return jsonError(PASSWORD_RULE_TEXT);
     data.passwordHash = await bcrypt.hash(pw, 10);
   }
 
@@ -156,6 +181,12 @@ export async function PATCH(request: Request) {
     data,
     select: { id: true, email: true, username: true, avatarPath: true, isAdmin: true, createdAt: true, deletedAt: true },
   });
+
+  // A new password set by the admin logs the user out everywhere (as reset and change-password do).
+  // The admin changing their own password keeps the current session.
+  if (passwordChanged) {
+    await deleteUserSessions(id, id === adminId ? getSessionToken(request) : null);
+  }
 
   return NextResponse.json({ user });
 }

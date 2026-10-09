@@ -70,12 +70,15 @@ export default function ForgotPasswordPage() {
         <section className={styles.card}>
           <form onSubmit={submit} className={styles.form}>
             <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              autoCapitalize="none"
+              maxLength={254}
               className={styles.input}
-        />
+            />
             <button
           type="submit"
           disabled={sending}
@@ -83,7 +86,7 @@ export default function ForgotPasswordPage() {
         >
           {sending ? tt('Отправка...') : tt('Отправить ссылку')}
         </button>
-            {error ? <p className={styles.error}>{error}</p> : null}
+            {error ? <p className={styles.error} role="alert">{error}</p> : null}
             {message ? <p style={successStyle}>{message}</p> : null}
             <Link href="/login" className={styles.inlineLink}>{tt('Назад ко входу')}</Link>
           </form>

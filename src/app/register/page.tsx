@@ -11,8 +11,29 @@ import styles from '../login/login.module.css';
 
 type JsonObject = Record<string, unknown>;
 
+const PASSWORD_MIN_LENGTH = 8;
+
+// Requirements shown under the fields (same rules as the server: src/lib/account-validation.ts).
+const hints = {
+  ru: {
+    username: 'От 3 до 32 символов: латинские буквы, цифры и . _ -',
+    password: `Не меньше ${PASSWORD_MIN_LENGTH} символов`,
+    passwordTooShort: `Пароль должен быть не меньше ${PASSWORD_MIN_LENGTH} символов`,
+    usernameInvalid: 'Ник: от 3 до 32 символов, только латинские буквы, цифры и . _ -',
+  },
+  en: {
+    username: '3 to 32 characters: Latin letters, digits and . _ -',
+    password: `At least ${PASSWORD_MIN_LENGTH} characters`,
+    passwordTooShort: `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+    usernameInvalid: 'Username: 3 to 32 characters, only Latin letters, digits and . _ -',
+  },
+} as const;
+
+const USERNAME_RE = /^[a-zA-Z0-9._-]{3,32}$/;
+
 export default function RegisterPage() {
   const { locale, messages, setLocale } = useI18n();
+  const hint = hints[locale] ?? hints.ru;
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
@@ -30,6 +51,15 @@ export default function RegisterPage() {
     setError(null);
     setSuccess(false);
 
+    if (!USERNAME_RE.test(username.trim())) {
+      setError(hint.usernameInvalid);
+      return;
+    }
+    if (Array.from(password).length < PASSWORD_MIN_LENGTH) {
+      setError(hint.passwordTooShort);
+      return;
+    }
+
     try {
       const res = await fetch('/api/register', {
         method: 'POST',
@@ -46,10 +76,7 @@ export default function RegisterPage() {
       }
 
       if (!res.ok) {
-        const base = typeof data.error === 'string' ? data.error : `${messages.auth.register.defaultError} (код ${res.status})`;
-        const details = typeof data.details === 'string' ? data.details : '';
-        const msg = details ? `${base}: ${details}` : base;
-        setError(msg);
+        setError(typeof data.error === 'string' ? data.error : `${messages.auth.register.defaultError} (${res.status})`);
       } else {
         setLocale(language);
         setSuccess(true);
@@ -87,32 +114,54 @@ export default function RegisterPage() {
         <section className={styles.card}>
           <form onSubmit={handleSubmit} className={styles.form}>
             <div className={styles.field}>
-              <label className={styles.label}>{messages.auth.register.email}</label>
-          <input
-            value={email}
-            onChange={e => setEmail(e.target.value)}
+              <label className={styles.label} htmlFor="register-email">{messages.auth.register.email}</label>
+              <input
+                id="register-email"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                autoComplete="email"
+                autoCapitalize="none"
+                maxLength={254}
+                required
                 className={styles.input}
-          />
-        </div>
+              />
+            </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>{messages.auth.register.username}</label>
-          <input
-            value={username}
-            onChange={e => setUsername(e.target.value)}
+              <label className={styles.label} htmlFor="register-username">{messages.auth.register.username}</label>
+              <input
+                id="register-username"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                minLength={3}
+                maxLength={32}
+                required
+                aria-describedby="register-username-hint"
                 className={styles.input}
-          />
-        </div>
+              />
+              <span id="register-username-hint" style={hintStyle}>{hint.username}</span>
+            </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>{messages.auth.register.password}</label>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
+              <label className={styles.label} htmlFor="register-password">{messages.auth.register.password}</label>
+              <input
+                id="register-password"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete="new-password"
+                minLength={PASSWORD_MIN_LENGTH}
+                maxLength={128}
+                required
+                aria-describedby="register-password-hint"
                 className={styles.input}
-          />
-        </div>
+              />
+              <span id="register-password-hint" style={hintStyle}>{hint.password}</span>
+            </div>
 
             <LanguageSelect
           value={language}
@@ -150,6 +199,12 @@ export default function RegisterPage() {
     </main>
   );
 }
+
+const hintStyle: React.CSSProperties = {
+  fontSize: 13,
+  lineHeight: 1.35,
+  color: '#475569',
+};
 
 const successStyle: React.CSSProperties = {
   margin: 0,

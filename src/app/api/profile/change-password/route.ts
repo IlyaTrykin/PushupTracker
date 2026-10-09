@@ -1,23 +1,40 @@
 import bcrypt from 'bcryptjs';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { AuthError, getSessionToken, requireUser } from '@/lib/auth';
-
-function jsonError(message: string, status = 400) {
-  return NextResponse.json({ error: message }, { status });
-}
+import { validateNewPassword } from '@/lib/account-validation';
+import {
+  AuthError,
+  authRateLimitRules,
+  authText,
+  checkRateLimits,
+  deleteUserSessions,
+  getSessionToken,
+  requestLocale,
+  requireUser,
+  validationErrorText,
+} from '@/lib/auth';
+import { tooManyRequests } from '@/lib/rate-limit';
 
 export async function POST(request: Request) {
+  const locale = requestLocale(request);
+  const text = authText(locale);
+  const jsonError = (error: string, status = 400, code?: string) =>
+    NextResponse.json(code ? { error, code } : { error }, { status });
+
   try {
     const me = await requireUser(request);
     const body = await request.json().catch(() => null);
-    if (!body) return jsonError('Некорректный JSON');
+    if (!body) return jsonError(text.invalidJson);
 
-    const currentPassword = String(body.currentPassword || '');
-    const newPassword = String(body.newPassword || '');
+    const limit = await checkRateLimits(authRateLimitRules.changePassword(me.id));
+    if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds, locale);
 
-    if (!currentPassword) return jsonError('Введите текущий пароль');
-    if (newPassword.length < 6) return jsonError('Новый пароль должен быть не меньше 6 символов');
+    const currentPassword = typeof body.currentPassword === 'string' ? body.currentPassword : '';
+    const newPassword = typeof body.newPassword === 'string' ? body.newPassword : '';
+
+    if (!currentPassword) return jsonError(text.currentPasswordRequired);
+    const passwordCheck = validateNewPassword(newPassword);
+    if (!passwordCheck.ok) return jsonError(validationErrorText(locale, passwordCheck.code), 400, passwordCheck.code);
 
     const user = await prisma.user.findUnique({
       where: { id: me.id },
@@ -27,10 +44,10 @@ export async function POST(request: Request) {
     if (!user || user.deletedAt) return jsonError('UNAUTHORIZED', 401);
 
     const ok = await bcrypt.compare(currentPassword, user.passwordHash);
-    if (!ok) return jsonError('Текущий пароль неверный', 400);
+    if (!ok) return jsonError(text.currentPasswordWrong, 400);
 
     const same = await bcrypt.compare(newPassword, user.passwordHash);
-    if (same) return jsonError('Новый пароль должен отличаться от текущего', 400);
+    if (same) return jsonError(text.samePassword, 400);
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
@@ -49,16 +66,13 @@ export async function POST(request: Request) {
       });
     });
 
-    const currentToken = getSessionToken(request);
-    await prisma.session.deleteMany({
-      where: currentToken
-        ? { userId: me.id, token: { not: currentToken } }
-        : { userId: me.id },
-    });
+    // Every other device is logged out; this one stays (sessions are matched by token hash).
+    await deleteUserSessions(me.id, getSessionToken(request));
 
     return NextResponse.json({ ok: true });
   } catch (e) {
     if (e instanceof AuthError) return jsonError(e.message, e.status);
-    return jsonError('INTERNAL_ERROR', 500);
+    console.error('CHANGE PASSWORD ERROR:', e);
+    return jsonError(text.internal, 500);
   }
 }

@@ -7,9 +7,22 @@ function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
 }
 
+/** Thrown when a reset link cannot be built safely (production without `APP_URL`). */
+export class PasswordResetConfigError extends Error {
+  constructor(message = 'APP_URL is required in production to build password reset links') {
+    super(message);
+    this.name = 'PasswordResetConfigError';
+  }
+}
+
+function explicitAppUrl(): string | null {
+  const explicit = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '').trim();
+  return explicit ? explicit.replace(/\/+$/, '') : null;
+}
+
 export function getAppBaseUrl(request?: Request): string {
-  const explicit = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
-  if (explicit) return explicit.replace(/\/$/, '');
+  const explicit = explicitAppUrl();
+  if (explicit) return explicit;
 
   if (request) {
     try {
@@ -23,17 +36,59 @@ export function getAppBaseUrl(request?: Request): string {
   return 'http://localhost:3000';
 }
 
+/**
+ * Base URL for reset links. In production only `APP_URL` is trusted — never the
+ * request's Host, which an attacker controls.
+ */
+export function getPasswordResetBaseUrl(request?: Request): string {
+  const explicit = explicitAppUrl();
+  if (explicit) return explicit;
+  if (process.env.NODE_ENV === 'production') throw new PasswordResetConfigError();
+  return getAppBaseUrl(request);
+}
+
 export function buildPasswordResetUrl(token: string, request?: Request): string {
-  const base = getAppBaseUrl(request);
+  const base = getPasswordResetBaseUrl(request);
   return `${base}/reset-password?token=${encodeURIComponent(token)}`;
 }
 
-export async function createPasswordResetToken(userId: string): Promise<{ token: string; expiresAt: Date }> {
+type ResetTokenWhere = {
+  id?: string;
+  userId?: string;
+  usedAt?: null | { not: null };
+  expiresAt?: { gt?: Date; lt?: Date };
+  OR?: ResetTokenWhere[];
+};
+
+/** The part of the Prisma client the reset-token functions use (a fake in tests). */
+export type PasswordResetStore = {
+  passwordResetToken: {
+    create(args: { data: { userId: string; tokenHash: string; expiresAt: Date } }): Promise<unknown>;
+    findUnique(args: {
+      where: { tokenHash: string };
+      select: { id: true; userId: true };
+    }): Promise<{ id: string; userId: string } | null>;
+    updateMany(args: { where: ResetTokenWhere; data: { usedAt: Date } }): Promise<{ count: number }>;
+    deleteMany(args: { where: ResetTokenWhere }): Promise<unknown>;
+  };
+};
+
+/** Issues a new link token; any earlier unused tokens of the user stop working. */
+export async function createPasswordResetToken(
+  userId: string,
+  db: PasswordResetStore = prisma,
+): Promise<{ token: string; expiresAt: Date }> {
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = sha256(token);
-  const expiresAt = new Date(Date.now() + RESET_TTL_MINUTES * 60 * 1000);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + RESET_TTL_MINUTES * 60 * 1000);
 
-  await prisma.passwordResetToken.create({
+  await db.passwordResetToken.updateMany({
+    where: { userId, usedAt: null },
+    data: { usedAt: now },
+  });
+
+  await db.passwordResetToken.create({
     data: {
       userId,
       tokenHash,
@@ -41,11 +96,11 @@ export async function createPasswordResetToken(userId: string): Promise<{ token:
     },
   });
 
-  // Keep table compact.
-  await prisma.passwordResetToken
+  // Keep table compact: drop used and expired tokens (the new one is neither).
+  await db.passwordResetToken
     .deleteMany({
       where: {
-        OR: [{ usedAt: { not: null } }, { expiresAt: { lt: new Date() } }],
+        OR: [{ usedAt: { not: null } }, { expiresAt: { lt: now } }],
       },
     })
     .catch(() => {});
@@ -53,25 +108,26 @@ export async function createPasswordResetToken(userId: string): Promise<{ token:
   return { token, expiresAt };
 }
 
-export async function consumePasswordResetToken(token: string): Promise<{ userId: string } | null> {
+/** Marks the token used and returns its owner — exactly once, even under concurrent requests. */
+export async function consumePasswordResetToken(
+  token: string,
+  db: PasswordResetStore = prisma,
+): Promise<{ userId: string } | null> {
   const tokenHash = sha256(token);
   const now = new Date();
 
-  const row = await prisma.passwordResetToken.findUnique({
+  const row = await db.passwordResetToken.findUnique({
     where: { tokenHash },
-    select: { id: true, userId: true, expiresAt: true, usedAt: true },
+    select: { id: true, userId: true },
   });
-
   if (!row) return null;
-  if (row.usedAt) return null;
-  if (row.expiresAt.getTime() < now.getTime()) return null;
 
-  await prisma.passwordResetToken.update({
-    where: { id: row.id },
+  const { count } = await db.passwordResetToken.updateMany({
+    where: { id: row.id, usedAt: null, expiresAt: { gt: now } },
     data: { usedAt: now },
   });
 
-  return { userId: row.userId };
+  return count === 1 ? { userId: row.userId } : null;
 }
 
 export async function sendPasswordResetEmail(params: {
@@ -89,7 +145,12 @@ export async function sendPasswordResetEmail(params: {
   const mailFrom = process.env.MAIL_FROM || process.env.SMTP_FROM || 'noreply@localhost';
 
   if (!smtpHost || !smtpPortRaw || !smtpUser || !smtpPass) {
-    console.info('[password-reset] SMTP is not configured. Reset link:', { to, resetUrl, expiresAt: expiresAt.toISOString() });
+    if (process.env.NODE_ENV === 'production') {
+      // The link is a credential: it never goes to production logs.
+      console.info('[password-reset] SMTP is not configured; reset email not sent.');
+    } else {
+      console.info('[password-reset] SMTP is not configured. Reset link:', { to, resetUrl, expiresAt: expiresAt.toISOString() });
+    }
     return { sent: false };
   }
 

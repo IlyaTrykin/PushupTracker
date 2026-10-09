@@ -8,10 +8,24 @@ import { useI18n } from '@/i18n/provider';
 import { t } from '@/i18n/translate';
 import styles from '../login/login.module.css';
 
+const PASSWORD_MIN_LENGTH = 8;
+
+const passwordRule = {
+  ru: {
+    hint: `Не меньше ${PASSWORD_MIN_LENGTH} символов`,
+    tooShort: `Пароль должен быть не меньше ${PASSWORD_MIN_LENGTH} символов`,
+  },
+  en: {
+    hint: `At least ${PASSWORD_MIN_LENGTH} characters`,
+    tooShort: `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+  },
+} as const;
+
 export default function ResetPasswordPage() {
   const router = useRouter();
   const { locale } = useI18n();
   const tt = (input: string) => t(locale, input);
+  const rule = passwordRule[locale] ?? passwordRule.ru;
   const [token, setToken] = useState('');
 
   const [password, setPassword] = useState('');
@@ -34,8 +48,8 @@ export default function ResetPasswordPage() {
       setError(tt('Некорректная ссылка: отсутствует токен'));
       return;
     }
-    if (password.length < 6) {
-      setError(tt('Пароль должен быть не меньше 6 символов'));
+    if (Array.from(password).length < PASSWORD_MIN_LENGTH) {
+      setError(rule.tooShort);
       return;
     }
     if (password !== confirm) {
@@ -89,19 +103,25 @@ export default function ResetPasswordPage() {
         <section className={styles.card}>
           <form onSubmit={submit} className={styles.form}>
             <input
-          type="password"
-          placeholder={tt('Новый пароль')}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              placeholder={tt('Новый пароль')}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={PASSWORD_MIN_LENGTH}
+              maxLength={128}
+              aria-describedby="reset-password-hint"
               className={styles.input}
-        />
+            />
+            <span id="reset-password-hint" style={hintStyle}>{rule.hint}</span>
             <input
-          type="password"
-          placeholder={tt('Подтвердите пароль')}
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
+              type="password"
+              placeholder={tt('Подтвердите пароль')}
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
               className={styles.input}
-        />
+            />
             <button
           type="submit"
           disabled={saving}
@@ -109,7 +129,7 @@ export default function ResetPasswordPage() {
         >
           {saving ? tt('Сохранение...') : tt('Сменить пароль')}
         </button>
-            {error ? <p className={styles.error}>{error}</p> : null}
+            {error ? <p className={styles.error} role="alert">{error}</p> : null}
             {message ? <p style={successStyle}>{message}</p> : null}
             <Link href="/login" className={styles.inlineLink}>{tt('Назад ко входу')}</Link>
           </form>
@@ -118,6 +138,13 @@ export default function ResetPasswordPage() {
     </main>
   );
 }
+
+const hintStyle: React.CSSProperties = {
+  marginTop: -6,
+  fontSize: 13,
+  lineHeight: 1.35,
+  color: '#475569',
+};
 
 const successStyle: React.CSSProperties = {
   margin: 0,

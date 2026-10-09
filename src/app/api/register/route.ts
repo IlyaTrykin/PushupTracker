@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { normalizeLocale } from '@/i18n/locale';
@@ -6,50 +7,81 @@ import { setPreferredLocaleCookie } from '@/i18n/server';
 import { filterUsersByChannel } from '@/lib/notification-preferences';
 import { sendWebPushToUsers } from '@/lib/web-push';
 import { sendAdminNewUserRegisteredEmail } from '@/lib/notification-email';
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  return String(error);
-}
+import { normalizeEmail, validateNewPassword, validateNewUsername } from '@/lib/account-validation';
+import { authRateLimitRules, authText, checkRateLimits, requestLocale, validationErrorText } from '@/lib/auth';
+import { clientIp, tooManyRequests } from '@/lib/rate-limit';
 
 export async function POST(request: Request) {
+  const locale = requestLocale(request);
+  const text = authText(locale);
   try {
-    const body = await request.json();
-    const email = String(body?.email || '').trim();
-    const username = String(body?.username || '').trim();
-    const password = String(body?.password || '');
-    const language = normalizeLocale(body?.language);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: text.invalidJson }, { status: 400 });
+    }
+    const rawEmail = typeof body.email === 'string' ? body.email : '';
+    const rawUsername = typeof body.username === 'string' ? body.username : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+    const language = normalizeLocale(body.language);
 
-    if (!email || !username || !password) {
-      return NextResponse.json({ error: 'Заполните все поля' }, { status: 400 });
+    if (!rawEmail.trim() || !rawUsername.trim() || !password) {
+      return NextResponse.json({ error: text.fillAllFields }, { status: 400 });
     }
 
-    const existingUsername = await prisma.user.findUnique({ where: { username } });
-    if (existingUsername) {
+    const limit = await checkRateLimits(authRateLimitRules.register(clientIp(request)));
+    if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds, locale);
+
+    const email = normalizeEmail(rawEmail);
+    if (!email) {
+      return NextResponse.json({ error: text.invalidEmail, code: 'EMAIL_INVALID' }, { status: 400 });
+    }
+
+    const usernameCheck = validateNewUsername(rawUsername);
+    if (!usernameCheck.ok) {
       return NextResponse.json(
-        { error: 'Имя пользователя уже занято. Выберите другое имя.' },
-        { status: 409 },
+        { error: validationErrorText(locale, usernameCheck.code), code: usernameCheck.code },
+        { status: 400 },
+      );
+    }
+    const username = usernameCheck.value;
+
+    const passwordCheck = validateNewPassword(password);
+    if (!passwordCheck.ok) {
+      return NextResponse.json(
+        { error: validationErrorText(locale, passwordCheck.code), code: passwordCheck.code },
+        { status: 400 },
       );
     }
 
-    const existingEmail = await prisma.user.findUnique({ where: { email } });
-    if (existingEmail) {
-      return NextResponse.json(
-        { error: 'Пользователь с таким email уже существует' },
-        { status: 409 },
-      );
-    }
+    // Ник уникален без учёта регистра; занятость ника и email — один общий ответ.
+    const taken = await prisma.user.findFirst({
+      where: {
+        OR: [{ username: { equals: username, mode: 'insensitive' } }, { email }],
+      },
+      select: { id: true },
+    });
+    const accountTaken = () =>
+      NextResponse.json({ error: text.accountTaken, code: 'ACCOUNT_TAKEN' }, { status: 409 });
+    if (taken) return accountTaken();
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
-      data: {
-        email,
-        username,
-        passwordHash,
-        language,
-      },
-    });
+    let user;
+    try {
+      user = await prisma.user.create({
+        data: {
+          email,
+          username,
+          passwordHash,
+          language,
+        },
+      });
+    } catch (createError) {
+      if (createError instanceof Prisma.PrismaClientKnownRequestError && createError.code === 'P2002') {
+        return accountTaken();
+      }
+      throw createError;
+    }
 
     // Админам отправляем in-app/push/email о новой регистрации (ошибки не ломают регистрацию).
     try {
@@ -118,14 +150,6 @@ export async function POST(request: Request) {
     return res;
   } catch (e: unknown) {
     console.error('REGISTER ERROR:', e);
-    const message = getErrorMessage(e);
-
-    return NextResponse.json(
-      {
-        error: 'Внутренняя ошибка сервера',
-        details: message,
-      },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: text.internal }, { status: 500 });
   }
 }
