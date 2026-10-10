@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
-import { cooldownRetryDays, friendRequestNotifyKey, isUniqueViolation, shouldNotifyFriendRequest } from '@/lib/groups';
+import { claimFriendRequestNotification, cooldownRetryDays, isUniqueViolation } from '@/lib/groups';
 import { friendRequestAcceptedMessage, friendRequestMessage, notifyUsers } from '@/lib/notify';
 
 type JsonObject = Record<string, unknown>;
@@ -178,20 +178,7 @@ export async function POST(request: NextRequest) {
       });
 
       // Под блокировкой пары: решаем, будить ли адресата (не чаще раза в 7 дней на пару).
-      const now = new Date();
-      const dispatchKey = friendRequestNotifyKey(userId, target.id);
-      const lastDispatch = await tx.notificationDispatch.findUnique({
-        where: { key: dispatchKey },
-        select: { createdAt: true },
-      });
-      const notify = shouldNotifyFriendRequest(lastDispatch?.createdAt, now);
-      if (notify) {
-        await tx.notificationDispatch.upsert({
-          where: { key: dispatchKey },
-          update: { createdAt: now },
-          create: { key: dispatchKey, createdAt: now },
-        });
-      }
+      const notify = await claimFriendRequestNotification(tx, userId, target.id, new Date());
       return { kind: 'created' as const, friendship: created, notify };
     });
 

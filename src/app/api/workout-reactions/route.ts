@@ -265,14 +265,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (reacted && workout.userId !== userId && (await claimReactionNotification(workoutId, userId))) {
-      // In-app сразу; push / письмо / Telegram — по настройкам владельца, текст на его языке.
-      await notifyUsers(
-        [workout.userId],
-        'friend_reaction',
-        (locale) => friendReactionMessage(locale, { username: authUser.username, emoji, workout }),
-        { tag: `friend-reaction-${workoutId}-${userId}` },
-      );
+    if (reacted && workout.userId !== userId) {
+      // Реакция уже сохранена: сбой маркера или уведомления не превращает ответ в 500.
+      try {
+        if (await claimReactionNotification(workoutId, userId)) {
+          // In-app сразу; push / письмо / Telegram — по настройкам владельца, текст на его языке.
+          await notifyUsers(
+            [workout.userId],
+            'friend_reaction',
+            (locale) => friendReactionMessage(locale, { username: authUser.username, emoji, workout }),
+            { tag: `friend-reaction-${workoutId}-${userId}` },
+          );
+        }
+      } catch (e) {
+        console.error('WORKOUT REACTION NOTIFY ERROR:', e);
+      }
     }
 
     const byWorkout = await buildReactionMap(userId, [workoutId]);

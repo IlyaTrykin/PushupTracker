@@ -673,14 +673,17 @@ export type AutofillPlan = { sessionId: string; day: DayKey; sets: Array<{ setId
 /**
  * Overdue training sessions that ordinary workouts of the same day count for.
  * A final test is never filled from a day total — it measures a single set.
+ * A day closes at most one session: `consumedDays` are days whose ordinary workouts already
+ * closed a session (of this or another program on the same exercise, see `autofilledDays`).
  */
 export function planOverdueAutofill(args: {
   sessions: AutofillSession[];
   dayTotals: Map<DayKey, number>;
   clock: ProgramClock;
+  consumedDays?: Iterable<DayKey>;
 }): AutofillPlan[] {
   const today = programDayOf(args.clock.now, args.clock.timeZone);
-  const consumedDays = new Set<DayKey>();
+  const consumedDays = new Set<DayKey>(args.consumedDays ?? []);
   const out: AutofillPlan[] = [];
   const ordered = args.sessions.slice().sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
 
@@ -704,6 +707,23 @@ export function planOverdueAutofill(args: {
   return out;
 }
 
+/**
+ * Days whose ordinary workouts already closed a session: autofill marks a session done
+ * at its own scheduled instant (`completedAt = scheduledAt`), a real completion never does.
+ */
+export function autofilledDays(
+  sessions: Array<{ scheduledAt: Date; completed: boolean; completedAt: Date | null }>,
+  timeZone: string,
+): Set<DayKey> {
+  const days = new Set<DayKey>();
+  for (const s of sessions) {
+    if (s.completed && s.completedAt && s.completedAt.getTime() === s.scheduledAt.getTime()) {
+      days.add(programDayOf(s.scheduledAt, timeZone));
+    }
+  }
+  return days;
+}
+
 // ---------------------------------------------------------------------------
 // Session flow (B05/B31/B32)
 // ---------------------------------------------------------------------------
@@ -720,6 +740,48 @@ export function isSessionOpenForSets(
 /** `Workout.time` of a program set: its completion instant plus `setNumber` seconds (keeps sets ordered). */
 export function programSetWorkoutTime(completedAt: Date, setNumber: number): Date {
   return new Date(completedAt.getTime() + setNumber * 1000);
+}
+
+/** The idempotency key of the workout of a program set: one workout per set, however often it is sent. */
+export function programSetClientRequestId(setId: string): string {
+  return `program-set:${setId}`;
+}
+
+/** The `createWorkoutForUser` input of a recorded program set (its local day and `programSetWorkoutTime`). */
+export function programSetWorkoutInput(args: {
+  setId: string;
+  setNumber: number;
+  exerciseType: string;
+  actualReps: number;
+  doneAt: Date;
+  timeZone: string;
+}): { exerciseType: string; reps: number; date: DayKey; time: string; clientRequestId: string } {
+  return {
+    exerciseType: args.exerciseType,
+    reps: args.actualReps,
+    date: programDayOf(args.doneAt, args.timeZone),
+    time: programSetWorkoutTime(args.doneAt, args.setNumber).toISOString(),
+    clientRequestId: programSetClientRequestId(args.setId),
+  };
+}
+
+/**
+ * Records a program set once: `claim` fills the set only if it is still empty; only the request
+ * that claimed it runs `create` (the workout, points, notifications). If `create` fails, `release`
+ * empties the set again and the error goes on. A request that lost the claim gets `null`.
+ */
+export async function recordClaimedSet<T>(steps: {
+  claim(): Promise<boolean>;
+  create(): Promise<T>;
+  release(): Promise<void>;
+}): Promise<T | null> {
+  if (!(await steps.claim())) return null;
+  try {
+    return await steps.create();
+  } catch (e) {
+    await steps.release();
+    throw e;
+  }
 }
 
 export type SessionSetRecord = { setNumber: number; actualReps: number | null; completedAt: Date | null };
@@ -771,4 +833,13 @@ export function programReplacementScope(
   managedByGroupId: string | null | undefined,
 ): { exerciseType: ProgramExerciseType; managedByGroupId: string | null } {
   return { exerciseType, managedByGroupId: managedByGroupId || null };
+}
+
+/** The `updateMany` filter of the active programs a new one switches off (see `programReplacementScope`). */
+export function programReplacementWhere(
+  userId: string,
+  exerciseType: ProgramExerciseType,
+  managedByGroupId: string | null | undefined,
+): { userId: string; isActive: true; exerciseType: ProgramExerciseType; managedByGroupId: string | null } {
+  return { userId, isActive: true, ...programReplacementScope(exerciseType, managedByGroupId) };
 }

@@ -38,8 +38,8 @@ export type ProgramRemindersDeps = {
   findDueSessions(from: Date, to: Date): Promise<DueSession[]>;
   /** Not completed sessions of active programs scheduled before `before`, earliest first. */
   findOverdueSessions(before: Date): Promise<OverdueSession[]>;
-  /** A notice of `type` for `link` was already written at or after `since` (by the old page-load code). */
-  hasLegacyNotice(userId: string, type: string, link: string, since: Date): Promise<boolean>;
+  /** A notice of `type` for `link` was already written (by the old page-load code) at or after `since`; `null` — ever. */
+  hasLegacyNotice(userId: string, type: string, link: string, since: Date | null): Promise<boolean>;
   markReminderSent(sessionIds: string[], now: Date): Promise<void>;
   claimDispatch(key: string): Promise<boolean>;
   notifyUsers: typeof notifyUsersFn;
@@ -119,7 +119,9 @@ export function createProgramRemindersJob(deps: ProgramRemindersDeps): Scheduler
     for (const session of firstByProgram.values()) {
       const link = `/program/session/${session.id}`;
       for (const notice of planMissedSessionNotices(session, now)) {
-        if (await deps.hasLegacyNotice(session.userId, notice.type, link, session.scheduledAt)) continue;
+        // The stop warning is once per session: an old one counts even if the session was shifted since.
+        const since = notice.kind === 'stop_warning' ? null : session.scheduledAt;
+        if (await deps.hasLegacyNotice(session.userId, notice.type, link, since)) continue;
         if (!(await deps.claimDispatch(notice.key))) continue;
         await deps.notifyUsers(
           [session.userId],
@@ -185,7 +187,7 @@ export const programRemindersJob = createProgramRemindersJob({
   hasLegacyNotice: async (userId, type, link, since) => {
     const { prisma } = await import('@/lib/prisma');
     const row = await prisma.notification.findFirst({
-      where: { userId, type, link, createdAt: { gte: since } },
+      where: { userId, type, link, ...(since ? { createdAt: { gte: since } } : {}) },
       select: { id: true },
     });
     return Boolean(row);

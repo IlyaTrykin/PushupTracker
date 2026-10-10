@@ -39,13 +39,29 @@ export function workoutDayKey(workout: { date: string | Date }): DayKey {
   return parseDayKey(String(date).slice(0, 10)) ?? dbDateToDayKey(new Date(date));
 }
 
-/** Today in the browser's zone (client components). */
-export function localTodayKey(now: Date = new Date()): DayKey {
-  let zone = 'UTC';
+function browserTimeZone(): string {
   try {
-    zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  } catch {}
-  return dayKeyInZone(now, zone);
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+function validTimeZone(zone: string | null | undefined): string | null {
+  if (!zone) return null;
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: zone }).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Today for client components: in the user's saved zone (`User.timeZone` from `useAuth`), as the
+ * server counts it; the browser zone only while the saved one is unknown or invalid.
+ */
+export function localTodayKey(timeZone?: string | null, now: Date = new Date()): DayKey {
+  return dayKeyInZone(now, validTimeZone(timeZone) ?? browserTimeZone());
 }
 
 export function workoutPoints(workout: DayStatsWorkout): number {

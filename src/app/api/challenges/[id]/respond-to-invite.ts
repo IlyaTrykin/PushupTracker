@@ -5,9 +5,10 @@ import { challengeResponseMessage, notifyUsers } from '@/lib/notify';
 
 type InviteAnswer = 'accepted' | 'declined';
 
-// Ответ на приглашение в челлендж (B20): меняется только статус pending, повторное
-// нажатие возвращает текущий статус без второго уведомления создателю; передумать
-// после ответа нельзя. Уведомление создателю — только in-app, на его языке.
+// Ответ на приглашение в челлендж (B20): повторное нажатие того же ответа возвращает
+// текущий статус без второго уведомления создателю. Ответ можно сменить (принять после
+// отказа и наоборот) — создателю уходит только первый ответ на приглашение, смена — без
+// уведомления. Уведомление создателю — только in-app, на его языке.
 export async function respondToChallengeInvite(
   request: NextRequest,
   ctx: { params: Promise<{ id: string }> },
@@ -38,26 +39,30 @@ export async function respondToChallengeInvite(
     }
 
     if (participant.status === answer) return NextResponse.json({ ok: true, status: answer });
-    if (participant.status !== 'pending') {
+    // The creator takes part in his own challenge; other statuses are not answers to change.
+    const changeable = participant.status === 'pending' || participant.status === 'accepted' || participant.status === 'declined';
+    if (!changeable || participant.challenge.creatorId === user.id) {
       return NextResponse.json(
         { error: 'Вы уже ответили на это приглашение', code: 'INVITE_ALREADY_ANSWERED', status: participant.status },
         { status: 409 },
       );
     }
 
-    // Условное обновление: из двух одновременных нажатий уведомление отправит только одно.
+    // Условное обновление от прочитанного статуса: из двух одновременных нажатий проходит одно,
+    // и только переход из pending уведомляет создателя.
     const claimed = await prisma.challengeParticipant.updateMany({
-      where: { id: participant.id, status: 'pending' },
+      where: { id: participant.id, status: participant.status },
       data: { status: answer },
     });
     if (claimed.count === 0) {
       const current = await prisma.challengeParticipant.findUnique({ where: { id: participant.id }, select: { status: true } });
       if (current?.status === answer) return NextResponse.json({ ok: true, status: answer });
       return NextResponse.json(
-        { error: 'Вы уже ответили на это приглашение', code: 'INVITE_ALREADY_ANSWERED', status: current?.status ?? null },
+        { error: 'Ответ изменился, обновите страницу', code: 'INVITE_ANSWER_CONFLICT', status: current?.status ?? null },
         { status: 409 },
       );
     }
+    if (participant.status !== 'pending') return NextResponse.json({ ok: true, status: answer });
 
     const { creatorId, name } = participant.challenge;
     if (creatorId && creatorId !== user.id) {

@@ -4,10 +4,12 @@ import { dayKeyInZone, localHHMM } from './calendar-day';
 import {
   buildProgramDraft,
   evaluateProgramOutcome,
+  autofilledDays,
+  recordClaimedSet,
   isSessionOpenForSets,
   planOverdueAutofill,
   planProgramExtension,
-  programReplacementScope,
+  programReplacementWhere,
   programSetWorkoutTime,
   programWorkoutDate,
   resolveProgramStartDay,
@@ -209,8 +211,71 @@ test('completion backfills the workout of the deleted set, not of the last one',
   assert.deepEqual(setsMissingWorkouts(sets, []).map((s) => s.setNumber), [1, 2, 3, 4, 5]);
 });
 
-test('a group assignment replaces only that group\'s program, never the personal one', () => {
-  assert.deepEqual(programReplacementScope('pushups', 'group-1'), { exerciseType: 'pushups', managedByGroupId: 'group-1' });
-  assert.deepEqual(programReplacementScope('pushups', null), { exerciseType: 'pushups', managedByGroupId: null });
-  assert.deepEqual(programReplacementScope('pushups', undefined), { exerciseType: 'pushups', managedByGroupId: null });
+/** The equality semantics of a Prisma `where` with plain values (null matches IS NULL). */
+function matchesWhere(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([key, value]) => row[key] === value);
+}
+
+test('a group assignment replaces only that group\'s program, never the personal one (the updateMany filter)', () => {
+  const programs = [
+    { id: 'personal', userId: 'u1', exerciseType: 'pushups', isActive: true, managedByGroupId: null },
+    { id: 'group-1', userId: 'u1', exerciseType: 'pushups', isActive: true, managedByGroupId: 'g1' },
+    { id: 'group-2', userId: 'u1', exerciseType: 'pushups', isActive: true, managedByGroupId: 'g2' },
+    { id: 'squats', userId: 'u1', exerciseType: 'squats', isActive: true, managedByGroupId: null },
+    { id: 'other-user', userId: 'u2', exerciseType: 'pushups', isActive: true, managedByGroupId: null },
+    { id: 'old', userId: 'u1', exerciseType: 'pushups', isActive: false, managedByGroupId: 'g1' },
+  ];
+  const replaced = (managedByGroupId: string | null | undefined) =>
+    programs.filter((p) => matchesWhere(p, programReplacementWhere('u1', 'pushups', managedByGroupId))).map((p) => p.id);
+
+  assert.deepEqual(replaced('g1'), ['group-1']);
+  assert.deepEqual(replaced(null), ['personal']);
+  assert.deepEqual(replaced(undefined), ['personal']);
+});
+
+test('two programs on one exercise: one ordinary workout day closes at most one overdue session', () => {
+  const clock = { now: new Date('2026-10-10T09:00:00Z'), timeZone: MOSCOW };
+  const sets = (p: string) => [1, 2, 3].map((n) => ({ id: `${p}${n}`, targetReps: 10 }));
+  const dayTotals = new Map([['2026-10-07', 30]]);
+  const personal = { id: 'personal', scheduledAt: new Date('2026-10-07T16:00:00Z'), isFinalTest: false, sets: sets('p') };
+  const group = { id: 'group', scheduledAt: new Date('2026-10-07T16:00:00Z'), isFinalTest: false, sets: sets('g') };
+
+  const first = planOverdueAutofill({ sessions: [personal], dayTotals, clock });
+  assert.deepEqual(first.map((p) => p.sessionId), ['personal']);
+
+  // The second program sees that the day was already used by the first one.
+  const second = planOverdueAutofill({ sessions: [group], dayTotals, clock, consumedDays: new Set(['2026-10-07']) });
+  assert.deepEqual(second, []);
+});
+
+test('days already closed by autofill are recognised by completedAt = scheduledAt, not by a normal completion', () => {
+  const at = new Date('2026-10-07T16:00:00Z');
+  const days = autofilledDays([
+    // autofill marks the session done at its own scheduled time
+    { scheduledAt: at, completed: true, completedAt: at },
+    // a session the user went through himself on 2026-10-08
+    { scheduledAt: new Date('2026-10-08T16:00:00Z'), completed: true, completedAt: new Date('2026-10-08T17:12:00Z') },
+    { scheduledAt: new Date('2026-10-09T16:00:00Z'), completed: false, completedAt: null },
+  ], MOSCOW);
+  assert.deepEqual([...days], ['2026-10-07']);
+});
+
+test('a program set: only the request that claims the set creates its workout; a failed creation releases the set', async () => {
+  const log: string[] = [];
+  const steps = (claimed: boolean, createFails = false) => ({
+    claim: async () => { log.push('claim'); return claimed; },
+    create: async () => { log.push('create'); if (createFails) throw new Error('RATE_LIMITED'); return 'workout'; },
+    release: async () => { log.push('release'); },
+  });
+
+  assert.equal(await recordClaimedSet(steps(true)), 'workout');
+  assert.deepEqual(log.splice(0), ['claim', 'create']);
+
+  // a parallel copy lost the claim: no workout, no points, no notifications
+  assert.equal(await recordClaimedSet(steps(false)), null);
+  assert.deepEqual(log.splice(0), ['claim']);
+
+  // over the daily limit: the set is free again and the error reaches the caller
+  await assert.rejects(recordClaimedSet(steps(true, true)), /RATE_LIMITED/);
+  assert.deepEqual(log.splice(0), ['claim', 'create', 'release']);
 });

@@ -183,3 +183,21 @@ test('cleanup runs once per UTC day however many ticks there are', async () => {
 
   assert.deepEqual(runs, ['2026-10-10T00:05:00.000Z', '2026-10-11T00:05:00.000Z']);
 });
+
+test('stop warning: any earlier program_stop_warning with this link counts, even one written before the session was shifted', async () => {
+  const calls: NotifyCall[] = [];
+  // The session was shifted after the old page-load code had warned: the old notice is older than scheduledAt.
+  const scheduledAt = new Date('2026-10-09T16:00:00.000Z');
+  const legacy = [{ userId: 'u1', type: 'program_stop_warning', link: '/program/session/s1', createdAt: new Date('2026-10-05T10:00:00.000Z') }];
+  const job = createProgramRemindersJob(programDeps({
+    findOverdueSessions: async () => [
+      { id: 's1', userId: 'u1', programId: 'p1', exerciseType: 'squats', scheduledAt, shiftedCount: 6, timeZone: 'Europe/Moscow' },
+    ],
+    hasLegacyNotice: async (userId, type, link, since) =>
+      legacy.some((n) => n.userId === userId && n.type === type && n.link === link && (since == null || n.createdAt >= since)),
+  }, calls));
+
+  await job.run(new Date(scheduledAt.getTime() + 25 * HOUR));
+
+  assert.deepEqual(calls.map((c) => c.opts?.type), ['program_missed_24h']);
+});

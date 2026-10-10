@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
@@ -42,6 +42,7 @@ type ChallengeListItem = {
   endDate: string;
   createdAt: string;
   creatorId?: string;
+  groupId?: string | null;
   creator: { username: string };
   myStatus?: 'pending' | 'accepted' | 'declined' | null;
   participants: { userId?: string; status?: 'pending' | 'accepted' | 'declined'; user: { username: string } }[];
@@ -231,9 +232,31 @@ export default function ChallengesPage() {
     return friends.filter(f => selected[f.username]).map(f => f.username);
   }, [friends, selected]);
 
+  // Unanswered invitations, and declined ones that are still running — the answer can be changed.
   const invites = useMemo(() => {
-    return (challenges || []).filter(c => c.myStatus === 'pending');
-  }, [challenges]);
+    return (challenges || []).filter((c) =>
+      c.myStatus === 'pending'
+      || (c.myStatus === 'declined' && !c.groupId && c.creatorId !== meId && !challengeStatus(c.startDate, c.endDate).finished));
+  }, [challenges, meId]);
+
+  // /challenges?invite=<id> (the link of an invitation notice): scroll to that challenge and highlight it.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const scrolledToFocus = useRef(false);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('invite');
+    if (id) setFocusId(id);
+  }, []);
+  useEffect(() => {
+    if (!focusId || scrolledToFocus.current) return;
+    const el = document.getElementById(`challenge-${focusId}`);
+    if (!el) return;
+    scrolledToFocus.current = true;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusId, challenges]);
+  // A personal challenge the user accepted (not his own, not a group one) can be declined while it runs.
+  const canLeave = (c: ChallengeListItem) =>
+    c.myStatus === 'accepted' && !c.groupId && c.creatorId !== meId && !challengeStatus(c.startDate, c.endDate).finished;
+  const cardStyle = (id: string): React.CSSProperties => (id === focusId ? { ...itemCard, ...focusedCard } : itemCard);
 
   const pendingConfirmationChallenges = useMemo(() => {
     return (challenges || [])
@@ -529,7 +552,7 @@ export default function ChallengesPage() {
               const st = challengeStatus(c.startDate, c.endDate);
               const warn = st.active && st.daysLeft < 3 ? badge(tt(`осталось ${st.daysLeft} дн.`), 'amber') : null;
               return (
-                <div key={c.id} style={itemCard}>
+                <div key={c.id} id={`challenge-${c.id}`} style={cardStyle(c.id)}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -546,6 +569,9 @@ export default function ChallengesPage() {
                       <Link href={`/challenges/${c.id}`} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
                         {tt('Открыть')}
                       </Link>
+                      {canLeave(c) ? (
+                        <button type="button" style={btnDanger} onClick={() => declineInvite(c.id)}>{LEAVE_LABEL[locale === 'en' ? 'en' : 'ru']}</button>
+                      ) : null}
                       <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>{tt('Удалить')}</button>
                     </div>
                   </div>
@@ -561,12 +587,12 @@ export default function ChallengesPage() {
           <h2 style={{ marginTop: 0 }}>{tt('Приглашения')}</h2>
           <div style={{ display: 'grid', gap: 10 }}>
             {invites.map(c => (
-              <div key={c.id} style={itemCard}>
+              <div key={c.id} id={`challenge-${c.id}`} style={cardStyle(c.id)}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                   <div>
                     <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                       <span>{c.name}</span>
-                      {badge(tt('Ожидает ответа'), 'amber')}
+                      {c.myStatus === 'pending' ? badge(tt('Ожидает ответа'), 'amber') : null}
                     </div>
                     <div style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
                       {formatChallengeDay(c.startDate, localeTag)} → {formatChallengeDay(c.endDate, localeTag)} · {tt('создатель')}: {c.creator.username}
@@ -575,7 +601,9 @@ export default function ChallengesPage() {
 
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <button type="button" style={btnPrimary} onClick={() => acceptInvite(c.id)}>{tt('Принять')}</button>
-                    <button type="button" style={btnDanger} onClick={() => declineInvite(c.id)}>{tt('Отклонить')}</button>
+                    {c.myStatus === 'pending' ? (
+                      <button type="button" style={btnDanger} onClick={() => declineInvite(c.id)}>{tt('Отклонить')}</button>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -593,7 +621,7 @@ export default function ChallengesPage() {
           <div style={{ display: 'grid', gap: 10 }}>
             {historyChallenges.map(c => {
               return (
-                <div key={c.id} style={itemCard}>
+                <div key={c.id} id={`challenge-${c.id}`} style={cardStyle(c.id)}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontWeight: 800, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -721,6 +749,13 @@ const itemCard: React.CSSProperties = {
   borderRadius: 22,
   background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.88) 100%)',
   boxShadow: '0 16px 34px rgba(15, 23, 42, 0.06)',
+};
+
+const LEAVE_LABEL = { ru: 'Отказаться', en: 'Leave' } as const;
+
+const focusedCard: React.CSSProperties = {
+  border: '2px solid #f59e0b',
+  boxShadow: '0 0 0 4px rgba(245, 158, 11, 0.18), 0 16px 34px rgba(15, 23, 42, 0.06)',
 };
 
 const mutedText: React.CSSProperties = {

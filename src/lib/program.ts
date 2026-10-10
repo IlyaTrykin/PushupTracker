@@ -1,17 +1,22 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { notifyUsers, programStoppedMessage } from '@/lib/notify';
-import { dayKeyToDbDate, dbDateToDayKey, diffDays, normalizeTimeZone, type DayKey } from '@/lib/calendar-day';
+import { WorkoutCreateError, createWorkoutForUser, type WorkoutCreateResult } from '@/lib/workout-create';
+import { addDays, dayKeyToDbDate, dbDateToDayKey, diffDays, normalizeTimeZone, type DayKey } from '@/lib/calendar-day';
 import {
   ProgramError,
+  autofilledDays,
   buildProgramDraft,
+  recordClaimedSet,
   computeSetTarget,
   evaluateProgramOutcome,
   isSessionOpenForSets,
   planOverdueAutofill,
   planProgramExtension,
   programDayOf,
-  programReplacementScope,
+  programReplacementWhere,
+  programSetClientRequestId,
+  programSetWorkoutInput,
   programSetWorkoutTime,
   programWorkoutDate,
   setsMissingWorkouts,
@@ -134,43 +139,65 @@ function sumRepsByDay(workouts: Array<{ date: Date; reps: number | null }>): Map
 }
 
 async function autofillOverdueSessionsFromExternalWorkouts(programId: string, clock: ProgramClock) {
-  const program = await prisma.trainingProgram.findUnique({
-    where: { id: programId },
-    include: {
-      sessions: {
-        where: { completed: false, isFinalTest: false },
-        orderBy: { scheduledAt: 'asc' },
-        include: {
-          sets: { orderBy: { setNumber: 'asc' } },
-        },
-      },
-    },
-  });
-
-  if (!program || !program.sessions.length) return;
-
   const today = programDayOf(clock.now, clock.timeZone);
-  const overdueDays = program.sessions
-    .map((s) => programDayOf(s.scheduledAt, clock.timeZone))
-    .filter((day) => diffDays(day, today) < 0);
-  if (!overdueDays.length) return;
-
-  const workouts = await prisma.workout.findMany({
-    where: {
-      userId: program.userId,
-      exerciseType: program.exerciseType,
-      date: { gte: dayKeyToDbDate(overdueDays[0]), lte: dayKeyToDbDate(overdueDays[overdueDays.length - 1]) },
-      trainingSessionId: null,
+  const head = await prisma.trainingProgram.findUnique({
+    where: { id: programId },
+    select: {
+      userId: true,
+      exerciseType: true,
+      sessions: { where: { completed: false, isFinalTest: false }, select: { scheduledAt: true } },
     },
-    select: { date: true, reps: true },
   });
-
-  const plan = planOverdueAutofill({ sessions: program.sessions, dayTotals: sumRepsByDay(workouts), clock });
-  if (!plan.length) return;
-
-  const byId = new Map(program.sessions.map((s) => [s.id, s]));
+  if (!head) return;
+  if (!head.sessions.some((s) => diffDays(programDayOf(s.scheduledAt, clock.timeZone), today) < 0)) return;
 
   await prisma.$transaction(async (tx) => {
+    // One user + exercise at a time: two programs (D02) must not both read a day as free and
+    // close a session each from the same ordinary workout.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`program-autofill:${head.userId}:${head.exerciseType}`}))`;
+
+    const sessions = await tx.trainingSession.findMany({
+      where: { programId, completed: false, isFinalTest: false },
+      orderBy: { scheduledAt: 'asc' },
+      include: { sets: { orderBy: { setNumber: 'asc' } } },
+    });
+    const overdueDays = sessions
+      .map((s) => programDayOf(s.scheduledAt, clock.timeZone))
+      .filter((day) => diffDays(day, today) < 0);
+    if (!overdueDays.length) return;
+
+    const workouts = await tx.workout.findMany({
+      where: {
+        userId: head.userId,
+        exerciseType: head.exerciseType,
+        date: { gte: dayKeyToDbDate(overdueDays[0]), lte: dayKeyToDbDate(overdueDays[overdueDays.length - 1]) },
+        trainingSessionId: null,
+      },
+      select: { date: true, reps: true },
+    });
+
+    // Sessions of every program of this user on this exercise already closed by autofill (D02: a
+    // personal and a group program may both be active) — one ordinary workout closes one session.
+    const closedSessions = await tx.trainingSession.findMany({
+      where: {
+        completed: true,
+        program: { userId: head.userId, exerciseType: head.exerciseType },
+        scheduledAt: {
+          gte: dayKeyToDbDate(addDays(overdueDays[0], -1)),
+          lt: dayKeyToDbDate(addDays(overdueDays[overdueDays.length - 1], 2)),
+        },
+      },
+      select: { scheduledAt: true, completed: true, completedAt: true },
+    });
+
+    const plan = planOverdueAutofill({
+      sessions,
+      dayTotals: sumRepsByDay(workouts),
+      clock,
+      consumedDays: autofilledDays(closedSessions, clock.timeZone),
+    });
+    const byId = new Map(sessions.map((s) => [s.id, s]));
+
     for (const item of plan) {
       const session = byId.get(item.sessionId);
       if (!session) continue;
@@ -255,12 +282,10 @@ export async function createTrainingProgram(
 ) {
   const timeZone = await getUserTimeZone(userId);
   const draft = buildProgramDraft(input, { now: new Date(), timeZone });
-  const scope = programReplacementScope(draft.clean.exerciseType, options?.managedByGroupId);
-
   const created = await prisma.$transaction(async (tx) => {
     // A group assignment never switches off the member's personal program (and vice versa).
     await tx.trainingProgram.updateMany({
-      where: { userId, isActive: true, ...scope },
+      where: programReplacementWhere(userId, draft.clean.exerciseType, options?.managedByGroupId),
       data: { isActive: false, status: 'inactive' },
     });
 
@@ -852,9 +877,38 @@ export async function startTrainingSession(
   return getProgramById(userId, session.program.id);
 }
 
+type ProgramSetOwner = { id: string; username: string; timeZone: string };
+
+/**
+ * The workout of a recorded set, through the common creation path (records, badges, the daily
+ * limit, notifications to friends — as for any workout). Idempotent by the set's own key.
+ */
+async function recordProgramSetWorkout(
+  owner: ProgramSetOwner,
+  set: { id: string; setNumber: number; actualReps: number; doneAt: Date },
+  session: { id: string; exerciseType: string },
+  now: Date,
+): Promise<WorkoutCreateResult> {
+  const input = programSetWorkoutInput({
+    setId: set.id,
+    setNumber: set.setNumber,
+    exerciseType: session.exerciseType,
+    actualReps: set.actualReps,
+    doneAt: set.doneAt,
+    timeZone: owner.timeZone,
+  });
+  try {
+    return await createWorkoutForUser(owner, input, { source: 'program', trainingSessionId: session.id, now });
+  } catch (e) {
+    if (e instanceof WorkoutCreateError) throw new ProgramError(e.message, e.status, e.code);
+    throw e;
+  }
+}
+
 /**
  * Records one set. Idempotent: a set that is already recorded answers with the stored
- * value, and only the request that actually fills the set creates its `Workout`.
+ * value; the set's workout has its own idempotency key (`programSetClientRequestId`), so a
+ * repeated or parallel request never creates a second one.
  */
 export async function submitTrainingSet(args: {
   userId: string;
@@ -887,7 +941,7 @@ export async function submitTrainingSet(args: {
               needsRetest: true,
               isActive: true,
               exerciseType: true,
-              user: { select: { timeZone: true } },
+              user: { select: { username: true, timeZone: true } },
             },
           },
         },
@@ -917,30 +971,35 @@ export async function submitTrainingSet(args: {
     );
   }
 
-  await prisma.$transaction(async (tx) => {
-    const claimed = await tx.trainingSet.updateMany({
-      where: { id: row.id, actualReps: null },
-      data: { actualReps, completedAt: now },
-    });
-    if (claimed.count !== 1) return;
-
-    await tx.workout.create({
-      data: {
-        userId: args.userId,
-        reps: actualReps,
-        date: programWorkoutDate(now, clock.timeZone),
-        time: programSetWorkoutTime(now, row.setNumber),
-        exerciseType: row.session.program.exerciseType,
-        trainingSessionId: args.sessionId,
-      },
-    });
+  // The set is claimed first; only the request that filled it creates the workout. Over the
+  // daily limit (or on any failure) the set is emptied again, so nothing is recorded.
+  const created = await recordClaimedSet({
+    claim: async () =>
+      (await prisma.trainingSet.updateMany({ where: { id: row.id, actualReps: null }, data: { actualReps, completedAt: now } }))
+        .count === 1,
+    create: () =>
+      recordProgramSetWorkout(
+        { id: args.userId, username: row.session.program.user?.username ?? '', timeZone: clock.timeZone },
+        { id: row.id, setNumber: row.setNumber, actualReps, doneAt: now },
+        { id: args.sessionId, exerciseType: row.session.program.exerciseType },
+        now,
+      ),
+    release: async () => {
+      await prisma.trainingSet
+        .updateMany({ where: { id: row.id, actualReps, completedAt: now }, data: { actualReps: null, completedAt: null } })
+        .catch((e) => console.error('PROGRAM SET RELEASE ERROR:', e));
+    },
   });
 
   const stored = await prisma.trainingSet.findUnique({
     where: { id: row.id },
     select: { id: true, setNumber: true, actualReps: true, completedAt: true },
   });
-  return recordedSet(stored ?? { ...row, actualReps, completedAt: now });
+  return {
+    ...recordedSet(stored ?? { ...row, actualReps, completedAt: now }),
+    records: created?.records ?? [],
+    achievements: created?.achievements ?? [],
+  };
 }
 
 /**
@@ -962,7 +1021,7 @@ export async function completeTrainingSession(userId: string, sessionId: string)
             exerciseType: true,
             needsRetest: true,
             isActive: true,
-            user: { select: { timeZone: true } },
+            user: { select: { username: true, timeZone: true } },
           },
         },
         sets: { orderBy: { setNumber: 'asc' } },
@@ -970,7 +1029,7 @@ export async function completeTrainingSession(userId: string, sessionId: string)
     });
 
     if (!session) throw new ProgramError('Сессия не найдена', 404);
-    if (session.completed) return { programId: session.program.id, changed: false };
+    if (session.completed) return { programId: session.program.id, changed: false as const };
     assertProgramUsable(session.program);
 
     const missing = session.sets.filter((s) => s.actualReps == null);
@@ -986,10 +1045,12 @@ export async function completeTrainingSession(userId: string, sessionId: string)
         startedAt: session.startedAt || now,
       },
     });
-    if (claimed.count !== 1) return { programId: session.program.id, changed: false };
+    if (claimed.count !== 1) return { programId: session.program.id, changed: false as const };
 
     const timeZone = normalizeTimeZone(session.program.user?.timeZone);
 
+    // Recorded sets without a workout (e.g. it was deleted on the dashboard) get it back in this
+    // transaction: a restore, not a new workout — no daily limit, no notifications, never lost.
     const workouts = await tx.workout.findMany({
       where: { trainingSessionId: session.id },
       select: { time: true, reps: true },
@@ -997,17 +1058,20 @@ export async function completeTrainingSession(userId: string, sessionId: string)
     const missingSets = setsMissingWorkouts(session.sets, workouts);
     if (missingSets.length) {
       await tx.workout.createMany({
-        data: missingSets.map((s) => {
-          const doneAt = s.completedAt ?? now;
+        data: missingSets.map((st) => {
+          const doneAt = st.completedAt ?? now;
           return {
             userId: session.program.userId,
-            reps: s.actualReps || 0,
+            reps: st.actualReps || 0,
             date: programWorkoutDate(doneAt, timeZone),
-            time: programSetWorkoutTime(doneAt, s.setNumber),
+            time: programSetWorkoutTime(doneAt, st.setNumber),
             exerciseType: session.program.exerciseType,
             trainingSessionId: session.id,
+            clientRequestId: programSetClientRequestId(st.id),
           };
         }),
+        // A workout of that set that exists under its key but did not match by time/reps stays as is.
+        skipDuplicates: true,
       });
     }
 
@@ -1030,7 +1094,7 @@ export async function completeTrainingSession(userId: string, sessionId: string)
       }
     }
 
-    return { programId: session.program.id, changed: true };
+    return { programId: session.program.id, changed: true as const };
   });
 
   if (result.changed) await recalculateUpcomingSessions(result.programId, now);

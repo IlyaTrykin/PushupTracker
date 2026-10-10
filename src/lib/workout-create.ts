@@ -8,7 +8,14 @@ import { dayKeyInZone, dayKeyToDbDate, normalizeTimeZone } from './calendar-day'
 import { challengeTotalDays, scoreChallenge, type ChallengeWorkoutRow } from './challenge-scoring';
 import { formatWorkoutValue } from './exercise-metrics';
 import { exerciseLabel, isDistanceExercise } from './exercises';
-import { challengeRankMessage, friendWorkoutMessage, notifyUsers, type LocalizedMessage, type NotifyLocale } from './notify';
+import {
+  challengeRankMessage,
+  friendWorkoutMessage,
+  notifyUsers,
+  type LocalizedMessage,
+  type NotifyLocale,
+  type notifyUsers as notifyUsersFn,
+} from './notify';
 import { onWorkoutCreated, type CreatedWorkout, type WorkoutHookResult } from './workout-hooks';
 import {
   WORKOUT_CREATE_LIMIT_PER_DAY,
@@ -34,7 +41,7 @@ export const WORKOUT_SELECT = {
   trainingSessionId: true,
 } as const;
 
-export type WorkoutSource = 'web' | 'telegram';
+export type WorkoutSource = 'web' | 'telegram' | 'program';
 
 /** The owner of the new workout. */
 export type WorkoutCreateUser = { id: string; username: string; timeZone?: string | null };
@@ -57,6 +64,8 @@ export type WorkoutCreateOptions = {
   source: WorkoutSource;
   /** Who presses the button (a group manager may record for a member); the creation limit is theirs. */
   actorId?: string;
+  /** A set of a training-program session (the workout is linked to the session). */
+  trainingSessionId?: string | null;
   now?: Date;
 };
 
@@ -166,124 +175,207 @@ async function getChallengeRankMap(challengeId: string): Promise<Map<string, num
   });
 }
 
-async function findReward(reps: number, exerciseType: string, loadKg: number | null) {
-  const prisma = await db();
-  const { earnedPoints, earnedPointsTenths } = getWorkoutPoints(reps, exerciseType, loadKg);
-  return matchWorkoutReward(
-    await prisma.workoutReward.findFirst({
-      where: { minPointsTenths: { lte: earnedPointsTenths } },
-      orderBy: [{ minPointsTenths: 'desc' }, { createdAt: 'asc' }],
-      select: { id: true, message: true, minPointsTenths: true, createdAt: true, updatedAt: true },
-    }),
-    earnedPoints,
-  );
-}
+type WorkoutReward = ReturnType<typeof matchWorkoutReward>;
+
+/** The row a new workout is stored as. */
+export type WorkoutInsert = {
+  userId: string;
+  reps: number;
+  loadKg: number | null;
+  repsLeft: number | null;
+  repsRight: number | null;
+  durationSeconds: number | null;
+  exerciseType: string;
+  date: Date;
+  time: Date;
+  clientRequestId: string | null;
+  trainingSessionId: string | null;
+};
+
+type ActiveChallenge = { challengeId: string; challenge: { name: string } };
+
+/** Everything `createWorkoutForUser` touches outside itself (the database, the limiter, notifications, hooks). */
+export type WorkoutCreateDeps = {
+  findWorkoutByRequestId(userId: string, clientRequestId: string): Promise<CreatedWorkout | null>;
+  hitRateLimit(key: string, limit: number, windowSeconds: number): Promise<{ ok: boolean; retryAfterSeconds: number }>;
+  /** Throws Prisma's P2002 when (userId, clientRequestId) is taken. */
+  insertWorkout(data: WorkoutInsert): Promise<CreatedWorkout>;
+  findActiveChallenges(userId: string, exerciseType: string, date: Date): Promise<ActiveChallenge[]>;
+  challengeRanks(challengeId: string): Promise<Map<string, number>>;
+  findFollowerIds(userId: string): Promise<string[]>;
+  findReward(reps: number, exerciseType: string, loadKg: number | null): Promise<WorkoutReward>;
+  notifyUsers: typeof notifyUsersFn;
+  onWorkoutCreated: typeof onWorkoutCreated;
+};
 
 function ok<T>(parsed: { ok: true; value: T } | { ok: false; error: string }, code: string): T {
   if (!parsed.ok) throw new WorkoutCreateError(parsed.error, 400, code);
   return parsed.value;
 }
 
-async function replay(workout: CreatedWorkout): Promise<WorkoutCreateResult> {
-  return {
-    workout,
-    reward: await findReward(workout.reps, workout.exerciseType, workout.loadKg),
-    records: [],
-    achievements: [],
-    replayed: true,
+export type CreateWorkout = (
+  user: WorkoutCreateUser,
+  input: WorkoutCreateInput,
+  options: WorkoutCreateOptions,
+) => Promise<WorkoutCreateResult>;
+
+/** `createWorkoutForUser` over the given dependencies (tests pass fakes). */
+export function createWorkoutCreator(deps: WorkoutCreateDeps): CreateWorkout {
+  async function replay(workout: CreatedWorkout): Promise<WorkoutCreateResult> {
+    return {
+      workout,
+      reward: await deps.findReward(workout.reps, workout.exerciseType, workout.loadKg),
+      records: [],
+      achievements: [],
+      replayed: true,
+    };
+  }
+
+  async function notifyAboutWorkout(
+    owner: WorkoutCreateUser,
+    workout: CreatedWorkout & { durationSeconds?: number | null },
+    activeChallenges: ActiveChallenge[],
+    beforeRanks: Map<string, Map<string, number>>,
+  ): Promise<void> {
+    const followerIds = (await deps.findFollowerIds(owner.id)).filter((id) => id !== owner.id);
+    await deps.notifyUsers(followerIds, 'friend_workout', (locale) => friendWorkoutText(locale, owner.username, workout), {
+      tag: `friend-workout-${owner.id}`,
+    });
+
+    for (const c of activeChallenges) {
+      const before = beforeRanks.get(c.challengeId) ?? new Map<string, number>();
+      const after = await deps.challengeRanks(c.challengeId);
+      for (const [participantId, next] of after) {
+        const prev = before.get(participantId);
+        if (!prev || prev === next || participantId === owner.id) continue;
+        await deps.notifyUsers(
+          [participantId],
+          'challenge_rank_change',
+          (locale) => challengeRankMessage(locale, { challengeId: c.challengeId, challengeName: c.challenge.name, previousRank: prev, rank: next }),
+          { tag: `challenge-rank-${c.challengeId}` },
+        );
+      }
+    }
+  }
+
+  return async function create(user, input, options) {
+    const now = options.now ?? new Date();
+    const timeZone = normalizeTimeZone(user.timeZone);
+    const today = dayKeyInZone(now, timeZone);
+
+    const exerciseType = ok(parseWorkoutExerciseType(input.exerciseType), 'WORKOUT_EXERCISE_INVALID');
+    const { reps, loadKg, repsLeft, repsRight } = ok(
+      parseWorkoutLoadFields(exerciseType, input as Record<string, unknown>),
+      'WORKOUT_VALUE_INVALID',
+    );
+    const durationSeconds = ok(parseWorkoutDuration(exerciseType, input as Record<string, unknown>), 'WORKOUT_DURATION_INVALID');
+    const rawDate = input.date === undefined || input.date === null || input.date === '' ? today : input.date;
+    const day = ok(parseWorkoutDay(rawDate, today), 'WORKOUT_DATE_INVALID');
+    const time = ok(parseWorkoutTime(input.time, day, timeZone, now), 'WORKOUT_TIME_INVALID');
+    const clientRequestId = ok(parseClientRequestId(input.clientRequestId), 'WORKOUT_REQUEST_ID_INVALID');
+
+    if (clientRequestId) {
+      const existing = await deps.findWorkoutByRequestId(user.id, clientRequestId);
+      if (existing) return replay(existing);
+    }
+
+    const limit = await deps.hitRateLimit(`workout-create:${options.actorId ?? user.id}`, WORKOUT_CREATE_LIMIT_PER_DAY, 24 * 60 * 60);
+    if (!limit.ok) {
+      throw new WorkoutCreateError('Слишком много записей за сутки', 429, 'RATE_LIMITED', limit.retryAfterSeconds);
+    }
+
+    const date = dayKeyToDbDate(day);
+    const activeChallenges = await deps.findActiveChallenges(user.id, exerciseType, date);
+
+    const beforeRanks = new Map<string, Map<string, number>>();
+    for (const c of activeChallenges) {
+      beforeRanks.set(c.challengeId, await deps.challengeRanks(c.challengeId).catch(() => new Map<string, number>()));
+    }
+
+    let workout: CreatedWorkout;
+    try {
+      workout = await deps.insertWorkout({
+        userId: user.id,
+        reps,
+        loadKg,
+        repsLeft,
+        repsRight,
+        durationSeconds,
+        exerciseType,
+        date,
+        time,
+        clientRequestId,
+        trainingSessionId: options.trainingSessionId ?? null,
+      });
+    } catch (e) {
+      // Two copies of the same request raced past the lookup: the loser returns the winner's record.
+      const code = (e as { code?: unknown } | null)?.code;
+      if (code === 'P2002' && clientRequestId) {
+        const existing = await deps.findWorkoutByRequestId(user.id, clientRequestId);
+        if (existing) return replay(existing);
+      }
+      throw e;
+    }
+
+    const reward = await deps.findReward(reps, exerciseType, loadKg);
+
+    try {
+      await notifyAboutWorkout(user, workout, activeChallenges, beforeRanks);
+    } catch (e) {
+      console.error('WORKOUT NOTIFICATIONS ERROR:', e);
+    }
+
+    let hooks: WorkoutHookResult = { records: [], achievements: [] };
+    try {
+      hooks = await deps.onWorkoutCreated(workout, { id: user.id, username: user.username, timeZone });
+    } catch (e) {
+      console.error('WORKOUT HOOK ERROR:', e);
+    }
+
+    return { workout, reward, records: hooks.records, achievements: hooks.achievements, replayed: false };
   };
 }
+
+const prismaDeps: WorkoutCreateDeps = {
+  findWorkoutByRequestId: async (userId, clientRequestId) =>
+    (await db()).workout.findUnique({
+      where: { userId_clientRequestId: { userId, clientRequestId } },
+      select: WORKOUT_SELECT,
+    }),
+  hitRateLimit: async (key, limit, windowSeconds) => (await import('./rate-limit')).hitRateLimit(key, limit, windowSeconds),
+  insertWorkout: async (data) => (await db()).workout.create({ data, select: WORKOUT_SELECT }),
+  findActiveChallenges: async (userId, exerciseType, date) =>
+    (await db()).challengeParticipant.findMany({
+      where: {
+        userId,
+        status: 'accepted',
+        challenge: { exerciseType, startDate: { lte: date }, endDate: { gte: date } },
+      },
+      select: { challengeId: true, challenge: { select: { name: true } } },
+    }),
+  challengeRanks: getChallengeRankMap,
+  findFollowerIds: async (userId) =>
+    (await (await db()).friendFollow.findMany({ where: { friendId: userId }, select: { followerId: true } })).map((f) => f.followerId),
+  findReward: async (reps, exerciseType, loadKg) => {
+    const { earnedPoints, earnedPointsTenths } = getWorkoutPoints(reps, exerciseType, loadKg);
+    return matchWorkoutReward(
+      await (await db()).workoutReward.findFirst({
+        where: { minPointsTenths: { lte: earnedPointsTenths } },
+        orderBy: [{ minPointsTenths: 'desc' }, { createdAt: 'asc' }],
+        select: { id: true, message: true, minPointsTenths: true, createdAt: true, updatedAt: true },
+      }),
+      earnedPoints,
+    );
+  },
+  notifyUsers,
+  onWorkoutCreated,
+};
 
 /**
  * Validates and records a workout of `user`. Throws `WorkoutCreateError` (400 invalid input,
  * 429 over the daily limit). A repeated `clientRequestId` returns the existing workout.
  */
-export async function createWorkoutForUser(
-  user: WorkoutCreateUser,
-  input: WorkoutCreateInput,
-  options: WorkoutCreateOptions,
-): Promise<WorkoutCreateResult> {
-  const prisma = await db();
-  const now = options.now ?? new Date();
-  const timeZone = normalizeTimeZone(user.timeZone);
-  const today = dayKeyInZone(now, timeZone);
-
-  const exerciseType = ok(parseWorkoutExerciseType(input.exerciseType), 'WORKOUT_EXERCISE_INVALID');
-  const { reps, loadKg, repsLeft, repsRight } = ok(
-    parseWorkoutLoadFields(exerciseType, input as Record<string, unknown>),
-    'WORKOUT_VALUE_INVALID',
-  );
-  const durationSeconds = ok(parseWorkoutDuration(exerciseType, input as Record<string, unknown>), 'WORKOUT_DURATION_INVALID');
-  const rawDate = input.date === undefined || input.date === null || input.date === '' ? today : input.date;
-  const day = ok(parseWorkoutDay(rawDate, today), 'WORKOUT_DATE_INVALID');
-  const time = ok(parseWorkoutTime(input.time, day, timeZone, now), 'WORKOUT_TIME_INVALID');
-  const clientRequestId = ok(parseClientRequestId(input.clientRequestId), 'WORKOUT_REQUEST_ID_INVALID');
-
-  const findExisting = (requestId: string) =>
-    prisma.workout.findUnique({
-      where: { userId_clientRequestId: { userId: user.id, clientRequestId: requestId } },
-      select: WORKOUT_SELECT,
-    });
-
-  if (clientRequestId) {
-    const existing = await findExisting(clientRequestId);
-    if (existing) return replay(existing);
-  }
-
-  const { hitRateLimit } = await import('./rate-limit');
-  const limit = await hitRateLimit(`workout-create:${options.actorId ?? user.id}`, WORKOUT_CREATE_LIMIT_PER_DAY, 24 * 60 * 60);
-  if (!limit.ok) {
-    throw new WorkoutCreateError('Слишком много записей за сутки', 429, 'RATE_LIMITED', limit.retryAfterSeconds);
-  }
-
-  const date = dayKeyToDbDate(day);
-  const activeChallenges = await prisma.challengeParticipant.findMany({
-    where: {
-      userId: user.id,
-      status: 'accepted',
-      challenge: { exerciseType, startDate: { lte: date }, endDate: { gte: date } },
-    },
-    select: { challengeId: true, challenge: { select: { name: true } } },
-  });
-
-  const beforeRanks = new Map<string, Map<string, number>>();
-  for (const c of activeChallenges) {
-    beforeRanks.set(c.challengeId, await getChallengeRankMap(c.challengeId).catch(() => new Map<string, number>()));
-  }
-
-  let workout: CreatedWorkout;
-  try {
-    workout = await prisma.workout.create({
-      data: { userId: user.id, reps, loadKg, repsLeft, repsRight, durationSeconds, exerciseType, date, time, clientRequestId },
-      select: WORKOUT_SELECT,
-    });
-  } catch (e) {
-    // Two copies of the same request raced past the lookup: the loser returns the winner's record.
-    const code = (e as { code?: unknown } | null)?.code;
-    if (code === 'P2002' && clientRequestId) {
-      const existing = await findExisting(clientRequestId);
-      if (existing) return replay(existing);
-    }
-    throw e;
-  }
-
-  const reward = await findReward(reps, exerciseType, loadKg);
-
-  try {
-    await notifyAboutWorkout(user, workout, activeChallenges, beforeRanks);
-  } catch (e) {
-    console.error('WORKOUT NOTIFICATIONS ERROR:', e);
-  }
-
-  let hooks: WorkoutHookResult = { records: [], achievements: [] };
-  try {
-    hooks = await onWorkoutCreated(workout, { id: user.id, username: user.username, timeZone });
-  } catch (e) {
-    console.error('WORKOUT HOOK ERROR:', e);
-  }
-
-  return { workout, reward, records: hooks.records, achievements: hooks.achievements, replayed: false };
-}
+export const createWorkoutForUser: CreateWorkout = createWorkoutCreator(prismaDeps);
 
 type FriendWorkoutFields = { exerciseType: string; reps: number; loadKg: number | null; durationSeconds?: number | null };
 
@@ -292,37 +384,4 @@ export function friendWorkoutText(locale: NotifyLocale, username: string, workou
   const message = friendWorkoutMessage(locale, { username, exerciseType: workout.exerciseType, value: workout.reps, loadKg: workout.loadKg });
   if (!isDistanceExercise(workout.exerciseType)) return message;
   return { ...message, body: `${username}: ${exerciseLabel(workout.exerciseType, locale)} — ${formatWorkoutValue(workout, locale)}` };
-}
-
-async function notifyAboutWorkout(
-  owner: WorkoutCreateUser,
-  workout: CreatedWorkout & { durationSeconds?: number | null },
-  activeChallenges: Array<{ challengeId: string; challenge: { name: string } }>,
-  beforeRanks: Map<string, Map<string, number>>,
-): Promise<void> {
-  const prisma = await db();
-
-  const followers = await prisma.friendFollow.findMany({
-    where: { friendId: owner.id },
-    select: { followerId: true },
-  });
-  const followerIds = followers.map((f) => f.followerId).filter((id) => id !== owner.id);
-  await notifyUsers(followerIds, 'friend_workout', (locale) => friendWorkoutText(locale, owner.username, workout), {
-    tag: `friend-workout-${owner.id}`,
-  });
-
-  for (const c of activeChallenges) {
-    const before = beforeRanks.get(c.challengeId) ?? new Map<string, number>();
-    const after = await getChallengeRankMap(c.challengeId);
-    for (const [participantId, next] of after) {
-      const prev = before.get(participantId);
-      if (!prev || prev === next || participantId === owner.id) continue;
-      await notifyUsers(
-        [participantId],
-        'challenge_rank_change',
-        (locale) => challengeRankMessage(locale, { challengeId: c.challengeId, challengeName: c.challenge.name, previousRank: prev, rank: next }),
-        { tag: `challenge-rank-${c.challengeId}` },
-      );
-    }
-  }
 }

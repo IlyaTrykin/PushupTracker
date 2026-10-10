@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthError, requireUser } from '@/lib/auth';
-import { DEFAULT_TIME_ZONE, dayKeyInZone, dayKeyToDbDate } from '@/lib/calendar-day';
+import { dayKeyInZone, dayKeyToDbDate } from '@/lib/calendar-day';
 import { GroupError, recordGroupAuditLog, requireGroupAccess, requireGroupManageAccess } from '@/lib/groups';
 import {
   isGroupGoalActive,
@@ -22,7 +22,7 @@ const GOAL_ERROR_TEXT: Record<string, string> = {
   GOAL_TITLE_INVALID: 'Название цели: от 1 до 80 символов',
   GOAL_POINTS_INVALID: 'Баллов должно быть от 100 до 10 000 000',
   GOAL_EXERCISE_INVALID: 'Неизвестное упражнение',
-  GOAL_DATE_INVALID: 'Некорректные даты цели',
+  GOAL_DATE_INVALID: 'Некорректные даты цели: окончание не раньше начала и не раньше сегодняшнего дня',
 };
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
     const { id } = await ctx.params;
     await requireGroupAccess(prisma, actor, id);
 
-    const today = dayKeyInZone(new Date(), DEFAULT_TIME_ZONE);
+    const today = dayKeyInZone(new Date(), actor.timeZone);
     const goals = await prisma.groupGoal.findMany({
       where: { groupId: id },
       orderBy: { createdAt: 'desc' },
@@ -59,10 +59,10 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     const { id } = await ctx.params;
     await requireGroupManageAccess(prisma, actor, id);
 
-    const parsed = parseGroupGoalInput(await request.json().catch(() => null));
+    const today = dayKeyInZone(new Date(), actor.timeZone);
+    const parsed = parseGroupGoalInput(await request.json().catch(() => null), today);
     if (!parsed.ok) return jsonError(GOAL_ERROR_TEXT[parsed.code], 400, parsed.code);
     const input = parsed.value;
-    const today = dayKeyInZone(new Date(), DEFAULT_TIME_ZONE);
 
     const created = await prisma.$transaction(async (tx) => {
       // Two owners posting at once must not both pass the «one active goal» check.

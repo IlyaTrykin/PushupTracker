@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { LOCALE_COOKIE_NAME, type Locale, getLocaleFromAcceptLanguage, normalizeLocale } from '@/i18n/locale';
 import { hitRateLimit } from '@/lib/rate-limit';
+import { normalizeTimeZone } from '@/lib/calendar-day';
 
 /** Unified auth helpers for API routes. */
 
@@ -23,6 +24,8 @@ export type AuthUser = {
   avatarPath: string | null;
   language: string;
   favoriteExercises: string[];
+  /** IANA zone of the user's calendar day (`User.timeZone`, normalized). */
+  timeZone: string;
 };
 
 const AUTH_TEXT = {
@@ -167,6 +170,7 @@ const authUserSelect = {
   avatarPath: true,
   language: true,
   favoriteExercises: true,
+  timeZone: true,
   deletedAt: true,
 } as const;
 
@@ -237,6 +241,7 @@ async function getAuthUserByToken(token: string): Promise<AuthUser | null> {
     avatarPath: session.user.avatarPath ?? null,
     language: session.user.language || 'ru',
     favoriteExercises: session.user.favoriteExercises ?? [],
+    timeZone: normalizeTimeZone(session.user.timeZone),
   };
 }
 

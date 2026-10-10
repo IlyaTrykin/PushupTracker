@@ -9,6 +9,7 @@ import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selec
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
 import { formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts } from '@/lib/exercise-metrics';
 import { dayPointsTotal, workoutDayKey } from '@/lib/day-stats';
+import { clientRequestFor, pendingAfterFailure, type PendingClientRequest } from '@/lib/client-request-id';
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
 import { getIntlLocale, t } from '@/i18n/translate';
@@ -53,13 +54,6 @@ type DayAggregate = {
   /** «Всего за день» в баллах (B27). */
   totalPoints: number;
 };
-
-function newClientRequestId(): string {
-  try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  } catch {}
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-}
 
 type ProgramOverview = {
   activePrograms: Array<{
@@ -364,6 +358,7 @@ export default function GroupMemberDetailPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [savingWorkout, setSavingWorkout] = useState(false);
   const savingWorkoutRef = useRef(false);
+  const pendingRequestRef = useRef<PendingClientRequest | null>(null);
   const [exerciseFilter, setExerciseFilter] = useState<ExerciseFilter>(
     isExerciseFilterValue(searchExercise) ? searchExercise : 'all',
   );
@@ -621,26 +616,31 @@ export default function GroupMemberDetailPage() {
     setInfo(null);
     savingWorkoutRef.current = true;
     setSavingWorkout(true);
+    const fields = {
+      userId: memberId,
+      groupId,
+      reps: Number(workoutReps),
+      ...(isLoadedExercise(workoutExercise) ? { loadKg: Number(workoutLoadKg) } : {}),
+      date: workoutDate,
+      time: toIsoTime(workoutDate, workoutTime),
+      exerciseType: workoutExercise,
+    };
+    // B04: a new record keeps its clientRequestId until the server answers — the same input
+    // re-sent after a network failure does not create a duplicate (as on the dashboard).
+    const pending = editingWorkoutId ? null : clientRequestFor(pendingRequestRef.current, JSON.stringify(fields));
+    pendingRequestRef.current = pending;
     try {
       await fetchJsonSafe('/api/workouts', {
         method: editingWorkoutId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: editingWorkoutId || undefined,
-          clientRequestId: editingWorkoutId ? undefined : newClientRequestId(),
-          userId: memberId,
-          groupId,
-          reps: Number(workoutReps),
-          ...(isLoadedExercise(workoutExercise) ? { loadKg: Number(workoutLoadKg) } : {}),
-          date: workoutDate,
-          time: toIsoTime(workoutDate, workoutTime),
-          exerciseType: workoutExercise,
-        }),
+        body: JSON.stringify({ id: editingWorkoutId || undefined, clientRequestId: pending?.id, ...fields }),
       });
+      pendingRequestRef.current = null;
       setInfo(editingWorkoutId ? tt('Изменения сохранены') : tt('Добавлено'));
       resetWorkoutForm();
       await load();
     } catch (e) {
+      if (pendingRequestRef.current) pendingRequestRef.current = pendingAfterFailure(pendingRequestRef.current, e);
       setError(getErrorMessage(e));
     } finally {
       savingWorkoutRef.current = false;

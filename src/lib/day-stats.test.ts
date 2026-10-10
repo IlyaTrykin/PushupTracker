@@ -5,7 +5,7 @@ process.env.TZ = 'America/New_York';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildProgressAnalytics } from './analytics/selectors';
-import { computePeriodStats, dayPointsTotal, workoutDayKey, type DayStatsWorkout } from './day-stats';
+import { computePeriodStats, dayPointsTotal, localTodayKey, workoutDayKey, type DayStatsWorkout } from './day-stats';
 
 function w(day: string, reps: number, exerciseType = 'pushups', extra: Partial<DayStatsWorkout> = {}): DayStatsWorkout {
   return { date: `${day}T00:00:00.000Z`, reps, exerciseType, ...extra };
@@ -79,4 +79,13 @@ test('empty history', () => {
     streak: 0,
     streakFreezeUsed: false,
   });
+});
+
+test('client «today» is the day in the user\'s saved zone; the browser zone only without one', () => {
+  // 03:30 on 10 October in Yekaterinburg, still 9 October in New York (the browser zone of this file).
+  const now = new Date('2026-10-09T22:30:00.000Z');
+  assert.equal(localTodayKey('Asia/Yekaterinburg', now), '2026-10-10');
+  assert.equal(localTodayKey(undefined, now), '2026-10-09');
+  assert.equal(localTodayKey(null, now), '2026-10-09');
+  assert.equal(localTodayKey('Not/A_Zone', now), '2026-10-09');
 });

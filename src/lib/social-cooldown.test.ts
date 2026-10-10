@@ -27,3 +27,38 @@ test('cancel-and-resend of a friend request notifies the target at most once per
   assert.notEqual(friendRequestNotifyKey('a', 'b'), friendRequestNotifyKey('b', 'a'));
   assert.equal(friendRequestNotifyKey('a', 'b'), friendRequestNotifyKey('a', 'b'));
 });
+
+/** The NotificationDispatch table as the friends route's transaction sees it. */
+function dispatchTable() {
+  const rows = new Map<string, Date>();
+  return {
+    rows,
+    notificationDispatch: {
+      findUnique: async ({ where }: { where: { key: string } }) => (rows.has(where.key) ? { createdAt: rows.get(where.key)! } : null),
+      upsert: async ({ where, update }: { where: { key: string }; update: { createdAt: Date }; create: { key: string; createdAt: Date } }) => {
+        rows.set(where.key, update.createdAt);
+        return {};
+      },
+    },
+  };
+}
+
+test('request → cancel → request → cancel → request within 7 days wakes the target once; a week later — again', async () => {
+  const { claimFriendRequestNotification } = await import('./groups');
+  const db = dispatchTable();
+  const sent: number[] = [];
+  // Every POST /api/friends that creates a request asks this; DELETE (cancel) leaves the dispatch row alone.
+  const request = async (hours: number) => {
+    if (await claimFriendRequestNotification(db, 'a', 'b', after(hours))) sent.push(hours);
+  };
+
+  await request(0);
+  await request(1);
+  await request(30);
+  assert.deepEqual(sent, [0]);
+
+  await request(24 * 7);
+  assert.deepEqual(sent, [0, 24 * 7]);
+  // the other direction is its own pair
+  assert.equal(await claimFriendRequestNotification(db, 'b', 'a', after(24 * 7 + 1)), true);
+});

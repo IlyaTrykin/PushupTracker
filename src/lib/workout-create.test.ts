@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { friendWorkoutText, rankChallengeParticipants } from './workout-create';
+import {
+  WorkoutCreateError,
+  createWorkoutCreator,
+  friendWorkoutText,
+  rankChallengeParticipants,
+  type WorkoutCreateDeps,
+} from './workout-create';
+import type { CreatedWorkout } from './workout-hooks';
+import { programSetWorkoutInput } from './program-plan';
 
 const day = (d: string) => new Date(`${d}T00:00:00.000Z`);
 
@@ -56,4 +64,127 @@ test('friend notification: catalog name in the recipient language, cardio in km,
   assert.deepEqual(friendWorkoutText('ru', 'bob', run).body, 'bob: Бег — 5,2 км · 26:30 (5:06/км)');
   assert.equal(friendWorkoutText('en', 'bob', run).body, 'bob: Running — 5.2 km · 26:30 (5:06/km)');
   assert.equal(friendWorkoutText('en', 'bob', { exerciseType: 'plank', reps: 60, loadKg: null }).body, 'bob: Plank — 60 s');
+});
+
+/** An in-memory workout table with the (userId, clientRequestId) unique index, a counting limiter and recorders. */
+function fakeDeps(overrides: Partial<WorkoutCreateDeps> = {}) {
+  const rows: Array<CreatedWorkout & { userId: string; clientRequestId: string | null }> = [];
+  const notified: string[][] = [];
+  const hooked: string[] = [];
+  const buckets = new Map<string, number>();
+  const deps: WorkoutCreateDeps = {
+    findWorkoutByRequestId: async (userId, requestId) => rows.find((r) => r.userId === userId && r.clientRequestId === requestId) ?? null,
+    hitRateLimit: async (key, limit) => {
+      const count = (buckets.get(key) ?? 0) + 1;
+      buckets.set(key, count);
+      return { ok: count <= limit, retryAfterSeconds: 3600 };
+    },
+    insertWorkout: async (data) => {
+      if (data.clientRequestId && rows.some((r) => r.userId === data.userId && r.clientRequestId === data.clientRequestId)) {
+        throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      }
+      const row = {
+        id: `w${rows.length + 1}`,
+        userId: data.userId,
+        clientRequestId: data.clientRequestId,
+        reps: data.reps,
+        loadKg: data.loadKg,
+        repsLeft: data.repsLeft,
+        repsRight: data.repsRight,
+        date: data.date,
+        time: data.time,
+        exerciseType: data.exerciseType,
+        trainingSessionId: data.trainingSessionId,
+      };
+      rows.push(row);
+      return row;
+    },
+    findActiveChallenges: async () => [],
+    challengeRanks: async () => new Map(),
+    findFollowerIds: async () => ['friend'],
+    findReward: async () => null,
+    notifyUsers: async (userIds) => {
+      notified.push(userIds);
+    },
+    onWorkoutCreated: async (workout) => {
+      hooked.push(workout.id);
+      return { records: [], achievements: [] };
+    },
+    ...overrides,
+  };
+  return { deps, rows, notified, hooked };
+}
+
+const ann = { id: 'u1', username: 'ann', timeZone: 'Europe/Moscow' };
+const now = new Date('2026-10-10T12:00:00.000Z');
+
+test('B04: a repeated clientRequestId returns the stored workout — replayed, no notifications, no onWorkoutCreated', async () => {
+  const { deps, rows, notified, hooked } = fakeDeps();
+  const create = createWorkoutCreator(deps);
+  const input = { exerciseType: 'pushups', reps: 20, clientRequestId: 'req-1' };
+
+  const first = await create(ann, input, { source: 'web', now });
+  const again = await create(ann, input, { source: 'web', now });
+
+  assert.equal(first.replayed, false);
+  assert.equal(again.replayed, true);
+  assert.equal(again.workout.id, first.workout.id);
+  assert.equal(rows.length, 1);
+  assert.deepEqual(notified, [['friend']]);
+  assert.deepEqual(hooked, [first.workout.id]);
+});
+
+test('B04: two copies racing past the lookup — the loser gets the winner\'s record (P2002), nothing sent twice', async () => {
+  const { deps, rows, notified, hooked } = fakeDeps();
+  // Both copies look the id up before either has inserted.
+  let lookups = 0;
+  const realFind = deps.findWorkoutByRequestId;
+  deps.findWorkoutByRequestId = async (userId, requestId) => (++lookups <= 2 ? null : realFind(userId, requestId));
+  const create = createWorkoutCreator(deps);
+  const input = { exerciseType: 'pushups', reps: 20, clientRequestId: 'req-2' };
+
+  const [a, b] = await Promise.all([create(ann, input, { source: 'web', now }), create(ann, input, { source: 'web', now })]);
+
+  assert.equal(rows.length, 1);
+  assert.deepEqual([a.replayed, b.replayed].sort(), [false, true]);
+  assert.equal(a.workout.id, b.workout.id);
+  assert.equal(notified.length, 1);
+  assert.equal(hooked.length, 1);
+});
+
+test('S12: the 301st workout of a day is 429 RATE_LIMITED and is not stored; the limit belongs to the actor', async () => {
+  const { deps, rows } = fakeDeps();
+  const create = createWorkoutCreator(deps);
+  for (let i = 0; i < 300; i += 1) {
+    await create(ann, { exerciseType: 'pushups', reps: 1 }, { source: 'web', now, actorId: 'owner' });
+  }
+
+  await assert.rejects(
+    create(ann, { exerciseType: 'pushups', reps: 1 }, { source: 'web', now, actorId: 'owner' }),
+    (e: unknown) => e instanceof WorkoutCreateError && e.status === 429 && e.code === 'RATE_LIMITED' && e.retryAfterSeconds === 3600,
+  );
+  assert.equal(rows.length, 300);
+  // Ann herself still has her own limit.
+  await create(ann, { exerciseType: 'pushups', reps: 1 }, { source: 'web', now });
+  assert.equal(rows.length, 301);
+});
+
+test('a program set is recorded through the common path: linked to its session, hooks and friends as for any workout, once per set', async () => {
+  const { deps, rows, notified, hooked } = fakeDeps();
+  const create = createWorkoutCreator(deps);
+  // 00:30 Moscow on 2026-10-10 — the set belongs to that local day.
+  const doneAt = new Date('2026-10-09T21:30:00.000Z');
+  const input = programSetWorkoutInput({ setId: 'set-3', setNumber: 3, exerciseType: 'pushups', actualReps: 17, doneAt, timeZone: 'Europe/Moscow' });
+
+  const first = await create(ann, input, { source: 'program', trainingSessionId: 'session-1', now });
+  const repeat = await create(ann, input, { source: 'program', trainingSessionId: 'session-1', now });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].trainingSessionId, 'session-1');
+  assert.equal(rows[0].reps, 17);
+  assert.equal(rows[0].date.toISOString(), '2026-10-10T00:00:00.000Z');
+  assert.equal(rows[0].time.toISOString(), '2026-10-09T21:30:03.000Z');
+  assert.deepEqual(hooked, [first.workout.id]);
+  assert.deepEqual(notified, [['friend']]);
+  assert.equal(repeat.replayed, true);
 });

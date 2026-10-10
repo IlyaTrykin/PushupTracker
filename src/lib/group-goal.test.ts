@@ -54,16 +54,16 @@ test('percent is capped at 100 and never rounds up before the target is reached'
 });
 
 test('goal input: valid, trimmed, with day keys', () => {
-  const result = parseGroupGoalInput({ title: '  Вместе  ', targetPoints: 10000, exerciseType: 'all', startDate: '2026-10-01', endDate: '2026-10-31' });
+  const result = parseGroupGoalInput({ title: '  Вместе  ', targetPoints: 10000, exerciseType: 'all', startDate: '2026-10-01', endDate: '2026-10-31' }, '2026-10-01');
   assert.deepEqual(result, { ok: true, value: { title: 'Вместе', targetPoints: 10000, exerciseType: null, startDay: '2026-10-01', endDay: '2026-10-31' } });
-  const single = parseGroupGoalInput({ title: 'x', targetPoints: 100, exerciseType: 'pullups', startDate: '2026-10-01', endDate: '2026-10-01' });
+  const single = parseGroupGoalInput({ title: 'x', targetPoints: 100, exerciseType: 'pullups', startDate: '2026-10-01', endDate: '2026-10-01' }, '2026-10-01');
   assert.equal(single.ok && single.value.exerciseType, 'pullups');
 });
 
 test('goal input: rejects bad fields with a code', () => {
   const base = { title: 'x', targetPoints: 500, exerciseType: 'all', startDate: '2026-10-01', endDate: '2026-10-31' };
   const code = (patch: Record<string, unknown>) => {
-    const r = parseGroupGoalInput({ ...base, ...patch });
+    const r = parseGroupGoalInput({ ...base, ...patch }, '2026-09-01');
     return r.ok ? 'ok' : r.code;
   };
   assert.equal(code({ title: '   ' }), 'GOAL_TITLE_INVALID');
@@ -74,5 +74,18 @@ test('goal input: rejects bad fields with a code', () => {
   assert.equal(code({ exerciseType: 'flying' }), 'GOAL_EXERCISE_INVALID');
   assert.equal(code({ startDate: '2026-02-31' }), 'GOAL_DATE_INVALID');
   assert.equal(code({ endDate: '2026-09-30' }), 'GOAL_DATE_INVALID');
-  assert.equal(parseGroupGoalInput(null).ok, false);
+  assert.equal(parseGroupGoalInput(null, '2026-09-01').ok, false);
+});
+
+test('goal input: a goal that ended before today (in the user zone) is GOAL_DATE_INVALID; ending today is fine', () => {
+  const input = { title: 'x', targetPoints: 500, exerciseType: 'all', startDate: '2026-10-01', endDate: '2026-10-09' };
+  const code = (today: string, patch: Record<string, unknown> = {}) => {
+    const r = parseGroupGoalInput({ ...input, ...patch }, today);
+    return r.ok ? 'ok' : r.code;
+  };
+  assert.equal(code('2026-10-10'), 'GOAL_DATE_INVALID');
+  assert.equal(code('2026-10-09'), 'ok');
+  assert.equal(code('2026-10-10', { endDate: '2026-10-10' }), 'ok');
+  // a start in the past is allowed: the goal counts workouts already done
+  assert.equal(code('2026-10-10', { startDate: '2026-09-01', endDate: '2026-10-20' }), 'ok');
 });

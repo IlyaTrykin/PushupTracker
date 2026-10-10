@@ -72,7 +72,8 @@ export type GroupGoalInputResult =
   | { ok: true; value: GroupGoalInput }
   | { ok: false; code: 'GOAL_TITLE_INVALID' | 'GOAL_POINTS_INVALID' | 'GOAL_EXERCISE_INVALID' | 'GOAL_DATE_INVALID' };
 
-export function parseGroupGoalInput(raw: unknown): GroupGoalInputResult {
+/** `today` — the creator's calendar day: a goal that has already ended cannot be created. */
+export function parseGroupGoalInput(raw: unknown, today: DayKey): GroupGoalInputResult {
   const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
 
   const title = typeof body.title === 'string' ? body.title.trim() : '';
@@ -91,7 +92,7 @@ export function parseGroupGoalInput(raw: unknown): GroupGoalInputResult {
 
   const startDay = parseDayKey(body.startDate);
   const endDay = parseDayKey(body.endDate);
-  if (!startDay || !endDay || endDay < startDay) return { ok: false, code: 'GOAL_DATE_INVALID' };
+  if (!startDay || !endDay || endDay < startDay || endDay < today) return { ok: false, code: 'GOAL_DATE_INVALID' };
 
   return {
     ok: true,

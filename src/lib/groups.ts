@@ -128,6 +128,32 @@ export function shouldNotifyFriendRequest(lastNotifiedAt: Date | null | undefine
   return cooldownRetryDays(lastNotifiedAt, now) === 0;
 }
 
+/** The part of a (transaction) client `claimFriendRequestNotification` uses. */
+export type FriendRequestDispatchDb = {
+  notificationDispatch: {
+    findUnique(args: { where: { key: string }; select: { createdAt: true } }): Promise<{ createdAt: Date } | null>;
+    upsert(args: { where: { key: string }; update: { createdAt: Date }; create: { key: string; createdAt: Date } }): Promise<unknown>;
+  };
+};
+
+/**
+ * Whether a new friend request of `requesterId` wakes `targetId` (S05): at most once per
+ * 7 days per pair, however often the request is cancelled and sent again. Records the wake-up.
+ * Call under the pair lock, in the transaction that creates the request.
+ */
+export async function claimFriendRequestNotification(
+  db: FriendRequestDispatchDb,
+  requesterId: string,
+  targetId: string,
+  now: Date,
+): Promise<boolean> {
+  const key = friendRequestNotifyKey(requesterId, targetId);
+  const last = await db.notificationDispatch.findUnique({ where: { key }, select: { createdAt: true } });
+  if (!shouldNotifyFriendRequest(last?.createdAt, now)) return false;
+  await db.notificationDispatch.upsert({ where: { key }, update: { createdAt: now }, create: { key, createdAt: now } });
+  return true;
+}
+
 export function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
 }
@@ -654,8 +680,9 @@ async function enrollInActiveGroupChallenges(db: DbClient, groupId: string, user
     data: challenges.map((challenge) => ({ challengeId: challenge.id, userId, status: 'accepted' })),
     skipDuplicates: true,
   });
+  // Only an unanswered invitation becomes «accepted»: a challenge the user declined earlier stays declined.
   await db.challengeParticipant.updateMany({
-    where: { userId, challengeId: { in: challenges.map((challenge) => challenge.id) }, status: { not: 'accepted' } },
+    where: { userId, challengeId: { in: challenges.map((challenge) => challenge.id) }, status: 'pending' },
     data: { status: 'accepted' },
   });
 }

@@ -16,7 +16,7 @@ import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
 import SideLoadEntry, { WeightPicker } from './SideLoadEntry';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
-import { dayKeyInZone } from '@/lib/calendar-day';
+import { clientRequestFor, pendingAfterFailure, type PendingClientRequest } from '@/lib/client-request-id';
 import { recommendToday } from '@/lib/recommendation';
 import DailyGoalRing from '@/components/DailyGoalRing';
 import TodayRecommendation from '@/components/TodayRecommendation';
@@ -203,13 +203,6 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
   return data;
 }
 
-function newClientRequestId(): string {
-  try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  } catch {}
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-}
-
 // Пустые значения в статистике: ноль и прочерки средних без данных.
 function hasBreakdownValue(value: number | string | undefined) {
   if (value == null) return false;
@@ -320,7 +313,7 @@ export default function DashboardPage() {
   // уходит с тем же clientRequestId, и сервер вернёт уже созданную запись.
   const [adding, setAdding] = useState(false);
   const addingRef = useRef(false);
-  const pendingRequestRef = useRef<{ id: string; signature: string } | null>(null);
+  const pendingRequestRef = useRef<PendingClientRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
@@ -415,22 +408,15 @@ export default function DashboardPage() {
     return () => window.clearTimeout(t);
   }, [toastMessage]);
 
-  const todayKey = localTodayKey();
+  // «Сегодня» — по сохранённому поясу пользователя, как на сервере; браузерный — пока он не загружен.
+  const todayKey = localTodayKey(user?.timeZone);
   const stats = useMemo(() => computePeriodStats(workouts, todayKey), [workouts, todayKey]);
 
   // Daily goal (F1) and «Рекомендация на сегодня» (F12): the user's day by the saved zone.
   useEffect(() => {
     void refreshUser(); // fresh goal and active programs after visiting the profile or programs
   }, [refreshUser]);
-  const userTimeZone = user?.timeZone;
-  const userDayKey = useMemo(() => {
-    if (!userTimeZone) return todayKey;
-    try {
-      return dayKeyInZone(new Date(), userTimeZone);
-    } catch {
-      return todayKey;
-    }
-  }, [todayKey, userTimeZone]);
+  const userDayKey = todayKey;
   const userDayPoints = useMemo(
     () => dayPointsTotal(workouts.filter((w) => workoutDayKey(w) === userDayKey)),
     [userDayKey, workouts],
@@ -532,20 +518,19 @@ export default function DashboardPage() {
     const timeToSend = timeTouched ? time : normalizeTime(new Date());
     const payload = { reps: value, ...extra, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType };
     const signature = JSON.stringify({ ...payload, time: undefined, timeToSend: timeTouched ? time : null });
-    if (!pendingRequestRef.current || pendingRequestRef.current.signature !== signature) {
-      pendingRequestRef.current = { id: newClientRequestId(), signature };
-    }
+    const pending = clientRequestFor(pendingRequestRef.current, signature);
+    pendingRequestRef.current = pending;
     let data: unknown;
     try {
       data = await fetchJsonSafe('/api/workouts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, clientRequestId: pendingRequestRef.current.id }),
+        body: JSON.stringify({ ...payload, clientRequestId: pending.id }),
       });
     } catch (error: unknown) {
       // Ответ сервера (4xx/5xx) — запись не создана, следующий ввод получит новый id.
       // Обрыв сети (TypeError) — id остаётся: повтор не создаст дубль, если запись всё же дошла.
-      if (!(error instanceof TypeError)) pendingRequestRef.current = null;
+      pendingRequestRef.current = pendingAfterFailure(pending, error);
       throw error;
     }
     pendingRequestRef.current = null;
