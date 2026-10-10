@@ -348,15 +348,15 @@ export default function ChallengesPage() {
     }
   };
 
-  const declineInvite = async (id: string) => {
-    const ok = window.confirm(tt('Отклонить приглашение?'));
+  const declineInvite = async (id: string, leaving = false) => {
+    const ok = window.confirm(leaving ? challengesMessages[locale].leaveConfirm : tt('Отклонить приглашение?'));
     if (!ok) return;
 
     setError(null);
     setInfo(null);
     try {
       await fetchJsonSafe(`/api/challenges/${id}/decline`, { method: 'POST' });
-      setInfo(tt('Приглашение отклонено'));
+      setInfo(leaving ? challengesMessages[locale].leftInfo : tt('Приглашение отклонено'));
       await loadAll({ showLoading: false, resetInfo: false });
     } catch (e: unknown) {
       setError(getErrorMessage(e));
@@ -570,7 +570,7 @@ export default function ChallengesPage() {
                         {tt('Открыть')}
                       </Link>
                       {canLeave(c) ? (
-                        <button type="button" style={btnDanger} onClick={() => declineInvite(c.id)}>{LEAVE_LABEL[locale === 'en' ? 'en' : 'ru']}</button>
+                        <button type="button" style={btnDanger} onClick={() => declineInvite(c.id, true)}>{challengesMessages[locale].leave}</button>
                       ) : null}
                       <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>{tt('Удалить')}</button>
                     </div>
@@ -751,7 +751,6 @@ const itemCard: React.CSSProperties = {
   boxShadow: '0 16px 34px rgba(15, 23, 42, 0.06)',
 };
 
-const LEAVE_LABEL = { ru: 'Отказаться', en: 'Leave' } as const;
 
 const focusedCard: React.CSSProperties = {
   border: '2px solid #f59e0b',

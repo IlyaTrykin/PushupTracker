@@ -199,6 +199,7 @@ export const enMessages: DeepPartial<Messages> = {
       program_missed_24h: 'Workout not done',
       program_stop_warning: 'Program at risk',
       program_stopped: 'Program stopped',
+      telegram_unlinked: 'Telegram unlinked',
     },
   },
   programSession: {

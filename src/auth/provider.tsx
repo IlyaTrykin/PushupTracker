@@ -112,8 +112,10 @@ export function AuthProvider({
     const key = `${BROWSER_ZONE_KEY_PREFIX}${userId}`;
     const lastSeen = readStored(key);
     if (lastSeen === zone) return;
-    writeStored(key, zone);
-    if (zone === savedTimeZone) return;
+    if (zone === savedTimeZone) {
+      writeStored(key, zone);
+      return;
+    }
     void (async () => {
       try {
         const res = await fetch('/api/profile', {
@@ -123,6 +125,7 @@ export function AuthProvider({
           body: JSON.stringify({ timeZone: zone }),
         });
         if (!res.ok) return;
+        writeStored(key, zone);
         const data = (await res.json().catch(() => null)) as { user?: { timeZone?: string } } | null;
         const next = data?.user?.timeZone ?? zone;
         setUser((prev) => (prev && prev.id === userId ? { ...prev, timeZone: next } : prev));

@@ -1,19 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { fillGroupGoalTemplate, groupGoalErrorText, groupGoalMessages } from '@/i18n/messages/features/group-goal';
-import { addDays, dayKeyInZone, diffDays } from '@/lib/calendar-day';
+import { addDays, diffDays } from '@/lib/calendar-day';
+import { localTodayKey } from '@/lib/day-stats';
 import { EXERCISE_ORDER, exerciseLabel } from '@/lib/exercises';
 import type { GroupGoalDto } from '@/lib/group-goal';
 
 type GoalsResponse = { active: GroupGoalDto | null; past: GroupGoalDto[] };
 
-function browserToday(): string {
-  return dayKeyInZone(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-}
-
 export default function GroupGoalCard({ groupId, canManage }: { groupId: string; canManage: boolean }) {
+  const { user } = useAuth();
   const { locale } = useI18n();
   const text = groupGoalMessages[locale];
   const numberLocale = locale === 'en' ? 'en-US' : 'ru-RU';
@@ -27,8 +26,8 @@ export default function GroupGoalCard({ groupId, canManage }: { groupId: string;
   const [title, setTitle] = useState('');
   const [points, setPoints] = useState('10000');
   const [exercise, setExercise] = useState('all');
-  const [from, setFrom] = useState(() => browserToday());
-  const [to, setTo] = useState(() => addDays(browserToday(), 30));
+  const [from, setFrom] = useState(() => localTodayKey(user?.timeZone));
+  const [to, setTo] = useState(() => addDays(localTodayKey(user?.timeZone), 30));
 
   const load = useCallback(async () => {
     try {
@@ -97,7 +96,7 @@ export default function GroupGoalCard({ groupId, canManage }: { groupId: string;
   }
 
   function timeText(goal: GroupGoalDto): string {
-    const today = browserToday();
+    const today = localTodayKey(user?.timeZone);
     if (goal.startDay > today) return fillGroupGoalTemplate(text.upcoming, { date: formatDay(goal.startDay) });
     const left = diffDays(goal.endDay, today) + 1;
     return left <= 1 ? text.lastDay : fillGroupGoalTemplate(text.daysLeft, { days: left });

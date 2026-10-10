@@ -198,6 +198,7 @@ export const ruMessages = {
       program_missed_24h: 'Тренировка не выполнена',
       program_stop_warning: 'Риск прерывания программы',
       program_stopped: 'Программа прервана',
+      telegram_unlinked: 'Telegram отключён',
     },
   },
   programSession: {

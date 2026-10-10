@@ -81,11 +81,11 @@ function formatSessionDate(iso: string, locale: string) {
   });
 }
 
-function renderSetPlan(session: TrainingSession, exerciseType?: string) {
+function renderSetPlan(session: TrainingSession, exerciseType: string | undefined, locale: string) {
   return session.sets
     .slice()
     .sort((a, b) => a.setNumber - b.setNumber)
-    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true)))
+    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true, locale)))
     .join('-');
 }
 
@@ -150,7 +150,7 @@ export default function ProgramDetailPage() {
           <section style={card}>
             <div style={{ display: 'grid', gap: 4 }}>
               <div>{tt('Упражнение')}: <b>{tt(exerciseLabel(program.exerciseType))}</b></div>
-              <div>{tt('Базовый тест')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true)}</b></div>
+              <div>{tt('Базовый тест')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true, locale)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true, locale)}</b></div>
               <div>{tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')} · {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')}</div>
               <div>{tt('Прогресс')}: <b>{program.stats.completedSessions}/{program.stats.totalSessions}</b> ({program.stats.completionPercent}%)</div>
             </div>
@@ -177,7 +177,7 @@ export default function ProgramDetailPage() {
                       {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
                     </div>
                     <div style={{ color: '#111827' }}>
-                      {tt('План подходов')}: <b>{renderSetPlan(session, program.exerciseType)}</b>
+                      {tt('План подходов')}: <b>{renderSetPlan(session, program.exerciseType, locale)}</b>
                     </div>
                     <div style={{ color: '#111827' }}>
                       {tt('Статус')}: {session.completed ? tt('Выполнено') : tt('Запланировано')}

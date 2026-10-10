@@ -3,6 +3,7 @@
 import type React from 'react';
 import { calculateExercisePoints } from '@/lib/exercise-points';
 import type { ExerciseDefinition } from '@/lib/exercises';
+import { unitsMessages } from '@/i18n/messages/features/units';
 import { MAX_WORKOUT_VALUE } from '@/lib/workout-input';
 
 type Props = {
@@ -31,7 +32,7 @@ type WeightPickerProps = Pick<Props, 'exercise' | 'locale' | 'tt' | 'loadKg' | '
 /** Выбор веса снаряда из пресетов упражнения; для упражнений без снаряда ничего не рисует. */
 export function WeightPicker({ exercise, locale, tt, loadKg, onLoadKgChange }: WeightPickerProps) {
   if (!exercise.load) return null;
-  const kg = locale === 'en' ? 'kg' : 'кг';
+  const kg = unitsMessages[locale === 'en' ? 'en' : 'ru'].kg;
   return (
     <div style={weightRow} role="radiogroup" aria-label={tt('Вес')}>
       {exercise.load.presetsKg.map((preset) => {
@@ -65,8 +66,7 @@ export default function SideLoadEntry({
   onRepsLeftChange,
   onRepsRightChange,
 }: Props) {
-  const isEnglish = locale === 'en';
-  const kg = isEnglish ? 'kg' : 'кг';
+  const kg = unitsMessages[locale === 'en' ? 'en' : 'ru'].kg;
   const total = repsLeft + repsRight;
   const points = calculateExercisePoints(total, exercise.id, loadKg);
 

@@ -10,6 +10,7 @@ import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/li
 import { toLoadPoints } from '@/lib/analytics/utils';
 import { formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts } from '@/lib/exercise-metrics';
 import { computePeriodStats, localTodayKey, streakFreezeMessages, workoutDayKey } from '@/lib/day-stats';
+import { useAuth } from '@/auth/provider';
 import GroupGoalCard from '@/components/GroupGoalCard';
 import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
 import { groupGoalMessages } from '@/i18n/messages/features/group-goal';
@@ -299,13 +300,13 @@ function isPeriodKeyValue(value: string | null): value is PeriodKey {
 }
 
 // Дни — по календарной дате записи, серия — по общему правилу с заморозкой (B12, B23).
-function computeStats(workouts: GroupWorkout[]): WorkoutStats {
-  const { totalToday, totalWeek, totalMonth, totalAll, streak, streakFreezeUsed } = computePeriodStats(workouts, localTodayKey());
+function computeStats(workouts: GroupWorkout[], timeZone?: string | null): WorkoutStats {
+  const { totalToday, totalWeek, totalMonth, totalAll, streak, streakFreezeUsed } = computePeriodStats(workouts, localTodayKey(timeZone));
   return { totalToday, totalWeek, totalMonth, totalAll, streak, streakFreezeUsed };
 }
 
-function computeStatsByExercise(workouts: GroupWorkout[]): WorkoutStatsByExercise {
-  return createByExercise((type) => computeStats(workouts.filter((workout) => toExerciseType(workout.exerciseType) === type)));
+function computeStatsByExercise(workouts: GroupWorkout[], timeZone?: string | null): WorkoutStatsByExercise {
+  return createByExercise((type) => computeStats(workouts.filter((workout) => toExerciseType(workout.exerciseType) === type), timeZone));
 }
 
 function ActivityHeatmap({
@@ -430,6 +431,7 @@ function ActivityHeatmap({
 type GroupView = 'overview' | 'members' | 'challenges' | 'manage';
 
 export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
+  const { user } = useAuth();
   const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = (input: string) => t(locale, input);
@@ -507,10 +509,10 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
     if (!group) return [];
     return statsIncludedMembers.map((member) => ({
       member,
-      stats: computeStats(workoutsByUser[member.user.username] || []),
-      statsByExercise: computeStatsByExercise(workoutsByUser[member.user.username] || []),
+      stats: computeStats(workoutsByUser[member.user.username] || [], user?.timeZone),
+      statsByExercise: computeStatsByExercise(workoutsByUser[member.user.username] || [], user?.timeZone),
     }));
-  }, [group, statsIncludedMembers, workoutsByUser]);
+  }, [group, statsIncludedMembers, workoutsByUser, user?.timeZone]);
 
   const filteredMemberStats = useMemo(
     () => memberStats.filter(({ member }) => filteredStatsMembers.some((candidate) => candidate.userId === member.userId)),

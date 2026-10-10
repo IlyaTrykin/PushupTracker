@@ -241,11 +241,11 @@ function formatDayTitle(dayKey: string, locale: string) {
   });
 }
 
-function renderSessionSetPlan(session: TrainingSession, exerciseType?: string) {
+function renderSessionSetPlan(session: TrainingSession, exerciseType: string | undefined, locale: string) {
   return session.sets
     .slice()
     .sort((a, b) => a.setNumber - b.setNumber)
-    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true)))
+    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true, locale)))
     .join('-');
 }
 
@@ -671,7 +671,7 @@ export default function ProgramPage() {
                       style={{ ...nextExerciseDot, background: exerciseLegendColor(nextSession.exerciseType) }}
                       title={exerciseLabel(nextSession.exerciseType)}
                     />
-                    <span style={{ fontWeight: 900 }}>{renderSessionSetPlan(nextSession, nextSession.exerciseType)}</span>
+                    <span style={{ fontWeight: 900 }}>{renderSessionSetPlan(nextSession, nextSession.exerciseType, locale)}</span>
                   </div>
                   <div style={{ fontSize: 13, color: '#374151' }}>
                     {formatSessionDate(nextSession.scheduledAt, localeTag)}
@@ -811,7 +811,7 @@ export default function ProgramPage() {
                         </div>
                       </div>
                       <div style={{ marginTop: 4, color: '#111827' }}>
-                        {tt('База')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true)}</b> · {tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')}
+                        {tt('База')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true, locale)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true, locale)}</b> · {tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')}
                       </div>
                       <div style={{ marginTop: 4, color: '#111827' }}>
                         {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')} · {tt('Прогресс')}: <b>{program.stats.completionPercent}%</b>
@@ -861,7 +861,7 @@ export default function ProgramPage() {
               {history.map((row) => (
                 <div key={row.id} style={historyCard}>
                   <div style={{ fontWeight: 900 }}>
-                    {tt(exerciseLabel(row.exerciseType))} · {tt('цель')}: {formatExerciseValue(row.targetReps, row.exerciseType, true)}
+                    {tt(exerciseLabel(row.exerciseType))} · {tt('цель')}: {formatExerciseValue(row.targetReps, row.exerciseType, true, locale)}
                   </div>
                   <div style={{ fontSize: 13, color: '#374151', marginTop: 2 }}>
                     {new Date(row.createdAt).toLocaleDateString(localeTag)} · {tt('статус')}: {tt(row.status)}
@@ -913,7 +913,7 @@ export default function ProgramPage() {
                           {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
                         </div>
                         <div style={{ marginTop: 4, color: '#111827' }}>
-                          {tt('План')}: <b>{renderSessionSetPlan(session, session.exerciseType)}</b>
+                          {tt('План')}: <b>{renderSessionSetPlan(session, session.exerciseType, locale)}</b>
                         </div>
                       </div>
                       {session.completed ? (

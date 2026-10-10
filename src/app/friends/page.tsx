@@ -227,12 +227,12 @@ function toExerciseType(type: string | undefined): ExerciseType {
 }
 
 // Дни — по календарной дате записи, серия — по общему правилу с заморозкой (B12, B23, B24).
-function calcStats(workouts: Workout[]): Stats {
-  return computePeriodStats(workouts, localTodayKey());
+function calcStats(workouts: Workout[], timeZone?: string | null): Stats {
+  return computePeriodStats(workouts, localTodayKey(timeZone));
 }
 
-function calcStatsByExercise(workouts: Workout[]): StatsByExercise {
-  return createByExercise((type) => calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === type)));
+function calcStatsByExercise(workouts: Workout[], timeZone?: string | null): StatsByExercise {
+  return createByExercise((type) => calcStats(workouts.filter((w) => toExerciseType(w.exerciseType) === type), timeZone));
 }
 
 function formatTimeHHMM(iso?: string | null) {
@@ -573,17 +573,17 @@ export default function FriendsPage() {
     }
   };
 
-  const myStatsAll = useMemo(() => calcStats(myWorkouts), [myWorkouts]);
-  const myStatsByExercise = useMemo(() => calcStatsByExercise(myWorkouts), [myWorkouts]);
+  const myStatsAll = useMemo(() => calcStats(myWorkouts, user?.timeZone), [myWorkouts, user?.timeZone]);
+  const myStatsByExercise = useMemo(() => calcStatsByExercise(myWorkouts, user?.timeZone), [myWorkouts, user?.timeZone]);
 
   const friendRows = useMemo<FriendStatsRow[]>(() => {
     return friends.map((f) => {
       const raw = friendWorkouts[f.username] || [];
-      const statsAll = calcStats(raw);
-      const statsByExercise = calcStatsByExercise(raw);
+      const statsAll = calcStats(raw, user?.timeZone);
+      const statsByExercise = calcStatsByExercise(raw, user?.timeZone);
       return { friend: f, statsAll, statsByExercise };
     });
-  }, [friends, friendWorkouts]);
+  }, [friends, friendWorkouts, user?.timeZone]);
 
   const meRow = useMemo<TableRow>(() => {
     return {
@@ -777,7 +777,7 @@ export default function FriendsPage() {
   );
 
   const hasPendingRequests = incomingRequests.length > 0 || outgoingRequests.length > 0;
-  const todayKey = localTodayKey();
+  const todayKey = localTodayKey(user?.timeZone);
   const friendWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
   const selectedFriendDayData = friendDetailDay ? selectedFriendDayMap.get(friendDetailDay) ?? null : null;
   const accentColor = exerciseNumberColor('pushups');
