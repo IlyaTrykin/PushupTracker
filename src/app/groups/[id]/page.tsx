@@ -8,7 +8,7 @@ import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
 import { toLoadPoints } from '@/lib/analytics/utils';
-import { formatExerciseValue, formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts } from '@/lib/exercise-metrics';
 import { computePeriodStats, localTodayKey, streakFreezeMessages, workoutDayKey } from '@/lib/day-stats';
 import GroupGoalCard from '@/components/GroupGoalCard';
 import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
@@ -1466,6 +1466,8 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                 {feedGroup.items.map((workout) => {
                   const type = toExerciseType(workout.exerciseType);
                   const typeColor = getExerciseAccent(type);
+                  // Кардио: дистанция крупно, время и темп — мелкой второй строкой; у упражнений на одну руку — раскладка.
+                  const feedValue = formatWorkoutValueParts(workout, locale);
                   return (
                     <article
                       key={workout.id}
@@ -1485,8 +1487,8 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={18} height={18} style={feedTypeIcon} unoptimized />
                         <div style={feedReps}>
                           <AchievementBadge mark={achievementMarks[workout.id]} locale={locale === 'en' ? 'en' : 'ru'} />
-                          {formatWorkoutValue(workout, locale, false)}
-                          {formatWorkoutSides(workout, locale) ? <div style={feedSides}>{formatWorkoutSides(workout, locale)}</div> : null}
+                          {feedValue.main}
+                          {feedValue.detail ? <div style={feedSides}>{feedValue.detail}</div> : null}
                         </div>
                       </div>
                     </article>

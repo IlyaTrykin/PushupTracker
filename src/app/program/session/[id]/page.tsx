@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getLocaleTimerAudio } from '@/i18n/locale';
 import { t } from '@/i18n/translate';
+import { programSessionMessages } from '@/i18n/messages/features/program-session';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 import type { ExerciseType } from '@/lib/exercises';
 
@@ -37,22 +38,6 @@ type ProgramDetail = {
 };
 
 type JsonObject = Record<string, unknown>;
-
-// Strings of the «finish» card (no shared messages key exists for them yet).
-const FINISH_COPY = {
-  ru: {
-    hint: 'Все подходы записаны — осталось завершить тренировку.',
-    button: 'Завершить тренировку',
-    finishing: 'Завершаем…',
-    failed: 'Не удалось завершить тренировку. Попробуйте ещё раз.',
-  },
-  en: {
-    hint: 'All sets are recorded — finish the workout to save it.',
-    button: 'Finish workout',
-    finishing: 'Finishing…',
-    failed: "Couldn't finish the workout. Please try again.",
-  },
-} as const;
 
 type ApiError = Error & {
   code?: string;
@@ -144,7 +129,7 @@ export default function ProgramSessionPage() {
   const [done, setDone] = useState(false);
   // Synchronous guard: a second tap arrives before `saving` re-renders the disabled button.
   const busyRef = useRef(false);
-  const finishCopy = FINISH_COPY[locale === 'en' ? 'en' : 'ru'];
+  const finishCopy = programSessionMessages[locale].finish;
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastBeepSecondRef = useRef<number | null>(null);
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
@@ -631,7 +616,7 @@ export default function ProgramSessionPage() {
               </div>
               <div style={{ textAlign: 'center' }}>
                 {isTimedExercise(program?.exerciseType)
-                  ? `${t(locale, 'Цель')}: ${formatExerciseValue(currentSet.targetReps, program?.exerciseType, true)}`
+                  ? `${t(locale, 'Цель')}: ${formatExerciseValue(currentSet.targetReps, program?.exerciseType, true, locale)}`
                   : formatText(messages.programSession.set.target, { reps: currentSet.targetReps })}
               </div>
 
@@ -642,7 +627,7 @@ export default function ProgramSessionPage() {
                     {formatClock(plankSecondsLeft)}
                   </div>
                   <div style={{ fontSize: 14, color: '#475569', textAlign: 'center', fontWeight: 800 }}>
-                    {t(locale, 'Сделал')}: {formatExerciseValue(plankElapsedSeconds, program?.exerciseType, true)}
+                    {t(locale, 'Сделал')}: {formatExerciseValue(plankElapsedSeconds, program?.exerciseType, true, locale)}
                   </div>
                   <div style={controlsGrid}>
                     <button

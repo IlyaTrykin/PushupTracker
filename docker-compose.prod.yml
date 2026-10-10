@@ -38,6 +38,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Фоновый планировщик (напоминания, итоги недели, чистка БД) включается ТОЛЬКО здесь:
+      # dev, локальный `next start` и локальный docker его не запускают.
+      SCHEDULER_ENABLED: '1'
     depends_on:
       db:
         condition: service_healthy

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { challengesMessages } from '@/i18n/messages/features/challenges';
 import {
   challengeMostLabel,
   challengeQualifiedValueLabel,
@@ -156,13 +157,11 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
               <div style={{ marginTop: 6, fontSize: 12 }}>
                 {tt('Режим')}: <b>{challenge.mode === 'most'
                   ? tt(challengeMostLabel(challenge.exerciseType))
-                  : `${tt('цель')} ${formatExerciseValue(challenge.targetReps, challenge.exerciseType, true)}`}</b>
+                  : `${tt('цель')} ${formatExerciseValue(challenge.targetReps, challenge.exerciseType, true, locale)}`}</b>
               </div>
               {meta.usesPoints && challenge.mode !== 'sets_min' ? (
                 <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
-                  {locale === 'en'
-                    ? 'Weighted exercise: counted in points (1 point = 1 push-up).'
-                    : 'Упражнение с весом: считается в баллах (1 балл = 1 отжимание).'}
+                  {challengesMessages[locale].pointsHintDetails}
                 </div>
               ) : null}
             </div>
@@ -173,7 +172,7 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                 <div style={{ fontWeight: 900 }}>{leader.username}</div>
                 <div style={{ fontWeight: 900 }}>
                   {challenge.mode === 'most' || challenge.mode === 'target'
-                    ? formatExerciseValue(leader.total, challenge.exerciseType, true)
+                    ? formatExerciseValue(leader.total, challenge.exerciseType, true, locale)
                     : leader.total}
                 </div>
               </div>
@@ -224,8 +223,8 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                     delta === null ? '—' :
                     challenge?.mode === 'most' || challenge?.mode === 'target'
                       ? (delta < 0
-                        ? `-${formatExerciseValue(Math.abs(delta), challenge.exerciseType, true)}`
-                        : formatExerciseValue(delta, challenge.exerciseType, true))
+                        ? `-${formatExerciseValue(Math.abs(delta), challenge.exerciseType, true, locale)}`
+                        : formatExerciseValue(delta, challenge.exerciseType, true, locale))
                       : (delta < 0 ? `${delta}` : `${delta}`.replace(/^\+/, ''));
 
                   return (
@@ -237,16 +236,16 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
                       <td style={tdNum}>
                         {challenge?.mode === 'daily_min'
                           ? `${p.creditedDays ?? p.total}/${p.totalDays ?? ''}`
-                          : formatExerciseValue(p.total, challenge?.mode === 'sets_min' ? null : challenge?.exerciseType, challenge?.mode !== 'sets_min')}
+                          : formatExerciseValue(p.total, challenge?.mode === 'sets_min' ? null : challenge?.exerciseType, challenge?.mode !== 'sets_min', locale)}
                       </td>
                       {challenge?.mode === 'sets_min' ? (
-                        <td style={tdNum}>{formatExerciseValue(Number(p.qualifiedReps ?? 0), challenge?.exerciseType, true)}</td>
+                        <td style={tdNum}>{formatExerciseValue(Number(p.qualifiedReps ?? 0), challenge?.exerciseType, true, locale)}</td>
                       ) : null}
                       <td style={tdNum}>
                         {percent === null ? '—' : `${percent}%`}
                       </td>
                       <td style={tdNum}>
-                        {remaining === null ? '—' : formatExerciseValue(remaining, challenge?.exerciseType, true)}
+                        {remaining === null ? '—' : formatExerciseValue(remaining, challenge?.exerciseType, true, locale)}
                       </td>
                       <td style={{ ...tdNum, color: deltaColor }}>
                         {deltaShown}

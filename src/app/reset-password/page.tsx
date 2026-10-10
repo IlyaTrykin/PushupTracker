@@ -6,26 +6,15 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/i18n/provider';
 import { t } from '@/i18n/translate';
+import { accountMessages } from '@/i18n/messages/features/account';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, validateNewPassword } from '@/lib/account-validation';
 import styles from '../login/login.module.css';
-
-const PASSWORD_MIN_LENGTH = 8;
-
-const passwordRule = {
-  ru: {
-    hint: `Не меньше ${PASSWORD_MIN_LENGTH} символов`,
-    tooShort: `Пароль должен быть не меньше ${PASSWORD_MIN_LENGTH} символов`,
-  },
-  en: {
-    hint: `At least ${PASSWORD_MIN_LENGTH} characters`,
-    tooShort: `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
-  },
-} as const;
 
 export default function ResetPasswordPage() {
   const router = useRouter();
   const { locale } = useI18n();
   const tt = (input: string) => t(locale, input);
-  const rule = passwordRule[locale] ?? passwordRule.ru;
+  const rule = accountMessages[locale];
   const [token, setToken] = useState('');
 
   const [password, setPassword] = useState('');
@@ -48,8 +37,9 @@ export default function ResetPasswordPage() {
       setError(tt('Некорректная ссылка: отсутствует токен'));
       return;
     }
-    if (Array.from(password).length < PASSWORD_MIN_LENGTH) {
-      setError(rule.tooShort);
+    const passwordCheck = validateNewPassword(password);
+    if (!passwordCheck.ok) {
+      setError(passwordCheck.code === 'PASSWORD_TOO_LONG' ? rule.passwordTooLong : rule.passwordTooShort);
       return;
     }
     if (password !== confirm) {
@@ -109,11 +99,11 @@ export default function ResetPasswordPage() {
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
               minLength={PASSWORD_MIN_LENGTH}
-              maxLength={128}
+              maxLength={PASSWORD_MAX_LENGTH}
               aria-describedby="reset-password-hint"
               className={styles.input}
             />
-            <span id="reset-password-hint" style={hintStyle}>{rule.hint}</span>
+            <span id="reset-password-hint" style={hintStyle}>{rule.passwordHint}</span>
             <input
               type="password"
               placeholder={tt('Подтвердите пароль')}

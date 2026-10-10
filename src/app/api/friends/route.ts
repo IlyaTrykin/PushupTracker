@@ -3,9 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { cooldownRetryDays, friendRequestNotifyKey, isUniqueViolation, shouldNotifyFriendRequest } from '@/lib/groups';
-import { sendFriendRequestEmail } from '@/lib/notification-email';
-import { isChannelEnabledForUser } from '@/lib/notification-preferences';
-import { queueWebPushToUsers } from '@/lib/web-push';
+import { friendRequestAcceptedMessage, friendRequestMessage, notifyUsers } from '@/lib/notify';
 
 type JsonObject = Record<string, unknown>;
 // Чужой email в ответах не отдаём (S04): только ник и аватар.
@@ -200,15 +198,13 @@ export async function POST(request: NextRequest) {
     const requesterName = requester?.username || 'Пользователь';
 
     if (outcome.kind === 'merged') {
-      await prisma.notification.create({
-        data: {
-          userId: target.id,
-          type: 'friend_request_accepted',
-          title: 'Запрос в друзья принят',
-          body: `${requesterName} принял ваш запрос в друзья`,
-          link: '/friends',
-        },
-      }).catch((e) => console.error('FRIEND MERGE NOTIFICATION ERROR:', e));
+      // Только центр уведомлений (как и раньше), текст — на языке адресата.
+      await notifyUsers(
+        [target.id],
+        'friend_request',
+        (locale) => friendRequestAcceptedMessage(locale, { username: requesterName }),
+        { inAppOnly: true, type: 'friend_request_accepted' },
+      );
 
       return NextResponse.json({
         friendshipId: outcome.friendship.id,
@@ -230,33 +226,13 @@ export async function POST(request: NextRequest) {
     // Повторная заявка после отмены в течение 7 дней: заявка есть, но адресата не будим снова.
     if (!outcome.notify) return pendingResponse;
 
-    const title = 'Новый запрос в друзья';
-    const notifyBody = `${requesterName} отправил вам запрос в друзья`;
-
-    await prisma.notification.create({
-      data: { userId: target.id, type: 'friend_request', title, body: notifyBody, link: '/friends' },
-    }).catch((e) => console.error('FRIEND REQUEST NOTIFICATION ERROR:', e));
-
-    queueWebPushToUsers([target.id], {
-      title,
-      body: notifyBody,
-      link: '/friends',
-      tag: `friend-request-${friendship.id}`,
-    }, 'friend_request');
-
-    // Письмо — в фоне: медленный SMTP не задерживает ответ.
-    void (async () => {
-      const recipient = await prisma.user.findUnique({ where: { id: target.id }, select: { email: true } });
-      if (!recipient?.email) return;
-      if (!(await isChannelEnabledForUser(target.id, 'friend_request', 'email'))) return;
-      await sendFriendRequestEmail({
-        to: recipient.email,
-        inviterUsername: requesterName,
-        invitedUsername: target.username,
-        requestId: friendship.id,
-        request,
-      });
-    })().catch((e) => console.error('FRIEND REQUEST EMAIL ERROR:', e));
+    // In-app сразу; push, письмо и Telegram — по настройкам адресата, в фоне (ответ их не ждёт).
+    await notifyUsers(
+      [target.id],
+      'friend_request',
+      (locale) => friendRequestMessage(locale, { username: requesterName }),
+      { tag: `friend-request-${friendship.id}` },
+    );
 
     return pendingResponse;
   } catch (e) {
@@ -298,15 +274,13 @@ export async function PATCH(request: NextRequest) {
       if (claimed.count === 0) return NextResponse.json({ ok: true, status: 'accepted' });
 
       const me = await prisma.user.findUnique({ where: { id: userId }, select: { username: true } });
-      await prisma.notification.create({
-        data: {
-          userId: friendship.userId,
-          type: 'friend_request_accepted',
-          title: 'Запрос в друзья принят',
-          body: `${me?.username || 'Пользователь'} принял ваш запрос в друзья`,
-          link: '/friends',
-        },
-      }).catch((e) => console.error('FRIEND ACCEPT NOTIFICATION ERROR:', e));
+      const accepterName = me?.username || 'Пользователь';
+      await notifyUsers(
+        [friendship.userId],
+        'friend_request',
+        (locale) => friendRequestAcceptedMessage(locale, { username: accepterName }),
+        { inAppOnly: true, type: 'friend_request_accepted' },
+      );
 
       return NextResponse.json({ ok: true, status: 'accepted' });
     }

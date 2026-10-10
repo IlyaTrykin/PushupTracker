@@ -7,9 +7,10 @@ import { useAuth } from '@/auth/provider';
 import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
 import WeeklyLeague from '@/components/WeeklyLeague';
 import { useI18n } from '@/i18n/provider';
+import { formatDayPointsTotal } from '@/i18n/messages/features/points';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
-import { formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts, isDistanceExercise } from '@/lib/exercise-metrics';
 import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
 import { EXERCISES, EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
@@ -289,6 +290,8 @@ async function fetchJson(url: string) {
 export default function FriendsPage() {
   const { user } = useAuth();
   const { locale } = useI18n();
+  // Таблица и календарь друзей: кардио — в км (тем же форматтером, что и ленты), остальное — числом.
+  const metricText = (type: ExerciseType, value: number) => (isDistanceExercise(type) ? formatExerciseValue(value, type, true, locale) : value);
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
   const cacheKey = useMemo(() => getUserScopedCacheKey('friends', user?.id, user?.username), [user?.id, user?.username]);
@@ -736,20 +739,20 @@ export default function FriendsPage() {
     return unique.filter((w) => isWorkoutInPeriod(w, feedPeriod));
   }, [myWorkouts, me, friends, friendWorkouts, feedPeriod, tt]);
 
-  const groupedFeedWorkouts = useMemo(
-    () =>
-      latestFeedWorkouts.reduce<Array<{ dayKey: string; items: FeedWorkoutItem[] }>>((acc, item) => {
-        const dayKey = workoutDayKey(item);
-        const last = acc[acc.length - 1];
-        if (last && last.dayKey === dayKey) {
-          last.items.push(item);
-        } else {
-          acc.push({ dayKey, items: [item] });
-        }
-        return acc;
-      }, []),
-    [latestFeedWorkouts],
-  );
+  // Группировка по календарному дню через Map: время записи может не совпадать с её днём
+  // (правка, другой пояс друга), поэтому соседство в ленте, отсортированной по времени, не годится —
+  // каждый день встречается ровно один раз. Дни — по убыванию, внутри дня — по времени (уже отсортировано).
+  const groupedFeedWorkouts = useMemo(() => {
+    const byDay = new Map<string, FeedWorkoutItem[]>();
+    for (const item of latestFeedWorkouts) {
+      const dayKey = workoutDayKey(item);
+      const items = byDay.get(dayKey);
+      if (items) items.push(item);
+      else byDay.set(dayKey, [item]);
+    }
+    return Array.from(byDay, ([dayKey, items]) => ({ dayKey, items }))
+      .sort((a, b) => (a.dayKey < b.dayKey ? 1 : a.dayKey > b.dayKey ? -1 : 0));
+  }, [latestFeedWorkouts]);
   const friendCalendarCells = useMemo(() => {
     const year = friendCalendarMonth.getFullYear();
     const month = friendCalendarMonth.getMonth();
@@ -957,42 +960,42 @@ export default function FriendsPage() {
 
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-today-${type}`} style={metricValue}>{sBy[type].totalToday}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-today-${type}`} style={metricValue}>{metricText(type, sBy[type].totalToday)}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-all-${type}`} style={metricValue}>{sBy[type].totalAll}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-all-${type}`} style={metricValue}>{metricText(type, sBy[type].totalAll)}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-year-${type}`} style={metricValue}>{sBy[type].totalYear}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-year-${type}`} style={metricValue}>{metricText(type, sBy[type].totalYear)}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-month-${type}`} style={metricValue}>{sBy[type].totalMonth}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-month-${type}`} style={metricValue}>{metricText(type, sBy[type].totalMonth)}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-week-${type}`} style={metricValue}>{sBy[type].totalWeek}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-week-${type}`} style={metricValue}>{metricText(type, sBy[type].totalWeek)}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-avgm-${type}`} style={metricValue}>{sBy[type].avgPerDayMonth || '-'}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-avgm-${type}`} style={metricValue}>{sBy[type].avgPerDayMonth ? metricText(type, sBy[type].avgPerDayMonth) : '-'}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-avgy-${type}`} style={metricValue}>{sBy[type].avgPerDayYear || '-'}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-avgy-${type}`} style={metricValue}>{sBy[type].avgPerDayYear ? metricText(type, sBy[type].avgPerDayYear) : '-'}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-avga-${type}`} style={metricValue}>{sBy[type].avgPerDayAll || '-'}</span>)}
+                          {rowTypes.map((type) => <span key={`${uname}-avga-${type}`} style={metricValue}>{sBy[type].avgPerDayAll ? metricText(type, sBy[type].avgPerDayAll) : '-'}</span>)}
                         </div>
                       </td>
                       <td style={tdNumCompact}>
@@ -1134,6 +1137,8 @@ export default function FriendsPage() {
                 {group.items.map((w) => {
                   const type = toExerciseType(w.exerciseType);
                   const typeColor = exerciseNumberColor(type);
+                  // Кардио: дистанция крупно, время и темп — мелкой второй строкой; у упражнений на одну руку — раскладка.
+                  const feedValue = formatWorkoutValueParts(w, locale);
                   const reaction = friendWorkoutReactions[w.id];
                   const pickerOpen = feedReactionPickerWorkoutId === w.id;
                   const summaryItems = REACTION_OPTIONS
@@ -1164,8 +1169,8 @@ export default function FriendsPage() {
 
                         <div style={feedReps}>
                           <AchievementBadge mark={achievementMarks[w.id]} locale={locale === 'en' ? 'en' : 'ru'} />
-                          {formatWorkoutValue(w, locale, false)}
-                          {formatWorkoutSides(w, locale) ? <div style={feedSides}>{formatWorkoutSides(w, locale)}</div> : null}
+                          {feedValue.main}
+                          {feedValue.detail ? <div style={feedSides}>{feedValue.detail}</div> : null}
                         </div>
                       </div>
 
@@ -1328,7 +1333,7 @@ export default function FriendsPage() {
                             {exerciseTotals.map(({ type, sum }) => (
                               <span key={type} style={friendTotalValue}>
                                 <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={22} height={22} style={friendTotalIcon} unoptimized />
-                                <span>{sum}</span>
+                                <span>{metricText(type, sum)}</span>
                               </span>
                             ))}
                           </div>
@@ -1389,7 +1394,7 @@ export default function FriendsPage() {
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(friendDetailDay, localeTag)} · {tt('всего')}: {selectedFriendDayData.totalPoints.toLocaleString(localeTag)} {tt('баллов')}
+                  {formatDateWithWeekday(friendDetailDay, localeTag)} · {formatDayPointsTotal(selectedFriendDayData.totalPoints, locale)}
                 </div>
 
                 {selectedFriendDayData.items.map((w) => {

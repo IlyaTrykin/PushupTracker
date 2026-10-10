@@ -2,9 +2,7 @@ import { randomBytes } from 'crypto';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import type { AuthUser } from '@/lib/auth';
-import { isChannelEnabledForUser } from '@/lib/notification-preferences';
-import { sendGroupJoinRequestEmail, sendGroupJoinResolvedEmail } from '@/lib/notification-email';
-import { queueWebPushToUsers } from '@/lib/web-push';
+import { groupJoinRequestMessage, groupJoinResolvedMessage, notifyUsers } from '@/lib/notify';
 import { addDays, dayKeyInZone, dayKeyToDbDate } from '@/lib/calendar-day';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
@@ -132,12 +130,6 @@ export function shouldNotifyFriendRequest(lastNotifiedAt: Date | null | undefine
 
 export function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
-}
-
-function sendInBackground(label: string, task: () => Promise<unknown>): void {
-  void Promise.resolve()
-    .then(task)
-    .catch((e) => console.error(`${label}:`, e));
 }
 
 function makeInviteToken(): string {
@@ -508,7 +500,9 @@ export async function updateGroupName(actor: GroupActor, groupId: string, rawNam
   });
 }
 
-export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, request?: Request) {
+// `_request` остаётся ради вызывающих маршрутов: ссылки в уведомлениях теперь строятся из APP_URL (notifyUsers).
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, _request?: Request) {
   const token = String(rawToken ?? '').trim();
   if (!token) throw new GroupError('Ссылка-приглашение недействительна', 400, 'GROUP_INVITE_INVALID');
 
@@ -618,37 +612,14 @@ export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, re
   }
 
   if (result.notifyOwner) {
-    const title = 'Новая заявка в группу';
-    const body = `${actor.username} хочет вступить в группу ${result.group.name}`;
-    const link = `/groups/${result.group.id}`;
-
-    // Уведомление пишется после транзакции: сбой здесь не должен откатывать заявку (B28).
-    await prisma.notification
-      .create({ data: { userId: result.group.ownerId, type: 'group_join_request', title, body, link } })
-      .catch((e) => console.error('GROUP JOIN REQUEST NOTIFICATION ERROR:', e));
-
-    queueWebPushToUsers(
+    // После транзакции (B28): сбой уведомления не откатывает заявку. In-app сразу;
+    // push / письмо / Telegram — по настройкам владельца, в фоне, на его языке.
+    await notifyUsers(
       [result.group.ownerId],
-      { title, body, link, tag: `group-join-request-${result.request.id}` },
       'group_join_request',
+      (locale) => groupJoinRequestMessage(locale, { username: actor.username, groupId: result.group.id, groupName: result.group.name }),
+      { tag: `group-join-request-${result.request.id}` },
     );
-
-    sendInBackground('GROUP JOIN REQUEST EMAIL ERROR', async () => {
-      const owner = await prisma.user.findUnique({
-        where: { id: result.group.ownerId },
-        select: { email: true, deletedAt: true },
-      });
-      if (!owner?.email || owner.deletedAt) return;
-      if (!(await isChannelEnabledForUser(result.group.ownerId, 'group_join_request', 'email'))) return;
-      await sendGroupJoinRequestEmail({
-        to: owner.email,
-        ownerUsername: result.group.owner.username,
-        requesterUsername: actor.username,
-        groupId: result.group.id,
-        groupName: result.group.name,
-        request,
-      });
-    });
   }
 
   return { request: result.request, group: result.group };
@@ -694,7 +665,8 @@ export async function resolveJoinRequest(
   groupId: string,
   requestId: string,
   action: 'approve' | 'reject',
-  request?: Request,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for the route's call; links come from APP_URL
+  _request?: Request,
 ) {
   const result = await prisma.$transaction(async (tx) => {
     const group = await requireGroupManageAccess(tx, actor, groupId);
@@ -792,37 +764,13 @@ export async function resolveJoinRequest(
   });
 
   const approved = action === 'approve';
-  const eventType = approved ? 'group_join_request_approved' : 'group_join_request_rejected';
-  const title = approved ? 'Заявка в группу одобрена' : 'Заявка в группу отклонена';
-  const body = approved
-    ? `Вы вступили в группу ${result.group.name}`
-    : `Вступление в группу ${result.group.name} отклонено`;
-  const link = `/groups/${result.group.id}`;
-
   // После транзакции (B28): сбой уведомления не откатывает решение по заявке.
-  await prisma.notification
-    .create({ data: { userId: result.user.id, type: eventType, title, body, link } })
-    .catch((e) => console.error('GROUP JOIN RESOLVED NOTIFICATION ERROR:', e));
-
-  queueWebPushToUsers([result.user.id], { title, body, link, tag: `group-join-${action}-${result.request.id}` }, eventType);
-
-  sendInBackground('GROUP JOIN RESOLVED EMAIL ERROR', async () => {
-    const target = await prisma.user.findUnique({
-      where: { id: result.user.id },
-      select: { email: true, deletedAt: true },
-    });
-    if (!target?.email || target.deletedAt) return;
-    if (!(await isChannelEnabledForUser(result.user.id, eventType, 'email'))) return;
-    await sendGroupJoinResolvedEmail({
-      to: target.email,
-      targetUsername: result.user.username,
-      ownerUsername: actor.username,
-      groupId: result.group.id,
-      groupName: result.group.name,
-      approved,
-      request,
-    });
-  });
+  await notifyUsers(
+    [result.user.id],
+    approved ? 'group_join_request_approved' : 'group_join_request_rejected',
+    (locale) => groupJoinResolvedMessage(locale, { groupId: result.group.id, groupName: result.group.name, approved }),
+    { tag: `group-join-${action}-${result.request.id}` },
+  );
 
   return result;
 }

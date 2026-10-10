@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { challengesMessages } from '@/i18n/messages/features/challenges';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import {
   challengeDailyMinLabel,
@@ -446,9 +447,7 @@ export default function ChallengesPage() {
               </select>
               {challengeUsesPoints(exerciseType) ? (
                 <div style={{ color: '#6b7280', fontSize: 12 }}>
-                  {locale === 'en'
-                    ? 'Weighted exercise: totals and daily targets are counted in points (1 point = 1 push-up), so heavier weight counts more.'
-                    : 'Упражнение с весом: суммы и дневная норма считаются в баллах (1 балл = 1 отжимание), больший вес даёт больше.'}
+                  {challengesMessages[locale].pointsHintCreate}
                 </div>
               ) : null}
             </div>

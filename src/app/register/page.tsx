@@ -7,33 +7,15 @@ import { useRouter } from 'next/navigation';
 import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
+import { accountMessages } from '@/i18n/messages/features/account';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, validateNewPassword, validateNewUsername } from '@/lib/account-validation';
 import styles from '../login/login.module.css';
 
 type JsonObject = Record<string, unknown>;
 
-const PASSWORD_MIN_LENGTH = 8;
-
-// Requirements shown under the fields (same rules as the server: src/lib/account-validation.ts).
-const hints = {
-  ru: {
-    username: 'От 3 до 32 символов: латинские буквы, цифры и . _ -',
-    password: `Не меньше ${PASSWORD_MIN_LENGTH} символов`,
-    passwordTooShort: `Пароль должен быть не меньше ${PASSWORD_MIN_LENGTH} символов`,
-    usernameInvalid: 'Ник: от 3 до 32 символов, только латинские буквы, цифры и . _ -',
-  },
-  en: {
-    username: '3 to 32 characters: Latin letters, digits and . _ -',
-    password: `At least ${PASSWORD_MIN_LENGTH} characters`,
-    passwordTooShort: `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
-    usernameInvalid: 'Username: 3 to 32 characters, only Latin letters, digits and . _ -',
-  },
-} as const;
-
-const USERNAME_RE = /^[a-zA-Z0-9._-]{3,32}$/;
-
 export default function RegisterPage() {
   const { locale, messages, setLocale } = useI18n();
-  const hint = hints[locale] ?? hints.ru;
+  const hint = accountMessages[locale];
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
@@ -51,12 +33,13 @@ export default function RegisterPage() {
     setError(null);
     setSuccess(false);
 
-    if (!USERNAME_RE.test(username.trim())) {
+    if (!validateNewUsername(username).ok) {
       setError(hint.usernameInvalid);
       return;
     }
-    if (Array.from(password).length < PASSWORD_MIN_LENGTH) {
-      setError(hint.passwordTooShort);
+    const passwordCheck = validateNewPassword(password);
+    if (!passwordCheck.ok) {
+      setError(passwordCheck.code === 'PASSWORD_TOO_LONG' ? hint.passwordTooLong : hint.passwordTooShort);
       return;
     }
 
@@ -143,7 +126,7 @@ export default function RegisterPage() {
                 aria-describedby="register-username-hint"
                 className={styles.input}
               />
-              <span id="register-username-hint" style={hintStyle}>{hint.username}</span>
+              <span id="register-username-hint" style={hintStyle}>{hint.usernameHint}</span>
             </div>
 
             <div className={styles.field}>
@@ -155,12 +138,12 @@ export default function RegisterPage() {
                 onChange={e => setPassword(e.target.value)}
                 autoComplete="new-password"
                 minLength={PASSWORD_MIN_LENGTH}
-                maxLength={128}
+                maxLength={PASSWORD_MAX_LENGTH}
                 required
                 aria-describedby="register-password-hint"
                 className={styles.input}
               />
-              <span id="register-password-hint" style={hintStyle}>{hint.password}</span>
+              <span id="register-password-hint" style={hintStyle}>{hint.passwordHint}</span>
             </div>
 
             <LanguageSelect

@@ -1,6 +1,7 @@
 /**
  * In-process background scheduler (one Next.js instance): every 5 minutes runs each
- * registered job. Started from `src/instrumentation.ts`; `SCHEDULER_DISABLED=1` turns it off.
+ * registered job. Started from `src/instrumentation.ts` only when `SCHEDULER_ENABLED=1` (set only in
+ * `docker-compose.prod.yml`, service `web`); dev, local `next start` and local docker never start it.
  * Jobs must be idempotent per tick — notifications claim keys via `claimDispatch`.
  */
 

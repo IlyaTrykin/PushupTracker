@@ -44,8 +44,10 @@ export function exerciseValuePlural(exerciseType?: string | null): string {
   return isTimedExercise(exerciseType) ? 'секунд' : 'повторений';
 }
 
-export function exerciseValueShort(exerciseType?: string | null): string {
-  return isTimedExercise(exerciseType) ? 'сек' : '';
+/** Short unit after the number: «сек» / «sec» for timed exercises, nothing for reps. */
+export function exerciseValueShort(exerciseType?: string | null, locale: string = 'ru'): string {
+  if (!isTimedExercise(exerciseType)) return '';
+  return locale === 'en' ? 'sec' : 'сек';
 }
 
 export function formatExerciseValue(
@@ -57,7 +59,7 @@ export function formatExerciseValue(
   if (value == null || value === '') return '—';
   if (withUnit && isDistanceExercise(exerciseType)) return formatDistance(Number(value), locale);
   if (!withUnit || !isTimedExercise(exerciseType)) return String(value);
-  return `${value} ${exerciseValueShort(exerciseType)}`;
+  return `${value} ${exerciseValueShort(exerciseType, locale)}`;
 }
 
 type WorkoutValueFields = {
@@ -77,22 +79,33 @@ export function formatWorkoutSides(workout: WorkoutValueFields, locale: string =
   return locale === 'en' ? `L ${left} / R ${right}` : `Л ${left} / П ${right}`;
 }
 
-// Значение подхода для детализации: итог, вес снаряда и (если withSides) раскладка
-// по рукам. В сводной статистике используется только итог (reps).
-export function formatWorkoutValue(workout: WorkoutValueFields, locale: string = 'ru', withSides = true): string {
+/**
+ * A workout split for feed rows: `main` is the big number, `detail` the small second line
+ * (cardio: time and pace/speed; one-hand exercises: «Л 5 / П 6» when `withSides`).
+ */
+export function formatWorkoutValueParts(
+  workout: WorkoutValueFields,
+  locale: string = 'ru',
+  withSides = true,
+): { main: string; detail: string } {
   if (isDistanceExercise(workout.exerciseType)) {
-    let line = formatDistance(workout.reps, locale);
+    const main = formatDistance(workout.reps, locale);
     const seconds = workout.durationSeconds;
-    if (seconds && seconds > 0 && workout.reps > 0) {
-      const rate = workout.exerciseType === 'bike' ? formatSpeed(workout.reps, seconds, locale) : formatPace(workout.reps, seconds, locale);
-      line += ` · ${formatDuration(seconds)} (${rate})`;
-    }
-    return line;
+    if (!seconds || seconds <= 0 || workout.reps <= 0) return { main, detail: '' };
+    const rate = workout.exerciseType === 'bike' ? formatSpeed(workout.reps, seconds, locale) : formatPace(workout.reps, seconds, locale);
+    return { main, detail: `${formatDuration(seconds)} (${rate})` };
   }
-  let out = formatExerciseValue(workout.reps, workout.exerciseType, true);
-  if (workout.loadKg != null) out += ` × ${workout.loadKg} ${locale === 'en' ? 'kg' : 'кг'}`;
-  const sides = withSides ? formatWorkoutSides(workout, locale) : '';
-  return sides ? `${out} (${sides})` : out;
+  let main = formatExerciseValue(workout.reps, workout.exerciseType, true, locale);
+  if (workout.loadKg != null) main += ` × ${workout.loadKg} ${locale === 'en' ? 'kg' : 'кг'}`;
+  return { main, detail: withSides ? formatWorkoutSides(workout, locale) : '' };
+}
+
+// Значение подхода одной строкой для детализации: итог, вес снаряда и (если withSides)
+// раскладка по рукам в скобках; кардио — «5,2 км · 26:30 (5:06/км)».
+export function formatWorkoutValue(workout: WorkoutValueFields, locale: string = 'ru', withSides = true): string {
+  const { main, detail } = formatWorkoutValueParts(workout, locale, withSides);
+  if (!detail) return main;
+  return isDistanceExercise(workout.exerciseType) ? `${main} · ${detail}` : `${main} (${detail})`;
 }
 
 export function challengeMostLabel(exerciseType?: string | null): string {

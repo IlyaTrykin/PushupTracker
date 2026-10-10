@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
-import { queueWebPushToUsers } from '@/lib/web-push';
+import { friendReactionMessage, notifyUsers } from '@/lib/notify';
 import { isUniqueViolation } from '@/lib/groups';
 
 const ALLOWED_EMOJI = ['👍', '🔥', '👎', '💩'] as const;
@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
 
     const workout = await prisma.workout.findUnique({
       where: { id: workoutId },
-      select: { id: true, userId: true, reps: true },
+      select: { id: true, userId: true, reps: true, exerciseType: true, loadKg: true, durationSeconds: true },
     });
 
     if (!workout) return jsonError('Тренировка не найдена', 404);
@@ -266,22 +266,13 @@ export async function POST(request: NextRequest) {
     }
 
     if (reacted && workout.userId !== userId && (await claimReactionNotification(workoutId, userId))) {
-      const title = 'Новая реакция на тренировку';
-      const bodyText = `${authUser.username} ${emoji} на вашу тренировку (${workout.reps})`;
-      const link = '/dashboard';
-      const tag = `friend-reaction-${workoutId}-${userId}`;
-
-      await prisma.notification.create({
-        data: {
-          userId: workout.userId,
-          type: 'friend_reaction',
-          title,
-          body: bodyText,
-          link,
-        },
-      }).catch((e) => console.error('WORKOUT REACTION NOTIFICATION CREATE ERROR:', e));
-
-      queueWebPushToUsers([workout.userId], { title, body: bodyText, link, tag }, 'friend_reaction');
+      // In-app сразу; push / письмо / Telegram — по настройкам владельца, текст на его языке.
+      await notifyUsers(
+        [workout.userId],
+        'friend_reaction',
+        (locale) => friendReactionMessage(locale, { username: authUser.username, emoji, workout }),
+        { tag: `friend-reaction-${workoutId}-${userId}` },
+      );
     }
 
     const byWorkout = await buildReactionMap(userId, [workoutId]);

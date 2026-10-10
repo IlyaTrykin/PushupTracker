@@ -150,13 +150,19 @@ test('friend notification: records and badges in the recipient language', () => 
 
 type Notified = { ids: string[]; event: NotifyEvent; ru: LocalizedMessage; opts?: NotifyOptions };
 
-function hookWorld(input: { workouts: AchievementWorkout[]; owned?: string[]; dailyGoalPoints?: number | null; friends?: string[] }) {
+// `existing` — UserAchievement rows the user had before (records included); owned badges count too.
+function hookWorld(input: { workouts: AchievementWorkout[]; owned?: string[]; existing?: number; dailyGoalPoints?: number | null; friends?: string[] }) {
   const rows: AchievementRow[] = [];
   const taken = new Set<string>(input.owned?.map((code) => `badge:${code}:u1`) ?? []);
   const notified: Notified[] = [];
   const pending: Array<() => Promise<void>> = [];
   const deps: AchievementHookDeps = {
-    loadContext: async () => ({ workouts: input.workouts, dailyGoalPoints: input.dailyGoalPoints ?? null, ownedBadges: input.owned ?? [] }),
+    loadContext: async () => ({
+      workouts: input.workouts,
+      dailyGoalPoints: input.dailyGoalPoints ?? null,
+      ownedBadges: input.owned ?? [],
+      hasAchievements: (input.existing ?? 0) + (input.owned?.length ?? 0) + rows.length > 0,
+    }),
     saveAchievement: async (row) => {
       if (row.uniqueKey && taken.has(row.uniqueKey)) return null;
       if (row.uniqueKey) taken.add(row.uniqueKey);
@@ -202,7 +208,7 @@ test('hook: saves records and new badges, notifies friends in the background', a
 
 test('hook: a badge is saved once by its uniqueKey; nothing new — no notification', async () => {
   const workout = created('2026-10-07', 'squats', 10);
-  const world = hookWorld({ workouts: [workout] });
+  const world = hookWorld({ workouts: [workout], existing: 1 });
   const { onWorkoutCreated } = createAchievementHook(world.deps);
 
   const first = await onWorkoutCreated(workout, user);
@@ -215,6 +221,30 @@ test('hook: a badge is saved once by its uniqueKey; nothing new — no notificat
   assert.equal(world.rows.length, 1);
   await world.flush();
   assert.equal(world.notified.length, 1);
+});
+
+test('hook: the first award to a user with no achievements yet (badges earned before the feature) does not notify friends', async () => {
+  const history = [w('2026-10-01', 'pushups', 9000), w('2026-10-02', 'pushups', 999)];
+  const workout = created('2026-10-07', 'pushups', 31);
+  const workouts: AchievementWorkout[] = [...history, workout];
+  const world = hookWorld({ workouts });
+  const { onWorkoutCreated } = createAchievementHook(world.deps);
+
+  const result = await onWorkoutCreated(workout, user);
+  const codes = result.achievements.map((a) => a.code);
+  assert.ok(['points_1000', 'points_10000', 'pushups_1000', 'pushups_10000'].every((code) => codes.includes(code as never)), 'badges and the toast as usual');
+  assert.equal(world.rows.length, result.achievements.length + result.records.length);
+  await world.flush();
+  assert.equal(world.notified.length, 0, 'no friend_achievement for the backlog');
+
+  // From now on the user has achievements: a new badge is news again.
+  const squats = created('2026-10-07', 'squats', 10);
+  workouts.push(squats);
+  const next = await onWorkoutCreated(squats, user);
+  assert.deepEqual(next.achievements.map((a) => a.code), ['first_exercise']);
+  await world.flush();
+  assert.equal(world.notified.length, 1);
+  assert.equal(world.notified[0].event, 'friend_achievement');
 });
 
 test('league winner badge: given once per user, friends are told', async () => {

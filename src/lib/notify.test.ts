@@ -207,3 +207,54 @@ test('inAppOnly writes the notification centre row and sends nothing else', asyn
   assert.equal(world.inApp[0].type, 'challenge_accept');
   assert.equal(world.sent.length, 0);
 });
+
+test('friend request: Telegram-enabled recipients get it in Telegram, each in their own language', async () => {
+  const { friendRequestMessage } = await import('./notify');
+  const world = fakeWorld([
+    recipient('ru-user', { telegramChatId: '111', channels: { push: true, email: false, telegram: true } }),
+    recipient('en-user', { locale: 'en', telegramChatId: '222', channels: { push: false, email: false, telegram: true } }),
+    recipient('no-tg', { telegramChatId: '333', channels: { push: true, email: false, telegram: false } }),
+  ]);
+  const { notifyUsers } = createNotifier(world.deps);
+
+  await notifyUsers(['ru-user', 'en-user', 'no-tg'], 'friend_request', (locale) => friendRequestMessage(locale, { username: 'bob' }), {
+    tag: 'friend-request-f1',
+  });
+  await world.settle();
+
+  const telegram = world.sent.filter((s) => s.channel === 'telegram');
+  assert.deepEqual(telegram.map((s) => [s.to, s.title, s.body]), [
+    ['111', 'Новый запрос в друзья', 'bob отправил вам запрос в друзья'],
+    ['222', 'New friend request', 'bob sent you a friend request'],
+  ]);
+  assert.deepEqual(world.inApp.map((row) => [row.userId, row.type, row.link]), [
+    ['ru-user', 'friend_request', '/friends'],
+    ['en-user', 'friend_request', '/friends'],
+    ['no-tg', 'friend_request', '/friends'],
+  ]);
+});
+
+test('friends and groups texts: recipient language, exercise name and value instead of a bare number', async () => {
+  const { friendRequestAcceptedMessage, friendReactionMessage, groupJoinRequestMessage, groupJoinResolvedMessage } = await import('./notify');
+
+  assert.deepEqual(friendRequestAcceptedMessage('en', { username: 'ann' }), { title: 'Friend request accepted', body: 'ann accepted your friend request', link: '/friends' });
+  assert.equal(friendRequestAcceptedMessage('ru', { username: 'ann' }).body, 'ann принял ваш запрос в друзья');
+
+  const reaction = { username: 'ann', emoji: '🔥', workout: { exerciseType: 'plank', reps: 60 } };
+  assert.equal(friendReactionMessage('ru', reaction).body, 'ann 🔥 на вашу тренировку: Планка — 60 сек');
+  const en = friendReactionMessage('en', { ...reaction, workout: { exerciseType: 'run', reps: 5200, durationSeconds: 1590 } });
+  assert.equal(en.title, 'New reaction to your workout');
+  assert.equal(en.body, 'ann 🔥 on your workout: Running — 5.2 km · 26:30 (5:06/km)');
+
+  const join = groupJoinRequestMessage('en', { username: 'ann', groupId: 'g1', groupName: 'Morning crew' });
+  assert.deepEqual(join, { title: 'New request to join a group', body: 'ann wants to join Morning crew', link: '/groups/g1' });
+  assert.equal(groupJoinRequestMessage('ru', { username: 'ann', groupId: 'g1', groupName: 'Утро' }).body, 'ann хочет вступить в группу Утро');
+
+  assert.deepEqual(groupJoinResolvedMessage('en', { groupId: 'g1', groupName: 'Morning crew', approved: true }), { title: 'Join request approved', body: 'You joined Morning crew', link: '/groups/g1' });
+  assert.equal(groupJoinResolvedMessage('en', { groupId: 'g1', groupName: 'Morning crew', approved: false }).body, 'Your request to join Morning crew was declined');
+  assert.equal(groupJoinResolvedMessage('ru', { groupId: 'g1', groupName: 'Утро', approved: false }).title, 'Заявка в группу отклонена');
+
+  for (const message of [friendRequestAcceptedMessage('en', { username: 'ann' }), en, join]) {
+    assert.doesNotMatch(`${message.title} ${message.body}`, /[А-Яа-яЁё]/);
+  }
+});

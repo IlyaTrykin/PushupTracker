@@ -7,9 +7,10 @@ import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, use
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
-import { formatExerciseValue, formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts } from '@/lib/exercise-metrics';
 import { dayPointsTotal, workoutDayKey } from '@/lib/day-stats';
 import { useI18n } from '@/i18n/provider';
+import { formatDayPointsTotal } from '@/i18n/messages/features/points';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, isLoadedExercise, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
@@ -1035,6 +1036,8 @@ export default function GroupMemberDetailPage() {
                 {groupedDay.items.map((workout) => {
                   const type = toExerciseType(workout.exerciseType);
                   const typeColor = getExerciseAccent(type);
+                  // Кардио: дистанция крупно, время и темп — мелкой второй строкой; у упражнений на одну руку — раскладка.
+                  const feedValue = formatWorkoutValueParts(workout, locale);
                   return (
                     <article
                       key={workout.id}
@@ -1053,8 +1056,8 @@ export default function GroupMemberDetailPage() {
                         </div>
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={18} height={18} style={feedTypeIcon} unoptimized />
                         <div style={feedReps}>
-                          {formatWorkoutValue(workout, locale, false)}
-                          {formatWorkoutSides(workout, locale) ? <div style={feedSides}>{formatWorkoutSides(workout, locale)}</div> : null}
+                          {feedValue.main}
+                          {feedValue.detail ? <div style={feedSides}>{feedValue.detail}</div> : null}
                         </div>
                       </div>
                     </article>
@@ -1182,7 +1185,7 @@ export default function GroupMemberDetailPage() {
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(detailDay, localeTag)} · {tt('всего')}: {selectedDayData.totalPoints.toLocaleString(localeTag)} {tt('баллов')}
+                  {formatDateWithWeekday(detailDay, localeTag)} · {formatDayPointsTotal(selectedDayData.totalPoints, locale)}
                 </div>
 
                 {selectedDayData.items.map((workout) => {

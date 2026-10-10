@@ -45,8 +45,16 @@ export type AchievementRow = {
 };
 
 export type AchievementHookDeps = {
-  /** All workouts of the user (the new one included), the daily goal and owned badge codes. */
-  loadContext(userId: string): Promise<{ workouts: AchievementWorkout[]; dailyGoalPoints: number | null; ownedBadges: string[] }>;
+  /**
+   * All workouts of the user (the new one included), the daily goal, owned badge codes and whether
+   * the user has any `UserAchievement` row at all (records included).
+   */
+  loadContext(userId: string): Promise<{
+    workouts: AchievementWorkout[];
+    dailyGoalPoints: number | null;
+    ownedBadges: string[];
+    hasAchievements: boolean;
+  }>;
   /** Inserts a row; `null` when its `uniqueKey` is already taken. */
   saveAchievement(row: AchievementRow): Promise<{ id: string; achievedAt: Date } | null>;
   friendIds(userId: string): Promise<string[]>;
@@ -143,7 +151,10 @@ export function createAchievementHook(deps: AchievementHookDeps) {
       if (dto) achievements.push(dto);
     }
 
-    tellFriends(user.id, user.username, records, achievements.map((item) => item.code));
+    // A user without a single achievement yet gets the badges earned before the feature existed
+    // all at once: they are saved and shown in the toast, but friends are not told about the backlog.
+    const newsworthyBadges = context.hasAchievements ? achievements.map((item) => item.code) : [];
+    tellFriends(user.id, user.username, records, newsworthyBadges);
     return { records, achievements };
   }
 
@@ -176,12 +187,18 @@ function isUniqueViolation(error: unknown): boolean {
 const prismaDeps: AchievementHookDeps = {
   loadContext: async (userId) => {
     const prisma = await db();
-    const [workouts, user, owned] = await Promise.all([
+    const [workouts, user, owned, anyAchievement] = await Promise.all([
       prisma.workout.findMany({ where: { userId }, select: { id: true, date: true, reps: true, exerciseType: true, loadKg: true } }),
       prisma.user.findUnique({ where: { id: userId }, select: { dailyGoalPoints: true } }),
       prisma.userAchievement.findMany({ where: { userId, kind: 'badge' }, select: { code: true } }),
+      prisma.userAchievement.findFirst({ where: { userId }, select: { id: true } }),
     ]);
-    return { workouts, dailyGoalPoints: user?.dailyGoalPoints ?? null, ownedBadges: owned.map((row) => row.code) };
+    return {
+      workouts,
+      dailyGoalPoints: user?.dailyGoalPoints ?? null,
+      ownedBadges: owned.map((row) => row.code),
+      hasAchievements: Boolean(anyAchievement),
+    };
   },
   saveAchievement: async (row) => {
     const prisma = await db();

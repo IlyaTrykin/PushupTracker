@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatDistance, formatDuration, formatExerciseValue, formatPace, formatSpeed, formatWorkoutValue } from './exercise-metrics';
+import { formatDistance, formatDuration, formatExerciseValue, formatPace, formatSpeed, formatWorkoutValue, formatWorkoutValueParts } from './exercise-metrics';
 
 test('distance is shown in kilometres with the locale decimal separator', () => {
   assert.equal(formatDistance(5200, 'ru'), '5,2 км');
@@ -35,4 +35,19 @@ test('totals of cardio are shown in km, other exercises are unchanged', () => {
   assert.equal(formatExerciseValue(15400, 'run', true, 'en'), '15.4 km');
   assert.equal(formatExerciseValue(30, 'pushups', true), '30');
   assert.equal(formatExerciseValue(60, 'plank', true), '60 сек');
+});
+
+test('seconds are labelled in the UI language: «60 сек» / «60 sec»; formatWorkoutValue passes the locale on', () => {
+  assert.equal(formatExerciseValue(60, 'plank', true, 'en'), '60 sec');
+  assert.equal(formatExerciseValue(60, 'plank', true, 'ru'), '60 сек');
+  assert.equal(formatWorkoutValue({ reps: 60, exerciseType: 'plank' }, 'en'), '60 sec');
+  assert.equal(formatWorkoutValue({ reps: 45, exerciseType: 'wall_sit' }, 'ru'), '45 сек');
+});
+
+test('feed rows: cardio shows the distance as the main line, time and pace below; sides go below too', () => {
+  assert.deepEqual(formatWorkoutValueParts({ reps: 5200, exerciseType: 'run', durationSeconds: 1590 }, 'ru'), { main: '5,2 км', detail: '26:30 (5:06/км)' });
+  assert.deepEqual(formatWorkoutValueParts({ reps: 20000, exerciseType: 'bike', durationSeconds: 3600 }, 'en'), { main: '20 km', detail: '1:00:00 (20 km/h)' });
+  assert.deepEqual(formatWorkoutValueParts({ reps: 5200, exerciseType: 'run' }, 'ru'), { main: '5,2 км', detail: '' });
+  assert.deepEqual(formatWorkoutValueParts({ reps: 12, exerciseType: 'kettlebell_press', loadKg: 16, repsLeft: 5, repsRight: 7 }, 'en'), { main: '12 × 16 kg', detail: 'L 5 / R 7' });
+  assert.deepEqual(formatWorkoutValueParts({ reps: 60, exerciseType: 'plank' }, 'en'), { main: '60 sec', detail: '' });
 });

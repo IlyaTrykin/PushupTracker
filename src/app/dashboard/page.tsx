@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
+import { formatDayPointsTotal } from '@/i18n/messages/features/points';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { exerciseValueLabel, formatDistance, formatDuration, formatExerciseValue, isTimedExercise, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { parseDistanceKm, parseDurationInput } from '@/lib/workout-input';
@@ -229,7 +230,7 @@ function Stat({ label, value, breakdown, locale, metric = true }: { label: strin
           {breakdownTypes.length ? breakdownTypes.map((type) => (
             <span key={`${label}-${type}`} style={statBreakdownItem}>
               <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={20} height={20} style={statBreakdownIcon} unoptimized />
-              <span style={statBreakdownValue}>{metric ? formatExerciseValue(breakdown[type], type, true, locale).replace(/ сек$/, '') : breakdown[type]}</span>
+              <span style={statBreakdownValue}>{metric ? formatExerciseValue(breakdown[type], type, true, locale).replace(/ (сек|sec)$/, '') : breakdown[type]}</span>
             </span>
           )) : (
             <span style={statBreakdownValue}>—</span>
@@ -593,12 +594,12 @@ export default function DashboardPage() {
     if (isDistanceSelected) {
       const distance = parseDistanceKm(distanceKm);
       if (!distance.ok) {
-        setError(locale === 'en' ? 'Distance must be from 0.01 to 300 km' : distance.error);
+        setError(cardioMessages[locale].distanceInvalid);
         return;
       }
       const duration = parseDurationInput(durationText);
       if (!duration.ok) {
-        setError(locale === 'en' ? 'Time as mm:ss or h:mm:ss' : duration.error);
+        setError(cardioMessages[locale].durationInvalid);
         return;
       }
       await runAdd(() => submitWorkout(distance.value, exerciseType, duration.value != null ? { durationSeconds: duration.value } : {}));
@@ -684,7 +685,7 @@ export default function DashboardPage() {
       const distance = parseDistanceKm(editDistanceKm);
       const duration = parseDurationInput(editDurationText);
       if (!distance.ok || !duration.ok) {
-        setError(locale === 'en' ? 'Check distance (0.01–300 km) and time (mm:ss)' : (!distance.ok ? distance.error : (duration as { error: string }).error));
+        setError(!distance.ok ? cardioMessages[locale].distanceInvalid : cardioMessages[locale].durationInvalid);
         return;
       }
       distancePatch = { reps: distance.value, durationSeconds: duration.value };
@@ -1222,7 +1223,7 @@ export default function DashboardPage() {
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(detailDay, localeTag)} · {tt('всего')}: {selectedDayData.totalPoints.toLocaleString(localeTag)} {tt('баллов')}
+                  {formatDateWithWeekday(detailDay, localeTag)} · {formatDayPointsTotal(selectedDayData.totalPoints, locale)}
                 </div>
 
                 {selectedDayData.items.map((w) => {

@@ -8,6 +8,7 @@
 import type { NotificationEventType, ChannelPreference } from '@/lib/notification-preferences';
 import type { PushPayload } from '@/lib/web-push';
 import { exerciseLabel, isTimedExercise } from '@/lib/exercises';
+import { formatWorkoutValue } from '@/lib/exercise-metrics';
 
 export type NotifyEvent = NotificationEventType;
 export type NotifyLocale = 'ru' | 'en';
@@ -216,6 +217,64 @@ export function challengeResponseMessage(
   return args.accepted
     ? { title: 'Приглашение принято', body: `${args.username} принял приглашение в соревнование: ${args.challengeName}`, link }
     : { title: 'Приглашение отклонено', body: `${args.username} отклонил приглашение в соревнование: ${args.challengeName}`, link };
+}
+
+// --- Friends and groups (T04 decides who and when; these only word it) ---
+
+export function friendRequestMessage(locale: NotifyLocale, args: { username: string }): LocalizedMessage {
+  return locale === 'en'
+    ? { title: 'New friend request', body: `${args.username} sent you a friend request`, link: '/friends' }
+    : { title: 'Новый запрос в друзья', body: `${args.username} отправил вам запрос в друзья`, link: '/friends' };
+}
+
+export function friendRequestAcceptedMessage(locale: NotifyLocale, args: { username: string }): LocalizedMessage {
+  return locale === 'en'
+    ? { title: 'Friend request accepted', body: `${args.username} accepted your friend request`, link: '/friends' }
+    : { title: 'Запрос в друзья принят', body: `${args.username} принял ваш запрос в друзья`, link: '/friends' };
+}
+
+export type ReactedWorkout = {
+  exerciseType: string;
+  reps: number;
+  loadKg?: number | null;
+  durationSeconds?: number | null;
+};
+
+/** «ann 🔥 на вашу тренировку: Планка — 60 сек» (cardio: distance, time and pace). */
+export function friendReactionMessage(
+  locale: NotifyLocale,
+  args: { username: string; emoji: string; workout: ReactedWorkout },
+): LocalizedMessage {
+  const { workout } = args;
+  const what = `${exerciseLabel(workout.exerciseType, locale)} — ${formatWorkoutValue({ ...workout, loadKg: workout.loadKg ?? null }, locale, false)}`;
+  return locale === 'en'
+    ? { title: 'New reaction to your workout', body: `${args.username} ${args.emoji} on your workout: ${what}`, link: '/dashboard' }
+    : { title: 'Новая реакция на тренировку', body: `${args.username} ${args.emoji} на вашу тренировку: ${what}`, link: '/dashboard' };
+}
+
+export function groupJoinRequestMessage(
+  locale: NotifyLocale,
+  args: { username: string; groupId: string; groupName: string },
+): LocalizedMessage {
+  const link = `/groups/${args.groupId}`;
+  return locale === 'en'
+    ? { title: 'New request to join a group', body: `${args.username} wants to join ${args.groupName}`, link }
+    : { title: 'Новая заявка в группу', body: `${args.username} хочет вступить в группу ${args.groupName}`, link };
+}
+
+export function groupJoinResolvedMessage(
+  locale: NotifyLocale,
+  args: { groupId: string; groupName: string; approved: boolean },
+): LocalizedMessage {
+  const link = `/groups/${args.groupId}`;
+  if (locale === 'en') {
+    return args.approved
+      ? { title: 'Join request approved', body: `You joined ${args.groupName}`, link }
+      : { title: 'Join request declined', body: `Your request to join ${args.groupName} was declined`, link };
+  }
+  return args.approved
+    ? { title: 'Заявка в группу одобрена', body: `Вы вступили в группу ${args.groupName}`, link }
+    : { title: 'Заявка в группу отклонена', body: `Вступление в группу ${args.groupName} отклонено`, link };
 }
 
 /** «Скоро тренировка»: one or several program sessions due around now. */
