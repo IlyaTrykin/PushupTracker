@@ -5,6 +5,7 @@ import Link from 'next/link';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
+import WeeklyLeague from '@/components/WeeklyLeague';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
@@ -857,6 +858,13 @@ export default function FriendsPage() {
           {tt('Группы')}
         </Link>
       </section>
+
+      <WeeklyLeague
+        onAddFriend={() => {
+          setShowAddFriendForm(true);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+      />
 
       <section style={accentCard}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', overflowX: 'auto' }}>
