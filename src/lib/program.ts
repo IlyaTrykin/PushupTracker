@@ -2,171 +2,62 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { sendWebPushToUsers } from '@/lib/web-push';
 import { EXERCISES, isExerciseType } from '@/lib/exercises';
+import { dayKeyToDbDate, dbDateToDayKey, diffDays, normalizeTimeZone, type DayKey } from '@/lib/calendar-day';
+import {
+  ProgramError,
+  buildProgramDraft,
+  computeSetTarget,
+  evaluateProgramOutcome,
+  isSessionOpenForSets,
+  planOverdueAutofill,
+  planProgramExtension,
+  programDayOf,
+  programReplacementScope,
+  programSetWorkoutTime,
+  programWorkoutDate,
+  setsMissingWorkouts,
+  shiftInstantByDays,
+  type ProgramClock,
+  type ProgramCreateInput,
+  type ProgramProfileHints,
+} from '@/lib/program-plan';
 
-// Генератор программ рассчитан на упражнения с собственным весом: у каждого типа
-// здесь свой коэффициент готовности, поэтому список задан явно, а не из каталога.
-export type ProgramExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
-export type ProgramGoalType = 'reach_target';
+export {
+  ProgramError,
+  isProgramExerciseType,
+  suggestDurationWeeks,
+  suggestFrequencyPerWeek,
+} from '@/lib/program-plan';
+export type {
+  ProgramCreateInput,
+  ProgramExerciseType,
+  ProgramGoalType,
+  ProgramProfileHints,
+} from '@/lib/program-plan';
 
-type GoalTemplate = {
-  percentages: number[];
-  rest: number[];
-  keySet: number;
-};
-
-const EXERCISE_COEFFICIENTS: Record<ProgramExerciseType, number> = {
-  pushups: 1.0,
-  pullups: 0.85,
-  crunches: 1.1,
-  squats: 1.05,
-  plank: 0.9,
-};
-
-export function isProgramExerciseType(value: unknown): value is ProgramExerciseType {
-  return isExerciseType(value)
-    && EXERCISES[value].programSupported
-    && Object.prototype.hasOwnProperty.call(EXERCISE_COEFFICIENTS, value);
-}
-
-const GOAL_TEMPLATE: GoalTemplate = {
-  // Last set is the key (max-like) set.
-  percentages: [0.6, 0.72, 0.8, 0.7, 1.0],
-  rest: [90, 90, 120, 120, 150],
-  keySet: 5,
-};
-
-export type ProgramCreateInput = {
-  exerciseType: ProgramExerciseType;
-  baselineMaxReps: number;
-  targetReps: number;
-  durationWeeks?: number | null;
-  frequencyPerWeek?: number | null;
-  ageYears?: number | null;
-  weightKg?: number | null;
-  sex?: string | null;
-  startDate?: string | Date | null;
-};
-
-type NormalizedCreateInput = {
-  exerciseType: ProgramExerciseType;
-  baselineMaxReps: number;
-  targetReps: number;
-  durationWeeks: number;
-  frequencyPerWeek: number;
-  ageYears: number;
-  weightKg: number;
-  sex: string;
-  startDate: string | Date | null;
-};
-
-export type ProgramProfileHints = {
-  ageYears: number | null;
-  weightKg: number | null;
-  sex: string | null;
-};
-
-export class ProgramError extends Error {
-  status: number;
-  code?: string;
-
-  constructor(message: string, status = 400, code?: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
-
-const MS_DAY = 24 * 60 * 60 * 1000;
-
-function clampInt(v: number, min: number, max: number): number {
-  if (!Number.isFinite(v)) return min;
-  return Math.min(max, Math.max(min, Math.round(v)));
-}
-
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-function withDefaultTime(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(19, 0, 0, 0);
-  return x;
-}
-
-function addDays(d: Date, days: number): Date {
-  return new Date(d.getTime() + days * MS_DAY);
-}
-
-function diffDays(a: Date, b: Date): number {
-  return Math.floor((startOfDay(a).getTime() - startOfDay(b).getTime()) / MS_DAY);
-}
-
-function maxConsecutiveDaysForFrequency(freq: number): number {
-  if (freq >= 5) return 3;
-  return 2;
-}
-
-function normalizeScheduledTrainingDate(args: {
-  candidate: Date;
-  previousDates: Date[];
-  frequencyPerWeek: number;
-}): Date {
-  const freq = clampInt(args.frequencyPerWeek, 1, 6);
-  const maxConsecutive = maxConsecutiveDaysForFrequency(freq);
-  let day = startOfDay(args.candidate);
-
-  while (true) {
-    const prevDays = args.previousDates.map((d) => startOfDay(d).getTime());
-    const prevDaySet = new Set(prevDays);
-    const dayTs = day.getTime();
-
-    if (prevDaySet.has(dayTs)) {
-      day = addDays(day, 1);
-      continue;
-    }
-
-    const sessionsInLast7Days = prevDays.filter((ts) => {
-      const d = diffDays(day, new Date(ts));
-      return d >= 0 && d < 7;
-    }).length;
-
-    if (sessionsInLast7Days >= freq) {
-      day = addDays(day, 1);
-      continue;
-    }
-
-    let consecutive = 1;
-    let probe = addDays(day, -1);
-    while (prevDaySet.has(probe.getTime())) {
-      consecutive += 1;
-      probe = addDays(probe, -1);
-    }
-
-    if (consecutive > maxConsecutive) {
-      day = addDays(day, 1);
-      continue;
-    }
-
-    return withDefaultTime(day);
-  }
-}
-
-function parseProgramStartDate(input?: string | Date | null): Date {
-  if (!input) return withDefaultTime(new Date());
-  if (input instanceof Date && !Number.isNaN(input.getTime())) return withDefaultTime(input);
-  if (typeof input === 'string') {
-    const dt = new Date(input);
-    if (!Number.isNaN(dt.getTime())) return withDefaultTime(dt);
-  }
-  return withDefaultTime(new Date());
-}
-
-function dayKey(d: Date): string {
-  return startOfDay(d).toISOString().slice(0, 10);
-}
+const PROGRAM_INTERRUPTED_MESSAGE =
+  'Программа была прервана из-за длительного пропуска. Создайте новую программу, когда будете готовы продолжить.';
+const RETEST_REQUIRED_MESSAGE = 'Пропуск более двух недель. Пройдите повторный тест и перегенерируйте программу.';
 
 function exerciseTypeLabel(exerciseType: string): string {
   return isExerciseType(exerciseType) ? EXERCISES[exerciseType].label.ru.toLowerCase() : exerciseType;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
+}
+
+async function getUserTimeZone(userId: string): Promise<string> {
+  const row = await prisma.user.findUnique({ where: { id: userId }, select: { timeZone: true } });
+  return normalizeTimeZone(row?.timeZone);
+}
+
+async function getProgramTimeZone(programId: string): Promise<string> {
+  const row = await prisma.trainingProgram.findUnique({
+    where: { id: programId },
+    select: { user: { select: { timeZone: true } } },
+  });
+  return normalizeTimeZone(row?.user?.timeZone);
 }
 
 export function deriveAgeFromBirthDate(birthDate?: Date | null): number | null {
@@ -177,286 +68,6 @@ export function deriveAgeFromBirthDate(birthDate?: Date | null): number | null {
   if (m < 0 || (m === 0 && now.getDate() < birthDate.getDate())) age -= 1;
   if (!Number.isFinite(age) || age <= 0) return null;
   return age;
-}
-
-export function suggestDurationWeeks(args: {
-  exerciseType: ProgramExerciseType;
-  baselineMaxReps: number;
-  targetReps: number;
-  ageYears: number;
-  weightKg: number;
-  frequencyPerWeek?: number | null;
-}): number {
-  const baseline = clampInt(args.baselineMaxReps, 1, 500);
-  const target = clampInt(args.targetReps, baseline, 1000);
-  const age = clampInt(args.ageYears, 8, 90);
-  const weight = clampInt(args.weightKg, 30, 250);
-  const frequency = clampInt(
-    Number(args.frequencyPerWeek ?? suggestFrequencyPerWeek(args)),
-    1,
-    6,
-  );
-  const coef = EXERCISE_COEFFICIENTS[args.exerciseType] ?? 1;
-
-  const gap = Math.max(0, target - baseline);
-  let readiness = 1;
-  if (baseline <= 8) readiness *= 0.8;
-  if (baseline >= 40) readiness *= 1.1;
-  if (age >= 40) readiness *= 0.9;
-  if (age >= 55) readiness *= 0.8;
-  if (weight >= 95 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) readiness *= 0.92;
-  if (weight >= 115 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) readiness *= 0.88;
-  if (args.exerciseType === 'pullups') readiness *= 0.88;
-
-  const progressPerSession = Math.max(0.35, baseline * 0.05 * coef * readiness);
-  const requiredSessions = Math.ceil(gap / progressPerSession) + frequency * 2;
-
-  // Duration is session demand divided by desired weekly frequency.
-  let weeks = Math.ceil(requiredSessions / frequency);
-  if (age >= 55) weeks += 1;
-  if (frequency >= 5) weeks += 1;
-
-  return clampInt(weeks, 4, 24);
-}
-
-export function suggestFrequencyPerWeek(args: {
-  exerciseType: ProgramExerciseType;
-  baselineMaxReps: number;
-  targetReps: number;
-  ageYears: number;
-  weightKg: number;
-}): number {
-  const baseline = clampInt(args.baselineMaxReps, 1, 500);
-  const target = clampInt(args.targetReps, baseline, 1000);
-  const age = clampInt(args.ageYears, 8, 90);
-  const weight = clampInt(args.weightKg, 30, 250);
-  const goalGap = Math.max(0, target - baseline);
-
-  let freq = 3;
-  if (baseline <= 8) freq = 2;
-  if (baseline >= 32) freq = 4;
-
-  if (args.exerciseType === 'pullups') freq -= 1;
-  if (age >= 45) freq -= 1;
-  if (age >= 60) freq -= 1;
-  if (weight >= 110 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) freq -= 1;
-
-  if (goalGap >= Math.max(12, Math.round(baseline * 0.7))) freq += 1;
-
-  return clampInt(freq, 2, 6);
-}
-
-function getPeriodizationMultiplier(week: number): number {
-  let m = 1;
-  // Every 4th week is lighter for recovery.
-  if (week % 4 === 0) m *= 0.9;
-  return m;
-}
-
-function recommendedRecoveryGapDays(args: {
-  frequencyPerWeek: number;
-  progress: number;
-  setTargets: number[];
-  targetReps: number;
-  sessionNumber: number;
-}): number {
-  const freq = clampInt(args.frequencyPerWeek, 1, 6);
-  const keyTarget = Math.max(1, args.setTargets[GOAL_TEMPLATE.keySet - 1] || 1);
-  const keyIntensity = Math.max(0, Math.min(1.2, keyTarget / Math.max(1, args.targetReps)));
-
-  let restDays = 2;
-  if (freq <= 2) restDays = 3;
-  else if (freq === 3) restDays = 2;
-  else if (freq >= 4) restDays = 1;
-
-  if (keyIntensity >= 0.85) restDays += 1;
-  if (args.progress >= 0.8) restDays += 1;
-  if (args.sessionNumber % 4 === 0) restDays += 1; // micro-deload between blocks
-
-  return clampInt(restDays, 1, 5);
-}
-
-function computeSetTarget(args: {
-  baselineMaxReps: number;
-  weekNumber: number;
-  sessionNumber: number;
-  totalSessions: number;
-  setNumber: number;
-  targetReps: number;
-  performanceFactor?: number;
-}): number {
-  const {
-    baselineMaxReps,
-    weekNumber,
-    sessionNumber,
-    totalSessions,
-    setNumber,
-    targetReps,
-    performanceFactor = 1,
-  } = args;
-
-  // Program goal is reps in a single key set (not total reps across a workout).
-  const progress = totalSessions <= 1
-    ? 1
-    : Math.max(0, Math.min(1, (sessionNumber - 1) / (totalSessions - 1)));
-
-  // Start intensity is adaptive: stronger athletes begin closer to their baseline AMRAP.
-  const goalGap = Math.max(0, targetReps - baselineMaxReps);
-  let startRatio = 0.75;
-  if (baselineMaxReps >= 20) startRatio += 0.1;
-  if (baselineMaxReps >= 35) startRatio += 0.07;
-  if (goalGap >= 40) startRatio -= 0.04;
-  startRatio = Math.max(0.75, Math.min(0.95, startRatio));
-
-  const firstKeyTarget = Math.max(1, Math.round(baselineMaxReps * startRatio));
-  const periodized = getPeriodizationMultiplier(weekNumber);
-
-  const progressiveKeyTarget = firstKeyTarget + (targetReps - firstKeyTarget) * progress;
-  let keyTarget = Math.round(progressiveKeyTarget * performanceFactor);
-  keyTarget = clampInt(keyTarget, 1, targetReps);
-
-  if (setNumber === GOAL_TEMPLATE.keySet) return keyTarget;
-
-  const p = GOAL_TEMPLATE.percentages[setNumber - 1]
-    ?? GOAL_TEMPLATE.percentages[GOAL_TEMPLATE.percentages.length - 1]
-    ?? 0.6;
-  const setTarget = Math.round(keyTarget * p * periodized);
-  return clampInt(setTarget, 1, targetReps);
-}
-
-function normalizeCreateInput(raw: ProgramCreateInput): NormalizedCreateInput {
-  const exerciseType = raw.exerciseType;
-
-  if (!isProgramExerciseType(exerciseType)) {
-    throw new ProgramError('Некорректный тип упражнения');
-  }
-
-  const baselineMaxReps = clampInt(raw.baselineMaxReps, 1, 500);
-  const targetReps = clampInt(raw.targetReps, baselineMaxReps, 1000);
-
-  const ageYears = clampInt(Number(raw.ageYears ?? 25), 8, 90);
-  const weightKg = clampInt(Number(raw.weightKg ?? 70), 30, 250);
-  const frequencyPerWeek = raw.frequencyPerWeek != null
-    ? clampInt(Number(raw.frequencyPerWeek), 1, 6)
-    : suggestFrequencyPerWeek({
-      exerciseType,
-      baselineMaxReps,
-      targetReps,
-      ageYears,
-      weightKg,
-    });
-  const durationWeeks = raw.durationWeeks != null
-    ? clampInt(Number(raw.durationWeeks), 4, 24)
-    : suggestDurationWeeks({ exerciseType, baselineMaxReps, targetReps, ageYears, weightKg, frequencyPerWeek });
-
-  const sexRaw = String(raw.sex || 'unknown').trim().toLowerCase();
-  const sex = ['male', 'female', 'other', 'unknown'].includes(sexRaw) ? sexRaw : 'unknown';
-
-  return {
-    exerciseType,
-    baselineMaxReps,
-    targetReps,
-    durationWeeks,
-    frequencyPerWeek,
-    ageYears,
-    weightKg,
-    sex,
-    startDate: raw.startDate ?? null,
-  };
-}
-
-function buildProgramDraft(input: ProgramCreateInput) {
-  const clean = normalizeCreateInput(input);
-  const start = parseProgramStartDate(clean.startDate);
-  const totalSessions = Math.max(1, clean.durationWeeks * clean.frequencyPerWeek);
-  const startDay = startOfDay(start);
-
-  const sessions: Array<{
-    weekNumber: number;
-    sessionNumber: number;
-    scheduledAt: Date;
-    isFinalTest: boolean;
-    sets: Array<{ setNumber: number; targetReps: number; restSeconds: number; isKeySet: boolean }>;
-  }> = [];
-
-  let scheduledCursor = start;
-  for (let sessionNumber = 1; sessionNumber <= totalSessions; sessionNumber += 1) {
-    const candidate = sessionNumber === 1 ? start : scheduledCursor;
-    const scheduledAt = normalizeScheduledTrainingDate({
-      candidate,
-      previousDates: sessions.map((s) => s.scheduledAt),
-      frequencyPerWeek: clean.frequencyPerWeek,
-    });
-
-    const daysFromStart = Math.max(0, diffDays(startOfDay(scheduledAt), startDay));
-    const weekNumber = Math.floor(daysFromStart / 7) + 1;
-
-    const sets = GOAL_TEMPLATE.percentages.map((_, idx) => {
-      const setNumber = idx + 1;
-      return {
-        setNumber,
-        targetReps: computeSetTarget({
-          baselineMaxReps: clean.baselineMaxReps,
-          weekNumber,
-          sessionNumber,
-          totalSessions,
-          setNumber,
-          targetReps: clean.targetReps,
-          performanceFactor: 1,
-        }),
-        restSeconds: GOAL_TEMPLATE.rest[idx] ?? GOAL_TEMPLATE.rest[GOAL_TEMPLATE.rest.length - 1] ?? 90,
-        isKeySet: setNumber === GOAL_TEMPLATE.keySet,
-      };
-    });
-
-    sessions.push({ weekNumber, sessionNumber, scheduledAt, isFinalTest: false, sets });
-
-    const progress = totalSessions <= 1 ? 1 : sessionNumber / totalSessions;
-    const restDays = recommendedRecoveryGapDays({
-      frequencyPerWeek: clean.frequencyPerWeek,
-      progress,
-      setTargets: sets.map((x) => x.targetReps),
-      targetReps: clean.targetReps,
-      sessionNumber,
-    });
-    scheduledCursor = addDays(scheduledAt, restDays);
-  }
-
-  const testSessionNumber = sessions.length + 1;
-  const lastTrainingDate = sessions.length ? sessions[sessions.length - 1].scheduledAt : start;
-  const finalTestDate = normalizeScheduledTrainingDate({
-    candidate: addDays(lastTrainingDate, 2),
-    previousDates: sessions.map((s) => s.scheduledAt),
-    frequencyPerWeek: clean.frequencyPerWeek,
-  });
-  const testWeekNumber = Math.floor(Math.max(0, diffDays(startOfDay(finalTestDate), startDay)) / 7) + 1;
-  sessions.push({
-    weekNumber: testWeekNumber,
-    sessionNumber: testSessionNumber,
-    scheduledAt: finalTestDate,
-    isFinalTest: true,
-    sets: [{
-      setNumber: 1,
-      targetReps: clean.targetReps,
-      restSeconds: 0,
-      isKeySet: true,
-    }],
-  });
-
-  const lastDay = startOfDay(sessions[sessions.length - 1].scheduledAt);
-  const effectiveDurationWeeks = Math.max(
-    clean.durationWeeks,
-    Math.ceil((diffDays(lastDay, startDay) + 1) / 7),
-  );
-
-  return {
-    clean: {
-      ...clean,
-      durationWeeks: effectiveDurationWeeks,
-    },
-    start,
-    sessions,
-  };
 }
 
 function getWeekStats(
@@ -477,6 +88,7 @@ function buildRecoveryWarnings(args: {
   completedSessions: Array<{ completedAt: Date | null; sets: Array<{ actualReps: number | null }> }>;
   baselineMaxReps: number;
   needsRetest: boolean;
+  timeZone: string;
 }): string[] {
   const warnings: string[] = [];
   if (args.needsRetest) {
@@ -489,8 +101,8 @@ function buildRecoveryWarnings(args: {
     .slice(0, 4);
 
   if (recent.length >= 3) {
-    const oldest = recent[recent.length - 1].completedAt!;
-    const newest = recent[0].completedAt!;
+    const oldest = programDayOf(recent[recent.length - 1].completedAt!, args.timeZone);
+    const newest = programDayOf(recent[0].completedAt!, args.timeZone);
     const spanDays = Math.max(1, diffDays(newest, oldest) + 1);
     if (spanDays <= 4) {
       warnings.push('Высокая частота последних тренировок. Добавьте восстановление, если чувствуете усталость.');
@@ -501,14 +113,14 @@ function buildRecoveryWarnings(args: {
   const heavySessions = args.completedSessions
     .filter((s) => s.completedAt)
     .map((s) => ({
-      date: startOfDay(s.completedAt as Date).getTime(),
+      day: programDayOf(s.completedAt as Date, args.timeZone),
       total: s.sets.reduce((sum, st) => sum + (st.actualReps ?? 0), 0),
     }))
     .filter((x) => x.total >= hardDayThreshold)
-    .sort((a, b) => b.date - a.date);
+    .sort((a, b) => diffDays(b.day, a.day));
 
   if (heavySessions.length >= 2) {
-    const d = Math.abs(heavySessions[0].date - heavySessions[1].date) / MS_DAY;
+    const d = Math.abs(diffDays(heavySessions[0].day, heavySessions[1].day));
     if (d <= 1) {
       warnings.push('Две тяжёлые тренировки подряд. Следите за восстановлением и качеством сна.');
     }
@@ -517,37 +129,21 @@ function buildRecoveryWarnings(args: {
   return warnings;
 }
 
-function distributeDayTotalAcrossSets(targets: number[], dayTotal: number): number[] {
-  const safeTargets = targets.map((x) => Math.max(1, Math.round(x)));
-  const totalTarget = safeTargets.reduce((sum, x) => sum + x, 0);
-  if (totalTarget <= 0) return safeTargets.map(() => 1);
-
-  const out = safeTargets.map((t) => Math.max(1, Math.round((dayTotal * t) / totalTarget)));
-  let current = out.reduce((sum, x) => sum + x, 0);
-
-  while (current > dayTotal && out.some((x) => x > 1)) {
-    for (let i = out.length - 1; i >= 0 && current > dayTotal; i -= 1) {
-      if (out[i] > 1) {
-        out[i] -= 1;
-        current -= 1;
-      }
-    }
-  }
-
-  while (current < dayTotal) {
-    out[out.length - 1] += 1;
-    current += 1;
-  }
-
-  return out;
+function sumRepsByDay(workouts: Array<{ date: Date; reps: number | null }>): Map<DayKey, number> {
+  const totals = new Map<DayKey, number>();
+  workouts.forEach((w) => {
+    const key = dbDateToDayKey(w.date);
+    totals.set(key, (totals.get(key) ?? 0) + (w.reps || 0));
+  });
+  return totals;
 }
 
-async function autofillOverdueSessionsFromExternalWorkouts(programId: string) {
+async function autofillOverdueSessionsFromExternalWorkouts(programId: string, clock: ProgramClock) {
   const program = await prisma.trainingProgram.findUnique({
     where: { id: programId },
     include: {
       sessions: {
-        where: { completed: false },
+        where: { completed: false, isFinalTest: false },
         orderBy: { scheduledAt: 'asc' },
         include: {
           sets: { orderBy: { setNumber: 'asc' } },
@@ -558,70 +154,57 @@ async function autofillOverdueSessionsFromExternalWorkouts(programId: string) {
 
   if (!program || !program.sessions.length) return;
 
-  const today = startOfDay(new Date());
-  const overdue = program.sessions.filter((s) => startOfDay(s.scheduledAt).getTime() < today.getTime());
-  if (!overdue.length) return;
-
-  const minDate = startOfDay(overdue[0].scheduledAt);
-  const maxDate = startOfDay(overdue[overdue.length - 1].scheduledAt);
+  const today = programDayOf(clock.now, clock.timeZone);
+  const overdueDays = program.sessions
+    .map((s) => programDayOf(s.scheduledAt, clock.timeZone))
+    .filter((day) => diffDays(day, today) < 0);
+  if (!overdueDays.length) return;
 
   const workouts = await prisma.workout.findMany({
     where: {
       userId: program.userId,
       exerciseType: program.exerciseType,
-      date: { gte: minDate, lte: maxDate },
+      date: { gte: dayKeyToDbDate(overdueDays[0]), lte: dayKeyToDbDate(overdueDays[overdueDays.length - 1]) },
       trainingSessionId: null,
     },
     select: { date: true, reps: true },
   });
 
-  const byDay = new Map<string, number>();
-  workouts.forEach((w) => {
-    const key = dayKey(w.date);
-    byDay.set(key, (byDay.get(key) ?? 0) + (w.reps || 0));
-  });
+  const plan = planOverdueAutofill({ sessions: program.sessions, dayTotals: sumRepsByDay(workouts), clock });
+  if (!plan.length) return;
 
-  const consumedDays = new Set<string>();
+  const byId = new Map(program.sessions.map((s) => [s.id, s]));
 
   await prisma.$transaction(async (tx) => {
-    for (const session of overdue) {
-      const key = dayKey(session.scheduledAt);
-      if (consumedDays.has(key)) continue;
-      const dayTotal = byDay.get(key) ?? 0;
-      if (dayTotal <= 0) continue;
+    for (const item of plan) {
+      const session = byId.get(item.sessionId);
+      if (!session) continue;
 
-      const targets = session.sets.map((s) => s.targetReps);
-      const distributed = distributeDayTotalAcrossSets(targets, dayTotal);
-
-      for (let i = 0; i < session.sets.length; i += 1) {
-        const st = session.sets[i];
-        await tx.trainingSet.update({
-          where: { id: st.id },
-          data: {
-            actualReps: distributed[i] ?? st.targetReps,
-            completedAt: session.scheduledAt,
-          },
-        });
-      }
-
-      await tx.trainingSession.update({
-        where: { id: session.id },
+      const claimed = await tx.trainingSession.updateMany({
+        where: { id: session.id, completed: false },
         data: {
           completed: true,
           completedAt: session.scheduledAt,
           startedAt: session.startedAt || session.scheduledAt,
         },
       });
+      if (claimed.count !== 1) continue;
 
-      consumedDays.add(key);
+      for (const st of item.sets) {
+        await tx.trainingSet.update({
+          where: { id: st.setId },
+          data: { actualReps: st.actualReps, completedAt: session.scheduledAt },
+        });
+      }
     }
   });
 }
 
 async function getProgramByWhere(where: Prisma.TrainingProgramWhereInput) {
-  const program = await prisma.trainingProgram.findFirst({
+  const row = await prisma.trainingProgram.findFirst({
     where,
     include: {
+      user: { select: { timeZone: true } },
       sessions: {
         orderBy: [{ scheduledAt: 'asc' }, { sessionNumber: 'asc' }],
         include: {
@@ -633,7 +216,8 @@ async function getProgramByWhere(where: Prisma.TrainingProgramWhereInput) {
     },
   });
 
-  if (!program) return null;
+  if (!row) return null;
+  const { user, ...program } = row;
 
   const weekStats = getWeekStats(program.sessions.map((s) => ({ weekNumber: s.weekNumber, completed: s.completed })));
   const successWeeks = Array.from(weekStats.values()).filter((x) => x.success).length;
@@ -646,6 +230,7 @@ async function getProgramByWhere(where: Prisma.TrainingProgramWhereInput) {
     })),
     baselineMaxReps: program.baselineMaxReps,
     needsRetest: program.needsRetest,
+    timeZone: normalizeTimeZone(user?.timeZone),
   });
 
   return {
@@ -673,11 +258,14 @@ export async function createTrainingProgram(
     assignedByUserId?: string | null;
   },
 ) {
-  const draft = buildProgramDraft(input);
+  const timeZone = await getUserTimeZone(userId);
+  const draft = buildProgramDraft(input, { now: new Date(), timeZone });
+  const scope = programReplacementScope(draft.clean.exerciseType, options?.managedByGroupId);
 
   const created = await prisma.$transaction(async (tx) => {
+    // A group assignment never switches off the member's personal program (and vice versa).
     await tx.trainingProgram.updateMany({
-      where: { userId, isActive: true, exerciseType: draft.clean.exerciseType },
+      where: { userId, isActive: true, ...scope },
       data: { isActive: false, status: 'inactive' },
     });
 
@@ -693,7 +281,7 @@ export async function createTrainingProgram(
         ageYears: draft.clean.ageYears,
         weightKg: draft.clean.weightKg,
         sex: draft.clean.sex,
-        startDate: startOfDay(draft.start),
+        startDate: dayKeyToDbDate(draft.startDay),
         isActive: true,
         status: 'active',
         managedByGroupId: options?.managedByGroupId ?? null,
@@ -758,8 +346,12 @@ export async function deactivateManagedTrainingProgram(userId: string, programId
   return { ok: true };
 }
 
-export async function syncProgramSchedule(programId: string): Promise<{ shiftedDays: number; needsRetest: boolean }> {
-  await autofillOverdueSessionsFromExternalWorkouts(programId);
+export async function syncProgramSchedule(
+  programId: string,
+  now: Date = new Date(),
+): Promise<{ shiftedDays: number; needsRetest: boolean }> {
+  const clock: ProgramClock = { now, timeZone: await getProgramTimeZone(programId) };
+  await autofillOverdueSessionsFromExternalWorkouts(programId, clock);
 
   const program = await prisma.trainingProgram.findUnique({
     where: { id: programId },
@@ -780,10 +372,9 @@ export async function syncProgramSchedule(programId: string): Promise<{ shiftedD
   if (!program || !program.isActive || program.needsRetest) return { shiftedDays: 0, needsRetest: Boolean(program?.needsRetest) };
   if (!program.sessions.length) return { shiftedDays: 0, needsRetest: false };
 
-  const now = new Date();
-  const today = startOfDay(now);
+  const today = programDayOf(now, clock.timeZone);
   const earliest = program.sessions[0];
-  const earliestDay = startOfDay(earliest.scheduledAt);
+  const earliestDay = programDayOf(earliest.scheduledAt, clock.timeZone);
   const overdueDays = Math.max(0, diffDays(today, earliestDay));
   const carriedMissDays = Math.max(0, earliest.shiftedCount) + overdueDays;
 
@@ -838,14 +429,15 @@ export async function syncProgramSchedule(programId: string): Promise<{ shiftedD
     return { shiftedDays: 0, needsRetest: true };
   }
 
-  if (earliestDay.getTime() >= today.getTime()) return { shiftedDays: 0, needsRetest: false };
+  if (overdueDays <= 0) return { shiftedDays: 0, needsRetest: false };
 
   await prisma.$transaction(async (tx) => {
     for (const s of program.sessions) {
-      await tx.trainingSession.update({
-        where: { id: s.id },
+      // Guarded by the old time: a concurrent sync that already shifted this session wins.
+      await tx.trainingSession.updateMany({
+        where: { id: s.id, completed: false, scheduledAt: s.scheduledAt },
         data: {
-          scheduledAt: addDays(s.scheduledAt, overdueDays),
+          scheduledAt: shiftInstantByDays(s.scheduledAt, overdueDays, clock.timeZone),
           shiftedCount: { increment: overdueDays },
         },
       });
@@ -855,8 +447,11 @@ export async function syncProgramSchedule(programId: string): Promise<{ shiftedD
   return { shiftedDays: overdueDays, needsRetest: false };
 }
 
-async function sendProgramMissedSessionNotificationsForUser(userId: string) {
-  const now = new Date();
+/**
+ * «Пропущена тренировка» (1 ч / 24 ч / предупреждение о прерывании) for one user at `now`.
+ * Not called on page load — the scheduler (T07) runs it.
+ */
+export async function sendProgramMissedSessionNotificationsForUser(userId: string, now: Date) {
   const oneHourMs = 60 * 60 * 1000;
   const oneDayMs = 24 * oneHourMs;
 
@@ -886,6 +481,9 @@ async function sendProgramMissedSessionNotificationsForUser(userId: string) {
 
   if (!overdueSessions.length) return;
 
+  const timeZone = await getUserTimeZone(userId);
+  const today = programDayOf(now, timeZone);
+
   const firstOverdueByProgram = new Map<string, typeof overdueSessions[number]>();
   for (const s of overdueSessions) {
     if (!firstOverdueByProgram.has(s.programId)) firstOverdueByProgram.set(s.programId, s);
@@ -893,7 +491,8 @@ async function sendProgramMissedSessionNotificationsForUser(userId: string) {
 
   for (const session of firstOverdueByProgram.values()) {
     const overdueMs = now.getTime() - session.scheduledAt.getTime();
-    const carriedMissDays = Math.max(0, session.shiftedCount) + Math.max(0, diffDays(now, session.scheduledAt));
+    const carriedMissDays = Math.max(0, session.shiftedCount)
+      + Math.max(0, diffDays(today, programDayOf(session.scheduledAt, timeZone)));
     if (overdueMs < oneHourMs) continue;
 
     const link = `/program/session/${session.id}`;
@@ -986,8 +585,11 @@ async function sendProgramMissedSessionNotificationsForUser(userId: string) {
   }
 }
 
-async function sendProgramRemindersForUser(userId: string) {
-  const now = new Date();
+/**
+ * «Скоро тренировка» for sessions in the window −15…+30 min around `now`.
+ * Not called on page load — the scheduler (T07) runs it.
+ */
+export async function sendProgramRemindersForUser(userId: string, now: Date) {
   const windowEnd = new Date(now.getTime() + 30 * 60 * 1000);
   const windowStart = new Date(now.getTime() - 15 * 60 * 1000);
 
@@ -1066,39 +668,39 @@ function calcPerformanceFactor(args: {
   return Math.max(0.6, Math.min(1.15, avg));
 }
 
-async function getExternalPerformanceRatios(program: {
-  userId: string;
-  exerciseType: string;
-  sessions: Array<{ scheduledAt: Date; completed: boolean; sets: Array<{ targetReps: number }> }>;
-}) {
-  const now = new Date();
-  const today = startOfDay(now);
-  const candidates = program.sessions.filter((s) => !s.completed && startOfDay(s.scheduledAt).getTime() < today.getTime());
+async function getExternalPerformanceRatios(
+  program: {
+    userId: string;
+    exerciseType: string;
+    sessions: Array<{ scheduledAt: Date; completed: boolean; sets: Array<{ targetReps: number }> }>;
+  },
+  clock: ProgramClock,
+) {
+  const today = programDayOf(clock.now, clock.timeZone);
+  const candidates = program.sessions
+    .filter((s) => !s.completed)
+    .map((s) => ({ session: s, day: programDayOf(s.scheduledAt, clock.timeZone) }))
+    .filter((x) => diffDays(x.day, today) < 0)
+    .sort((a, b) => diffDays(a.day, b.day));
   if (!candidates.length) return [] as number[];
-
-  const minDate = startOfDay(candidates[0].scheduledAt);
 
   const workouts = await prisma.workout.findMany({
     where: {
       userId: program.userId,
       exerciseType: program.exerciseType,
       trainingSessionId: null,
-      date: { gte: minDate, lte: today },
+      date: { gte: dayKeyToDbDate(candidates[0].day), lte: dayKeyToDbDate(today) },
     },
     select: { date: true, reps: true },
   });
 
-  const dayTotals = new Map<string, number>();
-  workouts.forEach((w) => {
-    const key = dayKey(w.date);
-    dayTotals.set(key, (dayTotals.get(key) ?? 0) + (w.reps || 0));
-  });
+  const dayTotals = sumRepsByDay(workouts);
 
   const ratios: number[] = [];
-  candidates.forEach((s) => {
-    const planned = s.sets.reduce((sum, st) => sum + (st.targetReps || 0), 0);
+  candidates.forEach(({ session, day }) => {
+    const planned = session.sets.reduce((sum, st) => sum + (st.targetReps || 0), 0);
     if (planned <= 0) return;
-    const actual = dayTotals.get(dayKey(s.scheduledAt)) ?? 0;
+    const actual = dayTotals.get(day) ?? 0;
     if (actual <= 0) return;
     ratios.push(Math.max(0.5, Math.min(1.15, actual / planned)));
   });
@@ -1106,10 +708,11 @@ async function getExternalPerformanceRatios(program: {
   return ratios;
 }
 
-export async function recalculateUpcomingSessions(programId: string) {
+export async function recalculateUpcomingSessions(programId: string, now: Date = new Date()) {
   const program = await prisma.trainingProgram.findUnique({
     where: { id: programId },
     include: {
+      user: { select: { timeZone: true } },
       sessions: {
         orderBy: [{ weekNumber: 'asc' }, { sessionNumber: 'asc' }],
         include: {
@@ -1124,10 +727,18 @@ export async function recalculateUpcomingSessions(programId: string) {
 
   if (!program) return;
 
+  const clock: ProgramClock = { now, timeZone: normalizeTimeZone(program.user?.timeZone) };
+  const targetReps = program.targetReps || program.baselineMaxReps;
   const completedSessions = program.sessions.filter((s) => s.completed);
-  const externalRatios = await getExternalPerformanceRatios(program);
+  const externalRatios = await getExternalPerformanceRatios(program, clock);
+
+  // Sessions before the first final test follow the original progression; sessions of
+  // an extension (after a failed test) keep the targets they were planned with.
+  const firstFinalTestNumber = Math.min(
+    ...program.sessions.filter((s) => s.isFinalTest).map((s) => s.sessionNumber),
+  );
   const trainingSessions = program.sessions
-    .filter((s) => !s.isFinalTest)
+    .filter((s) => !s.isFinalTest && s.sessionNumber < firstFinalTestNumber)
     .sort((a, b) => a.sessionNumber - b.sessionNumber);
   const trainingOrder = new Map(trainingSessions.map((s, idx) => [s.id, idx + 1]));
   const totalTrainingSessions = Math.max(1, trainingSessions.length);
@@ -1138,45 +749,40 @@ export async function recalculateUpcomingSessions(programId: string) {
   });
 
   const future = program.sessions.filter((s) => !s.completed);
+  const outcome = evaluateProgramOutcome(program.sessions, targetReps);
 
-  await prisma.$transaction(async (tx) => {
-    for (const s of future) {
-      for (const st of s.sets) {
-        const nextTarget = s.isFinalTest
-          ? (program.targetReps || program.baselineMaxReps)
-          : computeSetTarget({
-              baselineMaxReps: program.baselineMaxReps,
-              weekNumber: s.weekNumber,
-              sessionNumber: trainingOrder.get(s.id) ?? s.sessionNumber,
-              totalSessions: totalTrainingSessions,
-              setNumber: st.setNumber,
-              targetReps: program.targetReps || program.baselineMaxReps,
-              performanceFactor,
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const s of future) {
+        const order = trainingOrder.get(s.id);
+        if (!s.isFinalTest && order == null) continue;
+        for (const st of s.sets) {
+          const nextTarget = s.isFinalTest
+            ? targetReps
+            : computeSetTarget({
+                baselineMaxReps: program.baselineMaxReps,
+                weekNumber: s.weekNumber,
+                sessionNumber: order ?? s.sessionNumber,
+                totalSessions: totalTrainingSessions,
+                setNumber: st.setNumber,
+                targetReps,
+                performanceFactor,
+              });
+
+          if (nextTarget !== st.targetReps) {
+            await tx.trainingSet.update({
+              where: { id: st.id },
+              data: { targetReps: nextTarget },
             });
-
-        if (nextTarget !== st.targetReps) {
-          await tx.trainingSet.update({
-            where: { id: st.id },
-            data: { targetReps: nextTarget },
-          });
+          }
         }
       }
-    }
 
-    const allCompleted = program.sessions.length > 0 && program.sessions.every((s) => s.completed);
-
-    if (allCompleted) {
-      const targetReps = program.targetReps || program.baselineMaxReps;
-      const ordered = program.sessions.slice().sort((a, b) => a.sessionNumber - b.sessionNumber);
-      const finalTest = ordered.find((s) => s.isFinalTest) || ordered[ordered.length - 1];
-      const keySet = finalTest?.sets.find((x) => x.isKeySet) || finalTest?.sets[0];
-      const finalTestActual = keySet?.actualReps ?? 0;
-
-      if (finalTestActual >= targetReps) {
+      if (outcome.kind === 'completed') {
         await tx.trainingProgram.update({
           where: { id: program.id },
           data: {
-            lastRecalculatedAt: new Date(),
+            lastRecalculatedAt: now,
             status: 'completed',
             isActive: false,
           },
@@ -1184,106 +790,53 @@ export async function recalculateUpcomingSessions(programId: string) {
         return;
       }
 
-      const gap = Math.max(1, targetReps - Math.max(1, finalTestActual));
-      const extraTrainingCount = clampInt(Math.ceil(gap / 2) + 2, 2, 10);
-      let scheduledCursor = addDays(finalTest?.scheduledAt || new Date(), 2);
-      let nextSessionNumber = Math.max(...ordered.map((x) => x.sessionNumber)) + 1;
-      const startDay = startOfDay(program.startDate);
-      const maxBeforeTest = targetReps > 1 ? targetReps - 1 : 1;
-      const generatedDates: Date[] = ordered.map((x) => x.scheduledAt);
-
-      for (let i = 1; i <= extraTrainingCount; i += 1) {
-        const progress = i / (extraTrainingCount + 1);
-        const scheduledAt = normalizeScheduledTrainingDate({
-          candidate: scheduledCursor,
-          previousDates: generatedDates,
-          frequencyPerWeek: program.frequencyPerWeek,
-        });
-        const daysFromStart = Math.max(0, diffDays(startOfDay(scheduledAt), startDay));
-        const weekNumber = Math.floor(daysFromStart / 7) + 1;
-        const keyTarget = clampInt(Math.round(finalTestActual + gap * progress), 1, maxBeforeTest);
-        const periodized = getPeriodizationMultiplier(weekNumber);
-
-        const sets = GOAL_TEMPLATE.percentages.map((p, idx) => {
-          const setNumber = idx + 1;
-          return {
-            setNumber,
-            targetReps: setNumber === GOAL_TEMPLATE.keySet
-              ? keyTarget
-              : clampInt(Math.round(keyTarget * p * periodized), 1, targetReps),
-            restSeconds: GOAL_TEMPLATE.rest[idx] ?? GOAL_TEMPLATE.rest[GOAL_TEMPLATE.rest.length - 1] ?? 90,
-            isKeySet: setNumber === GOAL_TEMPLATE.keySet,
-          };
-        });
-
-        await tx.trainingSession.create({
-          data: {
-            programId: program.id,
-            weekNumber,
-            sessionNumber: nextSessionNumber,
-            scheduledAt,
-            isFinalTest: false,
-            sets: {
-              create: sets,
-            },
-          },
-        });
-
-        generatedDates.push(scheduledAt);
-        nextSessionNumber += 1;
-        const restDays = recommendedRecoveryGapDays({
-          frequencyPerWeek: program.frequencyPerWeek,
-          progress,
-          setTargets: sets.map((x) => x.targetReps),
+      if (outcome.kind === 'extend') {
+        const extension = planProgramExtension({
           targetReps,
-          sessionNumber: nextSessionNumber,
+          finalTestActual: outcome.finalTestActual,
+          frequencyPerWeek: program.frequencyPerWeek,
+          startDay: dbDateToDayKey(program.startDate),
+          lastTestDay: programDayOf(outcome.finalTest.completedAt ?? outcome.finalTest.scheduledAt, clock.timeZone),
+          existingDays: program.sessions.map((s) => programDayOf(s.scheduledAt, clock.timeZone)),
+          nextSessionNumber: Math.max(...program.sessions.map((x) => x.sessionNumber)) + 1,
+          clock,
         });
-        scheduledCursor = addDays(scheduledAt, restDays);
-      }
 
-      const finalTestDate = normalizeScheduledTrainingDate({
-        candidate: scheduledCursor,
-        previousDates: generatedDates,
-        frequencyPerWeek: program.frequencyPerWeek,
-      });
-      const daysFromStart = Math.max(0, diffDays(startOfDay(finalTestDate), startDay));
-      const testWeekNumber = Math.floor(daysFromStart / 7) + 1;
-      await tx.trainingSession.create({
-        data: {
-          programId: program.id,
-          weekNumber: testWeekNumber,
-          sessionNumber: nextSessionNumber,
-          scheduledAt: finalTestDate,
-          isFinalTest: true,
-          sets: {
-            create: [{
-              setNumber: 1,
-              targetReps,
-              restSeconds: 0,
-              isKeySet: true,
-            }],
+        for (const s of extension) {
+          await tx.trainingSession.create({
+            data: {
+              programId: program.id,
+              weekNumber: s.weekNumber,
+              sessionNumber: s.sessionNumber,
+              scheduledAt: s.scheduledAt,
+              isFinalTest: s.isFinalTest,
+              sets: { create: s.sets },
+            },
+          });
+        }
+
+        await tx.trainingProgram.update({
+          where: { id: program.id },
+          data: {
+            lastRecalculatedAt: now,
+            status: 'active',
+            isActive: true,
           },
-        },
-      });
+        });
+        return;
+      }
 
       await tx.trainingProgram.update({
         where: { id: program.id },
         data: {
-          lastRecalculatedAt: new Date(),
-          status: 'active',
-          isActive: true,
+          lastRecalculatedAt: now,
         },
       });
-      return;
-    }
-
-    await tx.trainingProgram.update({
-      where: { id: program.id },
-      data: {
-        lastRecalculatedAt: new Date(),
-      },
     });
-  });
+  } catch (e) {
+    // A concurrent recalculation already created this extension ((programId, sessionNumber) is unique).
+    if (!isUniqueViolation(e)) throw e;
+  }
 }
 
 export async function getProgramById(userId: string, programId: string) {
@@ -1312,14 +865,12 @@ export async function getProgramOverview(userId: string) {
     select: { id: true },
   });
 
-  if (activeRows.length) {
-    await sendProgramMissedSessionNotificationsForUser(userId).catch(() => {});
-    for (const row of activeRows) {
-      const sync = await syncProgramSchedule(row.id);
-      if (sync.needsRetest) continue;
-      await recalculateUpcomingSessions(row.id).catch(() => {});
-    }
-    await sendProgramRemindersForUser(userId).catch(() => {});
+  // Reminders and «missed» notifications are sent by the scheduler, not on page load.
+  const now = new Date();
+  for (const row of activeRows) {
+    const sync = await syncProgramSchedule(row.id, now);
+    if (sync.needsRetest) continue;
+    await recalculateUpcomingSessions(row.id, now).catch(() => {});
   }
 
   const activePrograms = (await Promise.all(activeRows.map((x) => getProgramById(userId, x.id))))
@@ -1477,6 +1028,14 @@ export async function getManagedProgramOverview(userId: string, groupId: string)
   };
 }
 
+function assertProgramUsable(program: { isActive: boolean; needsRetest: boolean }) {
+  if (!program.isActive) {
+    if (program.needsRetest) throw new ProgramError(PROGRAM_INTERRUPTED_MESSAGE, 409, 'PROGRAM_INTERRUPTED');
+    throw new ProgramError('Программа не активна', 400);
+  }
+  if (program.needsRetest) throw new ProgramError(RETEST_REQUIRED_MESSAGE, 409, 'RETEST_REQUIRED');
+}
+
 export async function startTrainingSession(
   userId: string,
   sessionId: string,
@@ -1489,9 +1048,10 @@ export async function startTrainingSession(
 
   if (!initial) throw new ProgramError('Сессия не найдена', 404);
 
-  const sync = await syncProgramSchedule(initial.programId);
+  const now = new Date();
+  const sync = await syncProgramSchedule(initial.programId, now);
   if (!sync.needsRetest) {
-    await recalculateUpcomingSessions(initial.programId).catch(() => {});
+    await recalculateUpcomingSessions(initial.programId, now).catch(() => {});
   }
 
   const session = await prisma.trainingSession.findFirst({
@@ -1502,6 +1062,7 @@ export async function startTrainingSession(
           id: true,
           needsRetest: true,
           isActive: true,
+          user: { select: { timeZone: true } },
         },
       },
       sets: { orderBy: { setNumber: 'asc' } },
@@ -1509,22 +1070,11 @@ export async function startTrainingSession(
   });
 
   if (!session) throw new ProgramError('Сессия не найдена', 404);
-  if (!session.program.isActive) {
-    if (session.program.needsRetest) {
-      throw new ProgramError(
-        'Программа была прервана из-за длительного пропуска. Создайте новую программу, когда будете готовы продолжить.',
-        409,
-        'PROGRAM_INTERRUPTED',
-      );
-    }
-    throw new ProgramError('Программа не активна', 400);
-  }
-  if (session.program.needsRetest) {
-    throw new ProgramError('Пропуск более двух недель. Пройдите повторный тест и перегенерируйте программу.', 409, 'RETEST_REQUIRED');
-  }
-  const today = startOfDay(new Date());
-  const sessionDay = startOfDay(session.scheduledAt);
-  if (sessionDay.getTime() > today.getTime() && !options?.forceStartEarly) {
+  if (!session.completed) assertProgramUsable(session.program);
+
+  const timeZone = normalizeTimeZone(session.program.user?.timeZone);
+  const daysAhead = diffDays(programDayOf(session.scheduledAt, timeZone), programDayOf(now, timeZone));
+  if (!session.completed && !session.startedAt && daysAhead > 0 && !options?.forceStartEarly) {
     throw new ProgramError(
       'Период отдыха ещё не завершён. Эту тренировку можно выполнить позже по расписанию.',
       409,
@@ -1532,20 +1082,24 @@ export async function startTrainingSession(
     );
   }
 
-  if (!session.startedAt) {
-    await prisma.trainingSession.update({ where: { id: session.id }, data: { startedAt: new Date() } });
+  if (!session.startedAt && !session.completed) {
+    await prisma.trainingSession.updateMany({ where: { id: session.id, startedAt: null }, data: { startedAt: now } });
   }
 
   return getProgramById(userId, session.program.id);
 }
 
+/**
+ * Records one set. Idempotent: a set that is already recorded answers with the stored
+ * value, and only the request that actually fills the set creates its `Workout`.
+ */
 export async function submitTrainingSet(args: {
   userId: string;
   sessionId: string;
   setId: string;
   actualReps: number;
 }) {
-  const actualReps = clampInt(args.actualReps, 1, 5000);
+  const actualReps = Math.min(5000, Math.max(1, Math.round(args.actualReps)));
 
   const row = await prisma.trainingSet.findFirst({
     where: {
@@ -1559,63 +1113,82 @@ export async function submitTrainingSet(args: {
       id: true,
       setNumber: true,
       actualReps: true,
+      completedAt: true,
       session: {
         select: {
           completed: true,
-          program: { select: { needsRetest: true, isActive: true, exerciseType: true } },
+          scheduledAt: true,
+          startedAt: true,
+          program: {
+            select: {
+              needsRetest: true,
+              isActive: true,
+              exerciseType: true,
+              user: { select: { timeZone: true } },
+            },
+          },
         },
       },
     },
   });
 
   if (!row) throw new ProgramError('Подход не найден', 404);
-  if (!row.session.program.isActive) {
-    if (row.session.program.needsRetest) {
-      throw new ProgramError(
-        'Программа была прервана из-за длительного пропуска. Создайте новую программу, когда будете готовы продолжить.',
-        409,
-        'PROGRAM_INTERRUPTED',
-      );
-    }
-    throw new ProgramError('Программа не активна', 400);
-  }
-  if (row.session.program.needsRetest) {
-    throw new ProgramError('Пропуск более двух недель. Пройдите повторный тест и перегенерируйте программу.', 409, 'RETEST_REQUIRED');
-  }
+
+  const recordedSet = (set: { id: string; setNumber: number; actualReps: number | null; completedAt: Date | null }) => ({
+    ok: true as const,
+    set: { id: set.id, setNumber: set.setNumber, actualReps: set.actualReps, completedAt: set.completedAt },
+  });
+
+  if (row.actualReps != null) return recordedSet(row);
+
+  assertProgramUsable(row.session.program);
   if (row.session.completed) throw new ProgramError('Сессия уже завершена', 400);
-  if (row.actualReps != null) throw new ProgramError('Этот подход уже записан', 400);
 
   const now = new Date();
-  const dateMidnight = startOfDay(now);
+  const clock: ProgramClock = { now, timeZone: normalizeTimeZone(row.session.program.user?.timeZone) };
+  if (!isSessionOpenForSets(row.session, clock)) {
+    throw new ProgramError(
+      'Эта тренировка ещё не наступила. Откройте её из расписания, чтобы начать.',
+      409,
+      'SESSION_NOT_STARTED',
+    );
+  }
 
   await prisma.$transaction(async (tx) => {
-    await tx.trainingSet.update({
-      where: { id: row.id },
-      data: {
-        actualReps,
-        completedAt: now,
-      },
+    const claimed = await tx.trainingSet.updateMany({
+      where: { id: row.id, actualReps: null },
+      data: { actualReps, completedAt: now },
     });
+    if (claimed.count !== 1) return;
 
     await tx.workout.create({
       data: {
         userId: args.userId,
         reps: actualReps,
-        date: dateMidnight,
-        time: new Date(now.getTime() + row.setNumber * 1000),
+        date: programWorkoutDate(now, clock.timeZone),
+        time: programSetWorkoutTime(now, row.setNumber),
         exerciseType: row.session.program.exerciseType,
         trainingSessionId: args.sessionId,
       },
     });
   });
 
-  return { ok: true };
+  const stored = await prisma.trainingSet.findUnique({
+    where: { id: row.id },
+    select: { id: true, setNumber: true, actualReps: true, completedAt: true },
+  });
+  return recordedSet(stored ?? { ...row, actualReps, completedAt: now });
 }
 
+/**
+ * Completes a session. Idempotent and race-safe: the `completed: false → true` flip is the
+ * first write, so a repeated or parallel request neither duplicates workouts nor shifts
+ * the schedule twice.
+ */
 export async function completeTrainingSession(userId: string, sessionId: string) {
   const now = new Date();
 
-  const done = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const session = await tx.trainingSession.findFirst({
       where: { id: sessionId, program: { userId } },
       include: {
@@ -1626,6 +1199,7 @@ export async function completeTrainingSession(userId: string, sessionId: string)
             exerciseType: true,
             needsRetest: true,
             isActive: true,
+            user: { select: { timeZone: true } },
           },
         },
         sets: { orderBy: { setNumber: 'asc' } },
@@ -1633,57 +1207,48 @@ export async function completeTrainingSession(userId: string, sessionId: string)
     });
 
     if (!session) throw new ProgramError('Сессия не найдена', 404);
-    if (!session.program.isActive) {
-      if (session.program.needsRetest) {
-        throw new ProgramError(
-          'Программа была прервана из-за длительного пропуска. Создайте новую программу, когда будете готовы продолжить.',
-          409,
-          'PROGRAM_INTERRUPTED',
-        );
-      }
-      throw new ProgramError('Программа не активна', 400);
-    }
-    if (session.program.needsRetest) {
-      throw new ProgramError('Пропуск более двух недель. Пройдите повторный тест и перегенерируйте программу.', 409, 'RETEST_REQUIRED');
-    }
-
-    if (session.completed) return session.program.id;
+    if (session.completed) return { programId: session.program.id, changed: false };
+    assertProgramUsable(session.program);
 
     const missing = session.sets.filter((s) => s.actualReps == null);
     if (missing.length) {
       throw new ProgramError(`Заполните все подходы перед завершением (осталось: ${missing.length})`, 400);
     }
 
-    const dateMidnight = startOfDay(now);
-
-    const existingWorkoutCount = await tx.workout.count({
-      where: { trainingSessionId: session.id },
-    });
-
-    if (existingWorkoutCount < session.sets.length) {
-      const missingSets = session.sets.slice(existingWorkoutCount);
-      await tx.workout.createMany({
-        data: missingSets.map((s, idx) => ({
-          userId: session.program.userId,
-          reps: s.actualReps || 0,
-          date: dateMidnight,
-          time: new Date(now.getTime() + (existingWorkoutCount + idx) * 1000),
-          exerciseType: session.program.exerciseType,
-          trainingSessionId: session.id,
-        })),
-      });
-    }
-
-    await tx.trainingSession.update({
-      where: { id: session.id },
+    const claimed = await tx.trainingSession.updateMany({
+      where: { id: session.id, completed: false },
       data: {
         completed: true,
         completedAt: now,
         startedAt: session.startedAt || now,
       },
     });
+    if (claimed.count !== 1) return { programId: session.program.id, changed: false };
 
-    const earlyDays = diffDays(startOfDay(session.scheduledAt), dateMidnight);
+    const timeZone = normalizeTimeZone(session.program.user?.timeZone);
+
+    const workouts = await tx.workout.findMany({
+      where: { trainingSessionId: session.id },
+      select: { time: true, reps: true },
+    });
+    const missingSets = setsMissingWorkouts(session.sets, workouts);
+    if (missingSets.length) {
+      await tx.workout.createMany({
+        data: missingSets.map((s) => {
+          const doneAt = s.completedAt ?? now;
+          return {
+            userId: session.program.userId,
+            reps: s.actualReps || 0,
+            date: programWorkoutDate(doneAt, timeZone),
+            time: programSetWorkoutTime(doneAt, s.setNumber),
+            exerciseType: session.program.exerciseType,
+            trainingSessionId: session.id,
+          };
+        }),
+      });
+    }
+
+    const earlyDays = diffDays(programDayOf(session.scheduledAt, timeZone), programDayOf(now, timeZone));
     if (earlyDays > 0) {
       const pendingFuture = await tx.trainingSession.findMany({
         where: {
@@ -1697,15 +1262,15 @@ export async function completeTrainingSession(userId: string, sessionId: string)
       for (const row of pendingFuture) {
         await tx.trainingSession.update({
           where: { id: row.id },
-          data: { scheduledAt: addDays(row.scheduledAt, -earlyDays) },
+          data: { scheduledAt: shiftInstantByDays(row.scheduledAt, -earlyDays, timeZone) },
         });
       }
     }
 
-    return session.program.id;
+    return { programId: session.program.id, changed: true };
   });
 
-  await recalculateUpcomingSessions(done);
+  if (result.changed) await recalculateUpcomingSessions(result.programId, now);
 
-  return getProgramById(userId, done);
+  return getProgramById(userId, result.programId);
 }

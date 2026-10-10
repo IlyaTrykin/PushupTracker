@@ -38,6 +38,22 @@ type ProgramDetail = {
 
 type JsonObject = Record<string, unknown>;
 
+// Strings of the «finish» card (no shared messages key exists for them yet).
+const FINISH_COPY = {
+  ru: {
+    hint: 'Все подходы записаны — осталось завершить тренировку.',
+    button: 'Завершить тренировку',
+    finishing: 'Завершаем…',
+    failed: 'Не удалось завершить тренировку. Попробуйте ещё раз.',
+  },
+  en: {
+    hint: 'All sets are recorded — finish the workout to save it.',
+    button: 'Finish workout',
+    finishing: 'Finishing…',
+    failed: "Couldn't finish the workout. Please try again.",
+  },
+} as const;
+
 type ApiError = Error & {
   code?: string;
   status?: number;
@@ -126,6 +142,9 @@ export default function ProgramSessionPage() {
 
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
+  // Synchronous guard: a second tap arrives before `saving` re-renders the disabled button.
+  const busyRef = useRef(false);
+  const finishCopy = FINISH_COPY[locale === 'en' ? 'en' : 'ru'];
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastBeepSecondRef = useRef<number | null>(null);
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
@@ -150,7 +169,37 @@ export default function ProgramSessionPage() {
     return Math.max(0, currentSet.targetReps - plankSecondsLeft);
   }, [currentSet, isPlank, plankSecondsLeft]);
   const currentSetId = currentSet?.id ?? null;
+  const allSetsRecorded = Boolean(session && session.sets.length > 0 && session.sets.every((x) => x.actualReps != null));
   const currentTargetReps = currentSet?.targetReps ?? 0;
+
+  // A network failure has no server message ("Failed to fetch") — show our own text then.
+  const finishErrorText = (e: unknown) => ((e as ApiError).status ? getErrorMessage(e, finishCopy.failed) : finishCopy.failed);
+
+  const completeSession = async (id: string) => {
+    try {
+      await fetchJson(`/api/program/session/${id}/complete`, { method: 'POST' });
+      setDone(true);
+      setInfo(messages.programSession.complete.info);
+      return true;
+    } catch (e: unknown) {
+      setError(finishErrorText(e));
+      return false;
+    }
+  };
+
+  const finishSession = async () => {
+    if (!session || busyRef.current) return;
+    busyRef.current = true;
+    setSaving(true);
+    setError(null);
+    setInfo(null);
+    try {
+      await completeSession(session.id);
+    } finally {
+      busyRef.current = false;
+      setSaving(false);
+    }
+  };
 
   const load = async (forceStartEarly = false) => {
     if (!sessionId) return;
@@ -183,6 +232,10 @@ export default function ProgramSessionPage() {
         setCurrentIdx(firstIdx);
         const target = s.sets[firstIdx]?.targetReps ?? 1;
         setActualRepsInput(String(target));
+        if (idx < 0 && s.sets.length > 0) {
+          // Every set is recorded but the earlier /complete did not go through — finish now.
+          await completeSession(s.id);
+        }
       }
     } catch (e: unknown) {
       const apiError = e as ApiError;
@@ -436,7 +489,7 @@ export default function ProgramSessionPage() {
   }, [restSeconds, session, currentIdx]);
 
   const saveCurrentSet = useCallback(async (actualValue?: number) => {
-    if (!session || !currentSet) return;
+    if (!session || !currentSet || busyRef.current) return;
 
     const actualReps = actualValue ?? sanitizePositiveInt(actualRepsInput);
     if (!Number.isFinite(actualReps) || actualReps <= 0) {
@@ -444,6 +497,7 @@ export default function ProgramSessionPage() {
       return;
     }
 
+    busyRef.current = true;
     setSaving(true);
     setError(null);
     setInfo(null);
@@ -464,11 +518,16 @@ export default function ProgramSessionPage() {
         };
       });
 
-      const isLast = currentIdx >= session.sets.length - 1;
+      const isLast = session.sets.every((s) => s.id === currentSet.id || s.actualReps != null);
       if (isLast) {
-        await fetchJson(`/api/program/session/${session.id}/complete`, { method: 'POST' });
-        setDone(true);
-        setInfo(messages.programSession.complete.info);
+        // If this fails the set is still saved: the «finish» card below lets the user retry.
+        try {
+          await fetchJson(`/api/program/session/${session.id}/complete`, { method: 'POST' });
+          setDone(true);
+          setInfo(messages.programSession.complete.info);
+        } catch (e: unknown) {
+          setError((e as ApiError).status ? getErrorMessage(e, finishCopy.failed) : finishCopy.failed);
+        }
         return;
       }
 
@@ -482,9 +541,10 @@ export default function ProgramSessionPage() {
     } catch (e: unknown) {
       setError(getErrorMessage(e, messages.programSession.errors.saveSetFailed));
     } finally {
+      busyRef.current = false;
       setSaving(false);
     }
-  }, [session, currentSet, actualRepsInput, program?.exerciseType, locale, messages.programSession.errors.invalidReps, messages.programSession.errors.saveSetFailed, messages.programSession.complete.info, messages.programSession.set.saved, currentIdx, primeAudioPlayback]);
+  }, [session, currentSet, actualRepsInput, program?.exerciseType, locale, messages.programSession.errors.invalidReps, messages.programSession.errors.saveSetFailed, messages.programSession.complete.info, messages.programSession.set.saved, currentIdx, primeAudioPlayback, finishCopy.failed]);
 
   useEffect(() => {
     if (!isPlank || !plankActive || plankSecondsLeft !== 0 || saving || !currentSet) return;
@@ -513,7 +573,23 @@ export default function ProgramSessionPage() {
       {error ? <p style={{ color: '#dc2626' }}>{error}</p> : null}
       {info ? <p style={{ color: '#16a34a' }}>{info}</p> : null}
 
-      {!done && session && currentSet ? (
+      {!done && session && allSetsRecorded ? (
+        <section style={card}>
+          <div style={{ display: 'grid', gap: 12, justifyItems: 'center', textAlign: 'center' }}>
+            <div style={{ fontWeight: 800 }}>{finishCopy.hint}</div>
+            <button
+              type="button"
+              style={{ ...btnPrimary, width: 'min(100%, 520px)' }}
+              onClick={() => void finishSession()}
+              disabled={saving}
+            >
+              {saving ? finishCopy.finishing : finishCopy.button}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {!done && session && currentSet && !allSetsRecorded ? (
         <section style={card}>
           {restSeconds > 0 ? (
             <div style={restWrap}>
