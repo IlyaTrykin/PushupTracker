@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
+import { base64ToUint8Array, setPushWanted } from '@/components/RegisterSW';
 
 type PushKeyResponse = { enabled: boolean; publicKey?: string; error?: string };
 type PreferenceRow = {
@@ -23,17 +25,9 @@ function resolveEventLabel(
   return eventLabels[eventType] || fallbackLabel;
 }
 
-function base64ToUint8Array(base64String: string) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
-  return outputArray;
-}
-
 export default function PushNotificationsToggle() {
   const { messages } = useI18n();
+  const { user } = useAuth();
   const [supported, setSupported] = useState(false);
   const [requiresSecureContext, setRequiresSecureContext] = useState(false);
   const [configured, setConfigured] = useState(false);
@@ -139,6 +133,7 @@ export default function PushNotificationsToggle() {
         body: JSON.stringify(subscription.toJSON()),
       });
 
+      setPushWanted(user?.id, true);
       setEnabled(true);
       setMessage(messages.push.enabled);
     } catch {
@@ -173,6 +168,7 @@ export default function PushNotificationsToggle() {
         });
       }
 
+      setPushWanted(user?.id, false);
       setEnabled(false);
       setMessage(messages.push.disabled);
     } catch {

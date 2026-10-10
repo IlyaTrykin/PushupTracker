@@ -23,14 +23,23 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 });
 
+// Одноразовая (на браузер) чистка старых service worker'ов и кешей. Маркер — в
+// localStorage: в sessionStorage он терялся при каждом запуске PWA, и скрипт каждый раз
+// снимал SW (а с ним и push-подписку) и перезагружал страницу (B01). Без доступного
+// localStorage скрипт не запускается вовсе. Push-подписку после чистки молча
+// восстанавливает RegisterSW.
 const swRecoveryScript = `
 (() => {
   const version = '2026-03-08-sw-recovery-1';
   const marker = 'pushup-sw-recovery-version';
 
   try {
-    if (sessionStorage.getItem(marker) === version) return;
-  } catch {}
+    if (localStorage.getItem(marker) === version) return;
+    localStorage.setItem(marker, version);
+    if (localStorage.getItem(marker) !== version) return;
+  } catch {
+    return;
+  }
 
   if (!('serviceWorker' in navigator) && !('caches' in window)) return;
 
@@ -54,18 +63,10 @@ const swRecoveryScript = `
       }
     }
 
-    try {
-      sessionStorage.setItem(marker, version);
-    } catch {}
-
     if (touched) {
       window.location.reload();
     }
-  })().catch(() => {
-    try {
-      sessionStorage.setItem(marker, version);
-    } catch {}
-  });
+  })().catch(() => {});
 })();
 `;
 

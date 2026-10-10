@@ -13,6 +13,12 @@ RUN apt-get update -y \
   && apt-get install -y --no-install-recommends openssl libssl3 ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
+# Версия сборки: deploy.sh передаёт build args; next.config.ts вшивает её в URL service worker'а.
+ARG GIT_SHA=""
+ARG BUILD_TIME=""
+ENV GIT_SHA=${GIT_SHA} \
+    BUILD_TIME=${BUILD_TIME}
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
@@ -28,11 +34,26 @@ RUN apt-get update -y \
   && apt-get install -y --no-install-recommends openssl libssl3 ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
+ARG GIT_SHA=""
+ARG BUILD_TIME=""
+ENV GIT_SHA=${GIT_SHA} \
+    BUILD_TIME=${BUILD_TIME}
+
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
+# next start читает конфиг при запуске (poweredByHeader, images.unoptimized).
+COPY --from=builder /app/next.config.ts ./next.config.ts
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
+# .next пишет кеш во время работы — владелец node.
+COPY --from=builder --chown=node:node /app/.next ./.next
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \
+  && mkdir -p /app/public/uploads \
+  && chown node:node /app/public/uploads
 
 EXPOSE 3000
+# Entrypoint стартует от root только чтобы отдать том uploads пользователю node,
+# затем сбрасывает привилегии: миграции и next start работают от node.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["bash", "-lc", "npx prisma migrate deploy && npx next start -p 3000"]

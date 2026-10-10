@@ -1,12 +1,8 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
 
+export const dynamic = 'force-dynamic';
+
+// Мониторинг смотрит только на 200; никаких метрик наружу (S21/P03).
 export async function GET() {
-  try {
-    const count = await prisma.user.count();
-    return NextResponse.json({ status: 'ok', users: count });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ status: 'error' }, { status: 500 });
-  }
+  return NextResponse.json({ status: 'ok' });
 }

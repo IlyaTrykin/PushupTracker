@@ -1,23 +1,26 @@
-{
-  email pushuptrackerapp@gmail.com
-  acme_ca https://acme-v02.api.letsencrypt.org/directory
-}
-
-tracker.trykin.online {
+# Caddy для самостоятельного стека docker-compose.yml (на проде приложение стоит за
+# чужим Caddy, этот файл там не используется). Домен берётся из переменной APP_DOMAIN;
+# email для ACME не задаётся (Caddy получает сертификат и без него).
+{$APP_DOMAIN:localhost} {
   encode gzip
-  reverse_proxy web:3000
-}
-
-http://37.230.147.134 {
-  redir https://tracker.trykin.online{uri} permanent
-}
-
-http://localhost {
-  encode gzip
+  request_body {
+    max_size 6MB
+  }
   reverse_proxy web:3000
 }
 
 http://127.0.0.1 {
   encode gzip
+  request_body {
+    max_size 6MB
+  }
+  reverse_proxy web:3000
+}
+
+http://localhost {
+  encode gzip
+  request_body {
+    max_size 6MB
+  }
   reverse_proxy web:3000
 }

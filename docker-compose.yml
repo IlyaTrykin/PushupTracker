@@ -17,7 +17,11 @@ services:
       retries: 20
       start_period: 10s
   web:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        BUILD_TIME: ${BUILD_TIME:-}
     env_file:
     - .env.runtime
     - .env
@@ -45,6 +49,9 @@ services:
     ports:
     - 80:80
     - 443:443
+    environment:
+      # Домен приложения для Caddyfile (по умолчанию localhost).
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
     volumes:
     - ./Caddyfile:/etc/caddy/Caddyfile:ro
     - caddy_data:/data

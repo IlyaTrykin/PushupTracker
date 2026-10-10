@@ -1,8 +1,8 @@
-# pushup-tracker — co-located deploy на VPS team manager (37.252.23.144).
+# pushup-tracker — co-located deploy на VPS team manager.
 # pushup поднимается ИЗОЛИРОВАННЫМ соседом за уже работающим teammanager-caddy:
 #   - свой Caddy НЕ поднимаем (80/443 держит teammanager-caddy);
 #   - наружу порты НЕ публикуем — внешний вход только через teammanager-caddy
-#     (блок tracker.trykin.online добавляется в его Caddyfile на этапе cutover);
+#     (блок с доменом приложения живёт в его Caddyfile, не в этом репозитории);
 #   - db: только внутренняя сеть; web: internal + внешняя teammanager_proxy
 #     (Caddy достаёт web по имени контейнера pushup-web).
 # team manager этим стеком не затрагивается.
@@ -28,7 +28,12 @@ services:
       start_period: 10s
 
   web:
-    build: .
+    build:
+      context: .
+      # Версию сборки передаёт deploy.sh (→ /api/version и URL service worker'а).
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        BUILD_TIME: ${BUILD_TIME:-}
     container_name: pushup-web
     restart: unless-stopped
     env_file:

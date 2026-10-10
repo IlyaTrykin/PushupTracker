@@ -7,9 +7,13 @@
  * We never cache:
  * - /api/*
  * - /_next/image and other dynamic internals
+ *
+ * Navigations are network-first (cache is only an offline fallback), so a deploy is
+ * picked up on the next navigation. The build version comes from the registration URL
+ * (`/sw.js?v=<build>`, see RegisterSW): every deploy installs a new SW with fresh caches.
  */
 
-const VERSION = 'v7';
+const VERSION = new URL(self.location.href).searchParams.get('v') || 'v8';
 const STATIC_CACHE = `pushup-static-${VERSION}`;
 const NEXT_STATIC_CACHE = `pushup-next-static-${VERSION}`;
 const NAVIGATION_CACHE = `pushup-navigation-${VERSION}`;
@@ -29,15 +33,9 @@ self.addEventListener('activate', (event) => {
         .map((k) => caches.delete(k))
     );
 
-    // Забираем контроль над открытыми вкладками
+    // Забираем контроль над открытыми вкладками. Вкладки со старой версией
+    // перезагружает RegisterSW по событию controllerchange (один раз).
     await self.clients.claim();
-
-    // Критично после деплоя: принудительно перезагружаем открытые вкладки,
-    // чтобы сбросить старые client bundles / Server Action IDs.
-    const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    await Promise.all(
-      allClients.map((client) => ('navigate' in client ? client.navigate(client.url) : Promise.resolve()))
-    );
   })());
 });
 
@@ -105,19 +103,16 @@ function isAppNavigation(url, request) {
   return true;
 }
 
-async function staleWhileRevalidateNavigation(request) {
+async function networkFirstNavigation(request) {
   const cache = await caches.open(NAVIGATION_CACHE);
-  const cached = await cache.match(request);
-  const networkPromise = fetch(request).then((response) => {
+  try {
+    const response = await fetch(request);
     if (response.ok) cache.put(request, response.clone());
     return response;
-  });
-
-  if (cached) {
-    return cached;
+  } catch {
+    const cached = await cache.match(request);
+    return cached || Response.error();
   }
-
-  return networkPromise;
 }
 
 async function staleWhileRevalidateAsset(cacheName, request) {
@@ -153,13 +148,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (isAppNavigation(url, req)) {
-    event.respondWith(
-      staleWhileRevalidateNavigation(req).catch(async () => {
-        const cache = await caches.open(NAVIGATION_CACHE);
-        const cached = await cache.match(req);
-        return cached || Response.error();
-      })
-    );
+    event.respondWith(networkFirstNavigation(req));
     return;
   }
 

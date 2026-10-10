@@ -1,25 +1,55 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Деплой на VPS 37.252.23.144, где pushup живёт изолированным соседом за
-# teammanager-caddy: свой Caddy не поднимаем, порты наружу не публикуем.
-# /root/pushup-tracker — это rsync-приёмник, а НЕ git-checkout.
+# Деплой на VPS, где pushup живёт изолированным соседом за чужим Caddy:
+# свой Caddy не поднимаем, порты наружу не публикуем.
+# REMOTE_DIR — это rsync-приёмник, а НЕ git-checkout.
 #
-# Переопределяется через окружение:
-#   SERVER=root@1.2.3.4 ./deploy.sh
-#   REMOTE_DIR=/root/pushup-tracker ./deploy.sh
-#   SSH_KEY=~/.ssh/other ./deploy.sh
-SERVER="${SERVER:-root@37.252.23.144}"
+# Адрес сервера, ключ и URL проверки здоровья НЕ хранятся в репозитории:
+# они читаются из локального .deploy.env (в .gitignore; образец — .deploy.env.example).
+#   DEPLOY_HOST   — user@host сервера (обязательно)
+#   DEPLOY_KEY    — путь к ssh-ключу (необязательно; иначе ssh-agent/ssh_config)
+#   HEALTH_URL    — публичный URL /api/health (обязательно)
+#   REMOTE_DIR    — каталог на сервере (по умолчанию /root/pushup-tracker)
+#   COMPOSE_FILE  — compose-файл (по умолчанию docker-compose.prod.yml)
+# Любую переменную можно переопределить окружением: DEPLOY_HOST=… ./deploy.sh
+cd "$(dirname "$0")"
+
+DEPLOY_ENV_FILE="${DEPLOY_ENV_FILE:-.deploy.env}"
+if [[ -f "${DEPLOY_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  case "${DEPLOY_ENV_FILE}" in /*) ;; *) DEPLOY_ENV_FILE="./${DEPLOY_ENV_FILE#./}" ;; esac
+  set -a; . "${DEPLOY_ENV_FILE}"; set +a
+fi
+
+if [[ -z "${DEPLOY_HOST:-}" ]]; then
+  echo "deploy.sh: не задан DEPLOY_HOST (user@host сервера)." >&2
+  echo "Создайте ${DEPLOY_ENV_FILE} по образцу .deploy.env.example или передайте переменную окружением." >&2
+  exit 1
+fi
+if [[ -z "${HEALTH_URL:-}" ]]; then
+  echo "deploy.sh: не задан HEALTH_URL (публичный адрес /api/health) — см. .deploy.env.example." >&2
+  exit 1
+fi
+
+SERVER="${DEPLOY_HOST}"
 REMOTE_DIR="${REMOTE_DIR:-/root/pushup-tracker}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
-HEALTH_URL="${HEALTH_URL:-https://tracker.trykin.online/api/health}"
-
-# Ключ проекта, если он есть локально; иначе полагаемся на ssh-agent/ssh_config.
-DEFAULT_SSH_KEY="${HOME}/.ssh/ilyatrykin"
-SSH_KEY="${SSH_KEY:-}"
-if [[ -z "${SSH_KEY}" && -f "${DEFAULT_SSH_KEY}" ]]; then
-  SSH_KEY="${DEFAULT_SSH_KEY}"
+SSH_KEY="${DEPLOY_KEY:-}"
+if [[ -n "${SSH_KEY}" ]]; then
+  SSH_KEY="${SSH_KEY/#\~/${HOME}}"
+  if [[ ! -f "${SSH_KEY}" ]]; then
+    echo "deploy.sh: DEPLOY_KEY указывает на несуществующий файл." >&2
+    exit 1
+  fi
 fi
+
+# Версия сборки для /api/version и service worker'а.
+GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  GIT_SHA="${GIT_SHA}-dirty"
+fi
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
 if [[ -n "${SSH_KEY}" ]]; then
@@ -33,7 +63,7 @@ for opt in "${SSH_OPTS[@]}"; do
   RSYNC_RSH+=" ${opt}"
 done
 
-echo "[1/4] Sync project -> ${SERVER}:${REMOTE_DIR} (HEAD $(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
+echo "[1/4] Sync project -> ${REMOTE_DIR} (build ${GIT_SHA})"
 
 # Без --delete: на сервере есть каталоги, которых нет в репозитории (logs/,
 # смонтированный public/uploads), и сносить их деплоем нельзя.
@@ -45,6 +75,9 @@ rsync -az --info=stats1 \
   --exclude '.next' \
   --exclude '.env' \
   --exclude '.env.*' \
+  --exclude '.deploy.env' \
+  --exclude '.autopilot' \
+  --exclude 'docs' \
   --exclude 'backups' \
   --exclude 'Backups' \
   --exclude 'tmp' \
@@ -58,15 +91,15 @@ rsync -az --info=stats1 \
   --exclude '.DS_Store' \
   ./ "${SERVER}:${REMOTE_DIR}/"
 
-echo "[2/4] Build web image on server"
+echo "[2/4] Build web image on server (GIT_SHA=${GIT_SHA}, BUILD_TIME=${BUILD_TIME})"
 "${SSH_CMD[@]}" "${SERVER}" "set -e; cd '${REMOTE_DIR}'; \
-  docker compose -f '${COMPOSE_FILE}' build web"
+  GIT_SHA='${GIT_SHA}' BUILD_TIME='${BUILD_TIME}' docker compose -f '${COMPOSE_FILE}' build web"
 
 # Миграции применяет сам контейнер: CMD образа делает prisma migrate deploy
 # перед next start, поэтому отдельного шага здесь нет.
 echo "[3/4] Recreate web container"
 "${SSH_CMD[@]}" "${SERVER}" "set -e; cd '${REMOTE_DIR}'; \
-  docker compose -f '${COMPOSE_FILE}' up -d --force-recreate web"
+  GIT_SHA='${GIT_SHA}' BUILD_TIME='${BUILD_TIME}' docker compose -f '${COMPOSE_FILE}' up -d --force-recreate web"
 
 echo "[4/4] Health check ${HEALTH_URL}"
 for attempt in $(seq 1 12); do

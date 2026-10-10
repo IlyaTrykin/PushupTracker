@@ -1,18 +1,41 @@
 #!/usr/bin/env bash
+# Дамп БД pushup-tracker на сервере (прод-топология: каталог /root/pushup-tracker,
+# стек docker-compose.prod.yml, сервис db). Имя БД и пользователь берутся из
+# окружения контейнера db (POSTGRES_DB / POSTGRES_USER из серверного .env).
+#
+# Аватары (том uploads) этим скриптом не сохраняются — их бэкап отдельный.
+# Дампы не шифруются: каталог закрыт правами 700, файлы — 640.
 set -euo pipefail
 umask 027
 
-cd /opt/pushup-tracker
-TS=$(date +%Y%m%d_%H%M%S)
-OUT="/opt/pushup-tracker/db_backups/pushup_tracker_${TS}.sql.gz"
+PROJECT_DIR="${PROJECT_DIR:-/root/pushup-tracker}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
+BACKUP_DIR="${BACKUP_DIR:-${PROJECT_DIR}/db_backups}"
+# Срок хранения дампов, в днях.
+RETENTION_DAYS="${RETENTION_DAYS:-14}"
+# Необязательно: владелец файлов дампа для pull-пользователя, формат user:group.
+BACKUP_OWNER="${BACKUP_OWNER:-}"
 
-docker compose exec -T db pg_dump -U postgres -d pushup_tracker | gzip > "$OUT"
+cd "${PROJECT_DIR}"
+mkdir -p "${BACKUP_DIR}"
+chmod 700 "${BACKUP_DIR}"
 
-# owner/group for pull-user
-chown backup:pushup_backups "$OUT"
-chmod 640 "$OUT"
+TS="$(date +%Y%m%d_%H%M%S)"
+OUT="${BACKUP_DIR}/pushup_tracker_${TS}.sql.gz"
+TMP="${OUT}.partial"
+trap 'rm -f "${TMP}"' EXIT
 
-# права/группа на всякий случай
+docker compose -f "${COMPOSE_FILE}" exec -T db \
+  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | gzip > "${TMP}"
+gzip -t "${TMP}"
+mv "${TMP}" "${OUT}"
+chmod 640 "${OUT}"
 
-# хранить только 14 дней
-find /opt/pushup-tracker/db_backups -type f -name 'pushup_tracker_*.sql.gz' -mtime +7 -delete
+if [[ -n "${BACKUP_OWNER}" ]]; then
+  chown "${BACKUP_OWNER}" "${OUT}"
+fi
+
+# Хранить RETENTION_DAYS дней: удаляются дампы старше этого срока.
+find "${BACKUP_DIR}" -type f -name 'pushup_tracker_*.sql.gz' -mtime +"$((RETENTION_DAYS - 1))" -delete
+
+echo "${OUT}"

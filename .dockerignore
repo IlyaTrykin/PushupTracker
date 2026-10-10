@@ -26,3 +26,21 @@ __MACOSX
 
 # Misc
 *.log
+
+# VCS / CI / local-only material (never needed in the image, may hold infra notes)
+.git
+.github
+.autopilot
+.claude
+docs
+import
+backups
+Backups
+scripts/backup-*
+tmp
+output
+test-results
+coverage
+*.tsbuildinfo
+.deploy.env
+.deploy.env.*

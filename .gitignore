@@ -17,6 +17,8 @@ __MACOSX
 .env
 .env.*
 !.env.example
+# local deploy target (host, ssh key) — see .deploy.env.example
+.deploy.env
 
 # backups / bundles / archives
 backups/

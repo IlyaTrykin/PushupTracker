@@ -9,8 +9,10 @@ export function getFeedbackProjectLabel(): string {
   return process.env.FEEDBACK_PROJECT_LABEL || 'PushUp Tracker';
 }
 
-function getFeedbackRecipient(): string {
-  return process.env.FEEDBACK_TO || 'ilya.trykin@gmail.com';
+/** Адрес получателя — только из env (`FEEDBACK_TO`); без него письмо не отправляется. */
+function getFeedbackRecipient(): string | null {
+  const to = process.env.FEEDBACK_TO?.trim();
+  return to || null;
 }
 
 /** Домен приложения без схемы — попадает в тему и тело письма. */
@@ -29,6 +31,12 @@ export async function sendFeedbackEmail(args: {
   userId: string;
   request?: Request;
 }): Promise<{ sent: boolean }> {
+  const to = getFeedbackRecipient();
+  if (!to) {
+    console.warn('[feedback] FEEDBACK_TO is not set — feedback email skipped');
+    return { sent: false };
+  }
+
   const label = getFeedbackProjectLabel();
   const site = getSite(args.request);
   const from = args.userEmail ? `${args.username} <${args.userEmail}>` : args.username;
@@ -52,7 +60,7 @@ export async function sendFeedbackEmail(args: {
 
   return sendMail(
     {
-      to: getFeedbackRecipient(),
+      to,
       subject: `[${label}] Обратная связь · ${site}`,
       text,
       html,
