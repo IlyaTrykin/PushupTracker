@@ -4,6 +4,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { base64ToUint8Array, setPushWanted } from '@/components/RegisterSW';
+import { TELEGRAM_LINK_EVENT } from '@/components/TelegramConnect';
 
 type PushKeyResponse = { enabled: boolean; publicKey?: string; error?: string };
 type Channel = 'pushEnabled' | 'emailEnabled' | 'telegramEnabled';
@@ -29,8 +30,9 @@ function readPreferences(data: PreferencesResponse): { rows: PreferenceRow[]; te
 
 /**
  * Notification settings in the profile: this device's push subscription and, per event,
- * push / e-mail / Telegram switches. The Telegram column appears only when the bot is
- * configured on the server (`telegramAvailable` from `/api/push/preferences`).
+ * push / e-mail / Telegram switches. The Telegram column appears only when the bot is on
+ * (`telegramAvailable` from `/api/push/preferences`) and this account has a linked chat
+ * (`/api/profile/telegram`, kept in sync with the Telegram section via `TELEGRAM_LINK_EVENT`).
  */
 export default function NotificationSettings() {
   const { messages } = useI18n();
@@ -45,6 +47,7 @@ export default function NotificationSettings() {
   const [message, setMessage] = useState<string | null>(null);
   const [rows, setRows] = useState<PreferenceRow[]>([]);
   const [telegramAvailable, setTelegramAvailable] = useState(false);
+  const [telegramLinked, setTelegramLinked] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -71,6 +74,25 @@ export default function NotificationSettings() {
       }
     })();
   }, [messages.push.loadError]);
+
+  useEffect(() => {
+    if (!telegramAvailable) return;
+    let cancelled = false;
+    fetch('/api/profile/telegram', { cache: 'no-store', credentials: 'include' })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as { linked?: boolean } | null;
+        if (!cancelled) setTelegramLinked(res.ok && Boolean(data?.linked));
+      })
+      .catch(() => {});
+    const onLinkChange = (event: Event) => {
+      setTelegramLinked(Boolean((event as CustomEvent<{ linked?: boolean }>).detail?.linked));
+    };
+    window.addEventListener(TELEGRAM_LINK_EVENT, onLinkChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(TELEGRAM_LINK_EVENT, onLinkChange);
+    };
+  }, [telegramAvailable]);
 
   useEffect(() => {
     if (!supported) return;
@@ -144,12 +166,19 @@ export default function NotificationSettings() {
         });
       }
 
-      await fetch('/api/push/subscriptions', {
+      const res = await fetch('/api/push/subscriptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(subscription.toJSON()),
       });
+      if (!res.ok) {
+        // The server did not accept the subscription: drop it here too, or the browser would
+        // think push is on while this device gets nothing.
+        await subscription.unsubscribe().catch(() => {});
+        setMessage(messages.push.enableError);
+        return;
+      }
 
       setPushWanted(user?.id, true);
       setEnabled(true);
@@ -189,7 +218,7 @@ export default function NotificationSettings() {
   const columns: Array<{ key: Channel; label: string }> = [
     { key: 'pushEnabled', label: messages.push.pushColumn },
     { key: 'emailEnabled', label: messages.push.emailColumn },
-    ...(telegramAvailable ? [{ key: 'telegramEnabled' as const, label: messages.push.telegramColumn }] : []),
+    ...(telegramAvailable && telegramLinked ? [{ key: 'telegramEnabled' as const, label: messages.push.telegramColumn }] : []),
   ];
   const eventLabels: Record<string, string> = messages.push.events;
 

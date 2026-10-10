@@ -1,7 +1,7 @@
 /**
  * Telegram bot settings from env. Values are secrets: never log or return them.
- * Without `TELEGRAM_BOT_TOKEN` the whole feature is off (profile section hidden, routes 404,
- * the notification channel silent).
+ * Unless `isTelegramEnabled` (token, bot username, webhook secret, https API base) the whole
+ * feature is off: profile section hidden, routes 404, the notification channel silent.
  */
 import crypto from 'crypto';
 
@@ -27,9 +27,29 @@ export function readTelegramConfig(env: Env = process.env): TelegramConfig {
   };
 }
 
-/** Linking needs the token and the bot's username (for the t.me link). */
-export function isTelegramLinkingAvailable(config: TelegramConfig = readTelegramConfig()): boolean {
-  return Boolean(config.token && config.botUsername);
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * The token is part of every API URL, so it may only travel over https; plain http is allowed
+ * for a local stub or proxy on this machine (localhost / 127.0.0.1 / ::1).
+ */
+export function isSafeTelegramApiBase(apiBase: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(apiBase);
+  } catch {
+    return false;
+  }
+  if (url.protocol === 'https:') return true;
+  return url.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname);
+}
+
+/**
+ * The one «bot is on» condition for the notification settings, linking, the webhook and the
+ * Telegram channel: token + bot username + webhook secret + a safe API base.
+ */
+export function isTelegramEnabled(config: TelegramConfig = readTelegramConfig()): boolean {
+  return Boolean(config.token && config.botUsername && config.webhookSecret && isSafeTelegramApiBase(config.apiBase));
 }
 
 /** Constant-time comparison of `X-Telegram-Bot-Api-Secret-Token`; an empty expected secret never matches. */

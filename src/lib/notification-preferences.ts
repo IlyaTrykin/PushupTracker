@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { isTelegramEnabled } from '@/lib/telegram/config';
 
 export type NotificationEventType =
   | 'friend_request'
@@ -156,9 +157,9 @@ export function resolveChannelPreference(
   return { push: row.pushEnabled, email: row.emailEnabled, telegram: row.telegramEnabled };
 }
 
-/** Telegram channel exists only when the bot token is configured (T12). */
+/** Telegram channel exists only when the bot is on — the same condition as linking and the webhook. */
 export function isTelegramConfigured(): boolean {
-  return Boolean((process.env.TELEGRAM_BOT_TOKEN || '').trim());
+  return isTelegramEnabled();
 }
 
 export async function getResolvedPreferencesForUser(userId: string) {

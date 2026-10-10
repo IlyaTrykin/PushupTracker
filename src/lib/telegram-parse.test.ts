@@ -35,6 +35,9 @@ test('cardio takes kilometres (dot or comma) and an optional time; value is in m
   assert.deepEqual(parseWorkoutMessage('бег 5,2 26:30', []), { exerciseType: 'run', value: 5200, durationSeconds: 1590 });
   assert.deepEqual(parseWorkoutMessage('велосипед 20 км 1:02:05', []), { exerciseType: 'bike', value: 20000, durationSeconds: 3725 });
   assert.deepEqual(parseWorkoutMessage('row 2', []), { exerciseType: 'row', value: 2000 });
+  // «Rowing» is the catalog name of the rowing machine in English.
+  assert.deepEqual(parseWorkoutMessage('rowing 10', []), { exerciseType: 'row', value: 10000 });
+  assert.deepEqual(parseWorkoutMessage('Rowing 10', []), { exerciseType: 'row', value: 10000 });
 });
 
 test('loaded exercises take the weight in kg', () => {
@@ -72,6 +75,13 @@ test('garbage → null', () => {
     '-5',
     '30x',
     'бег abc',
+    // Only listed word forms count, not anything that starts like an exercise name.
+    'выходные 2',
+    'pullover 10',
+    'маховик 3',
+    'pushkin 10',
+    'бегемот 3',
+    'жимолость 5',
   ]) {
     assert.equal(parseWorkoutMessage(text, ['pushups']), null, text);
   }
@@ -80,7 +90,7 @@ test('garbage → null', () => {
 test('reply after a recorded workout: value, points and the daily goal, in the user language', () => {
   assert.equal(
     workoutRecordedReply('ru', { exerciseType: 'pushups', reps: 30, loadKg: null }, { done: 80, goal: 100 }),
-    'Записал: отжимания 30 (+30 баллов).\nЦель дня: 80/100',
+    'Записал: 30 отжиманий (+30 баллов).\nЦель дня: 80/100',
   );
   assert.equal(
     workoutRecordedReply('en', { exerciseType: 'plank', reps: 60, loadKg: null }, null),
@@ -92,7 +102,31 @@ test('reply after a recorded workout: value, points and the daily goal, in the u
   );
   assert.equal(
     workoutRecordedReply('ru', { exerciseType: 'squats', reps: 1, loadKg: null }, null),
-    'Записал: приседания 1 (+0,7 балла).',
+    'Записал: 1 приседание (+0,7 балла).',
+  );
+});
+
+test('counted exercises: the number first, then the name in the right form', () => {
+  const ru = (reps: number, exerciseType = 'pushups', loadKg: number | null = null) =>
+    workoutRecordedReply('ru', { exerciseType, reps, loadKg }, null).replace(/^Записал: | \(\+.*$/g, '');
+  assert.equal(ru(1), '1 отжимание');
+  assert.equal(ru(2), '2 отжимания');
+  assert.equal(ru(5), '5 отжиманий');
+  assert.equal(ru(11), '11 отжиманий');
+  assert.equal(ru(21), '21 отжимание');
+  assert.equal(ru(34), '34 отжимания');
+  assert.equal(ru(112), '112 отжиманий');
+  assert.equal(ru(3, 'muscle_ups'), '3 выхода силой');
+  assert.equal(ru(15, 'dips'), '15 отжиманий на брусьях');
+  assert.equal(ru(10, 'kettlebell_press', 24), '10 жимов гири × 24 кг');
+  assert.equal(
+    workoutRecordedReply('en', { exerciseType: 'pushups', reps: 30, loadKg: null }, null),
+    'Logged: 30 push-ups (+30 points).',
+  );
+  assert.equal(workoutRecordedReply('en', { exerciseType: 'pullups', reps: 1, loadKg: null }, null), 'Logged: 1 pull-up (+3 points).');
+  assert.equal(
+    workoutRecordedReply('en', { exerciseType: 'kettlebell_swing', reps: 20, loadKg: 16 }, null).replace(/ \(\+.*$/, ''),
+    'Logged: 20 kettlebell swings × 16 kg',
   );
 });
 

@@ -10,6 +10,13 @@ type PendingLink = { url: string; expiresAt: number };
 
 const POLL_INTERVAL_MS = 3000;
 
+/** Window event with `detail: { linked: boolean }`, fired whenever the link state is (re)loaded or changed. */
+export const TELEGRAM_LINK_EVENT = 'pushup:telegram-link';
+
+function announceLink(linked: boolean) {
+  window.dispatchEvent(new CustomEvent(TELEGRAM_LINK_EVENT, { detail: { linked } }));
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<{ status: number; data: T | null }> {
   const res = await fetch(url, { cache: 'no-store', ...init });
   const data = (await res.json().catch(() => null)) as T | null;
@@ -38,6 +45,7 @@ export default function TelegramConnect() {
     if (status !== 200 || !data) throw new Error(text.loadFailed);
     setAvailable(true);
     setState({ linked: Boolean(data.linked), linkedAt: data.linkedAt ?? null });
+    announceLink(Boolean(data.linked));
     return data;
   }, [text.loadFailed]);
 
@@ -86,6 +94,7 @@ export default function TelegramConnect() {
       const { status } = await requestJson('/api/profile/telegram', { method: 'DELETE' });
       if (status !== 200) throw new Error(text.disconnectFailed);
       setState({ linked: false, linkedAt: null });
+      announceLink(false);
       setPending(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : text.disconnectFailed);

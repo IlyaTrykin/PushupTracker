@@ -1,7 +1,7 @@
 import { NextResponse, after } from 'next/server';
 import { sendTelegramMessage } from '@/lib/telegram/api';
 import { handleTelegramUpdate } from '@/lib/telegram/bot';
-import { readTelegramConfig, verifyWebhookSecret } from '@/lib/telegram/config';
+import { isTelegramEnabled, readTelegramConfig, verifyWebhookSecret } from '@/lib/telegram/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,12 +11,14 @@ function errorText(error: unknown): string {
 
 /**
  * Telegram webhook. Protected by `X-Telegram-Bot-Api-Secret-Token` (= `TELEGRAM_WEBHOOK_SECRET`);
- * without the bot token or the secret the endpoint does not exist. Telegram always gets a quick
- * 200 (otherwise it re-delivers the update); the reply is sent after the response.
+ * unless the bot is on (`isTelegramEnabled`) the endpoint does not exist. Telegram always gets a
+ * quick 200 (otherwise it re-delivers the update); the reply and the notices to other chats are
+ * sent after the response. A failure inside the handler is answered by the bot itself
+ * («Не получилось, попробуй ещё раз»).
  */
 export async function POST(request: Request) {
   const config = readTelegramConfig();
-  if (!config.token || !config.webhookSecret) {
+  if (!isTelegramEnabled(config)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   if (!verifyWebhookSecret(request.headers.get('x-telegram-bot-api-secret-token'), config.webhookSecret)) {
@@ -28,11 +30,15 @@ export async function POST(request: Request) {
     const reply = await handleTelegramUpdate(update);
     if (reply) {
       after(async () => {
-        try {
-          await sendTelegramMessage(reply.chatId, reply.text);
-        } catch (error) {
-          console.error('TELEGRAM REPLY ERROR:', errorText(error));
-        }
+        const send = async (chatId: string, text: string, opts: { buttons?: string[]; removeKeyboard?: boolean } = {}) => {
+          try {
+            await sendTelegramMessage(chatId, text, opts);
+          } catch (error) {
+            console.error('TELEGRAM REPLY ERROR:', errorText(error));
+          }
+        };
+        await send(reply.chatId, reply.text, { buttons: reply.buttons, removeKeyboard: reply.removeKeyboard });
+        for (const notice of reply.notices ?? []) await send(notice.chatId, notice.text);
       });
     }
   } catch (error) {

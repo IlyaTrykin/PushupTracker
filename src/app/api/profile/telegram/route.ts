@@ -6,7 +6,7 @@ import { sendTelegramMessage } from '@/lib/telegram/api';
 import {
   TELEGRAM_LINK_CODE_TTL_MS,
   createLinkCode,
-  isTelegramLinkingAvailable,
+  isTelegramEnabled,
   readTelegramConfig,
   telegramStartLink,
 } from '@/lib/telegram/config';
@@ -34,7 +34,7 @@ function handleError(e: unknown, label: string) {
 
 /** `{ linked, linkedAt }` of the current user; 404 when the bot is not configured. */
 export async function GET(request: Request) {
-  if (!isTelegramLinkingAvailable()) return notConfigured();
+  if (!isTelegramEnabled()) return notConfigured();
   try {
     const user = await requireUser(request);
     const row = await prisma.user.findUnique({
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
 
 /** A one-time link `https://t.me/<bot>?start=<code>` valid for 15 minutes; earlier codes stop working. */
 export async function POST(request: Request) {
-  if (!isTelegramLinkingAvailable()) return notConfigured();
+  if (!isTelegramEnabled()) return notConfigured();
   try {
     const user = await requireUser(request);
     const limit = await hitRateLimit(`telegram-link:${user.id}`, LINK_CODE_LIMIT_PER_HOUR, 60 * 60);
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
 
 /** Unlinks the chat (the bot tells the chat about it) and drops pending link codes. */
 export async function DELETE(request: Request) {
-  if (!isTelegramLinkingAvailable()) return notConfigured();
+  if (!isTelegramEnabled()) return notConfigured();
   try {
     const user = await requireUser(request);
     const row = await prisma.user.findUnique({ where: { id: user.id }, select: { telegramChatId: true, language: true } });

@@ -8,7 +8,7 @@
  *
  * Values are not range-checked here: `createWorkoutForUser` validates them like any other input.
  */
-import { EXERCISES, EXERCISE_IDS, getExercise, resolveFavoriteExercises, type ExerciseType } from '../exercises';
+import { EXERCISE_IDS, getExercise, resolveFavoriteExercises, type ExerciseType } from '../exercises';
 import { parseDurationInput } from '../workout-input';
 
 export type ParsedWorkout = { exerciseType: ExerciseType; value: number; loadKg?: number; durationSeconds?: number };
@@ -19,26 +19,44 @@ export function isParsedCommand(parsed: ParsedMessage): parsed is ParsedCommand 
   return 'command' in parsed;
 }
 
-/** Extra names besides the catalog labels: each alias is a list of word prefixes (same word count as the phrase). */
-const EXTRA_ALIASES: Partial<Record<ExerciseType, string[]>> = {
-  pushups: ['отжим', 'push', 'pushup'],
-  pullups: ['подтяг', 'pull', 'pullup'],
-  crunches: ['скручив', 'пресс', 'crunch'],
-  squats: ['присед', 'squat'],
-  plank: ['планк', 'plank'],
-  dips: ['брус', 'dip', 'отжим на брус'],
-  hanging_leg_raises: ['подъем ног', 'ноги в вис', 'leg raise'],
-  muscle_ups: ['выход', 'выход сил', 'muscle', 'muscleup'],
-  lunges: ['выпад', 'lunge'],
-  burpees: ['берпи', 'burpee'],
-  jump_rope: ['скакалк', 'rope', 'jump rope'],
-  wall_sit: ['стульчик', 'wall sit'],
-  kettlebell_press: ['жим', 'жим гир', 'press'],
-  kettlebell_jerk: ['толч', 'толч гир', 'jerk'],
-  kettlebell_swing: ['мах', 'мах гир', 'swing'],
-  run: ['бег', 'пробеж', 'run'],
-  bike: ['велосипед', 'вело', 'bike', 'cycl'],
-  row: ['гребл', 'row'],
+/**
+ * Every accepted way to name an exercise, written out word for word (after lower-casing and
+ * ё → е). Only these exact phrases match: «выходные», «pullover», «маховик» do not
+ * (no prefix matching).
+ */
+const EXERCISE_NAMES: Record<ExerciseType, string[]> = {
+  pushups: ['отжимания', 'отжиманий', 'отжимание', 'отжиманья', 'отжиманье', 'отжим', 'отжимы', 'отжимов', 'push-ups', 'push-up', 'pushups', 'pushup', 'push ups', 'push up'],
+  pullups: ['подтягивания', 'подтягиваний', 'подтягивание', 'подтягиванья', 'подтягиванье', 'подтяг', 'подтягов', 'pull-ups', 'pull-up', 'pullups', 'pullup', 'pull ups', 'pull up'],
+  crunches: ['скручивания', 'скручиваний', 'скручивание', 'пресс', 'crunches', 'crunch'],
+  squats: ['приседания', 'приседаний', 'приседание', 'приседанья', 'приседанье', 'присед', 'приседы', 'приседов', 'squats', 'squat'],
+  plank: ['планка', 'планки', 'планку', 'планкой', 'plank', 'planks'],
+  dips: [
+    'брусья', 'брусьях', 'брусьев',
+    'отжимания на брусьях', 'отжиманий на брусьях', 'отжимание на брусьях', 'отжимы на брусьях',
+    'dips', 'dip',
+  ],
+  hanging_leg_raises: [
+    'подъем ног в висе', 'подъемы ног в висе', 'подъемов ног в висе', 'подъема ног в висе',
+    'подъем ног', 'подъемы ног', 'подъемов ног', 'подъема ног', 'ноги в висе',
+    'hanging leg raises', 'hanging leg raise', 'leg raises', 'leg raise',
+  ],
+  muscle_ups: [
+    'выход силой', 'выходы силой', 'выходов силой', 'выхода силой', 'выход', 'выходы', 'выходов', 'выхода',
+    'muscle-ups', 'muscle-up', 'muscleups', 'muscleup', 'muscle ups', 'muscle up',
+  ],
+  lunges: ['выпады', 'выпадов', 'выпад', 'выпада', 'lunges', 'lunge'],
+  burpees: ['берпи', 'burpees', 'burpee'],
+  jump_rope: ['скакалка', 'скакалки', 'скакалку', 'скакалкой', 'прыжки на скакалке', 'jump rope', 'rope'],
+  wall_sit: ['стульчик', 'стульчика', 'wall sit', 'wall-sit'],
+  kettlebell_press: ['жим гири', 'жим гирь', 'жимы гири', 'жим', 'жимы', 'жимов', 'жима', 'kettlebell press', 'press'],
+  kettlebell_jerk: ['толчок гири', 'толчки гири', 'толчок', 'толчки', 'толчков', 'толчка', 'kettlebell jerk', 'jerk', 'jerks'],
+  kettlebell_swing: [
+    'махи гирей', 'махи гири', 'мах гирей', 'махов гирей', 'махи', 'махов', 'мах', 'маха',
+    'kettlebell swing', 'kettlebell swings', 'swing', 'swings',
+  ],
+  run: ['бег', 'бега', 'пробежка', 'пробежки', 'пробежку', 'run', 'running'],
+  bike: ['велосипед', 'велосипеда', 'вело', 'велик', 'bike', 'cycling'],
+  row: ['гребля', 'гребли', 'греблю', 'row', 'rowing'],
 };
 
 const COMMAND_WORDS: Record<string, string> = {
@@ -55,20 +73,13 @@ function normalize(text: string): string {
   return text.toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
 }
 
-const ALIASES: Array<{ exerciseType: ExerciseType; words: string[] }> = EXERCISE_IDS.flatMap((id) => {
-  const names = [EXERCISES[id].label.ru, EXERCISES[id].label.en, ...(EXTRA_ALIASES[id] ?? [])];
-  return names.map((name) => ({ exerciseType: id, words: normalize(name).split(' ') }));
-});
+/** Normalized phrase → exercise. */
+const NAME_INDEX = new Map<string, ExerciseType>(
+  EXERCISE_IDS.flatMap((id) => EXERCISE_NAMES[id].map((name) => [normalize(name), id] as const)),
+);
 
 function matchExercise(words: string[]): ExerciseType | null {
-  let best: { exerciseType: ExerciseType; score: number } | null = null;
-  for (const alias of ALIASES) {
-    if (alias.words.length !== words.length) continue;
-    if (!alias.words.every((stem, i) => words[i].startsWith(stem))) continue;
-    const score = alias.words.join('').length;
-    if (!best || score > best.score) best = { exerciseType: alias.exerciseType, score };
-  }
-  return best?.exerciseType ?? null;
+  return NAME_INDEX.get(words.join(' ')) ?? null;
 }
 
 type Token =
