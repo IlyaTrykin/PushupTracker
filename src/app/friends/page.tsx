@@ -8,6 +8,7 @@ import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
 import { EXERCISES, EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 interface Friend {
@@ -94,17 +95,7 @@ type ReactionSummaryItem = {
   hasMore: boolean;
 };
 
-type Stats = {
-  totalToday: number;
-  totalAll: number;
-  totalWeek: number;
-  totalMonth: number;
-  totalYear: number;
-  avgPerDayMonth: number;
-  avgPerDayYear: number;
-  avgPerDayAll: number;
-  streak: number;
-};
+type Stats = PeriodStats;
 
 type StatsByExercise = Record<ExerciseType, Stats>;
 
@@ -231,89 +222,9 @@ function toExerciseType(type: string | undefined): ExerciseType {
   return catalogToExerciseType(type);
 }
 
+// Дни — по календарной дате записи, серия — по общему правилу с заморозкой (B12, B23, B24).
 function calcStats(workouts: Workout[]): Stats {
-  const byDay = new Map<string, number>();
-
-  for (const w of workouts) {
-    const dt = getWorkoutDate(w);
-    const key = normalizeDate(dt);
-    byDay.set(key, (byDay.get(key) ?? 0) + (w.reps || 0));
-  }
-
-  const msDay = 86400000;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  // календарная неделя с понедельника
-  const dow = today.getDay(); // 0=вс
-  const offsetToMon = (dow + 6) % 7;
-  const weekStart = new Date(today);
-  weekStart.setDate(today.getDate() - offsetToMon);
-
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-  const yearStart = new Date(today.getFullYear(), 0, 1);
-
-  const todayKey = normalizeDate(today);
-  const totalToday = byDay.get(todayKey) ?? 0;
-
-  let totalAll = 0;
-  let totalWeek = 0;
-  let totalMonth = 0;
-  let totalYear = 0;
-
-  for (const [k, sum] of byDay.entries()) {
-    totalAll += sum;
-    const [y, m, d] = k.split('-').map(Number);
-    const dayDate = new Date(y, (m || 1) - 1, d || 1);
-
-    if (dayDate >= weekStart && dayDate <= today) totalWeek += sum;
-    if (dayDate >= monthStart && dayDate <= today) totalMonth += sum;
-    if (dayDate >= yearStart && dayDate <= today) totalYear += sum;
-  }
-
-  const daysMonth = Math.floor((today.getTime() - monthStart.getTime()) / msDay) + 1;
-  const daysYear = Math.floor((today.getTime() - yearStart.getTime()) / msDay) + 1;
-
-  const avgPerDayMonth = daysMonth > 0 ? Math.round(totalMonth / daysMonth) : 0;
-  const avgPerDayYear = daysYear > 0 ? Math.round(totalYear / daysYear) : 0;
-
-  // среднее/день (всего): от первого дня до сегодня
-  let avgPerDayAll = 0;
-  if (byDay.size > 0 && totalAll > 0) {
-    const daysAsc = Array.from(byDay.keys()).sort();
-    const [fy, fm, fd] = daysAsc[0].split('-').map(Number);
-    const first = new Date(fy, (fm || 1) - 1, fd || 1);
-    const daysAll = Math.floor((today.getTime() - first.getTime()) / msDay) + 1;
-    avgPerDayAll = daysAll > 0 ? Math.round(totalAll / daysAll) : 0;
-  }
-
-  // серия дней подряд
-  let streak = 0;
-  const daysDesc = Array.from(byDay.keys()).sort().reverse();
-  if (daysDesc.length > 0) {
-    const [ly, lm, ld] = daysDesc[0].split('-').map(Number);
-    let cursor = new Date(ly, (lm || 1) - 1, ld || 1);
-
-    while (true) {
-      const key = normalizeDate(cursor);
-      if (byDay.has(key)) {
-        streak += 1;
-        cursor = new Date(cursor.getTime() - msDay);
-      } else break;
-    }
-  }
-
-  return {
-    totalToday,
-    totalAll,
-    totalWeek,
-    totalMonth,
-    totalYear,
-    avgPerDayMonth,
-    avgPerDayYear,
-    avgPerDayAll,
-    streak,
-  };
+  return computePeriodStats(workouts, localTodayKey());
 }
 
 function calcStatsByExercise(workouts: Workout[]): StatsByExercise {
@@ -765,18 +676,18 @@ export default function FriendsPage() {
   }, [selectedFriend, friendWorkouts]);
 
   const selectedFriendDayMap = useMemo(() => {
-    const byDay = new Map<string, { items: Workout[]; totalReps: number; byExercise: Map<ExerciseType, number> }>();
+    const byDay = new Map<string, { items: Workout[]; totalPoints: number; byExercise: Map<ExerciseType, number> }>();
     selectedFriendWorkouts.forEach((w) => {
-      const dayKey = normalizeDate(new Date(w.time || w.date));
-      const row = byDay.get(dayKey) ?? { items: [], totalReps: 0, byExercise: new Map<ExerciseType, number>() };
+      const dayKey = workoutDayKey(w);
+      const row = byDay.get(dayKey) ?? { items: [], totalPoints: 0, byExercise: new Map<ExerciseType, number>() };
       const type = toExerciseType(w.exerciseType);
       row.items.push(w);
-      row.totalReps += w.reps || 0;
       row.byExercise.set(type, (row.byExercise.get(type) ?? 0) + (w.reps || 0));
       byDay.set(dayKey, row);
     });
 
     for (const row of byDay.values()) {
+      row.totalPoints = dayPointsTotal(row.items);
       row.items.sort((a, b) => new Date(b.time || b.date).getTime() - new Date(a.time || a.date).getTime());
     }
 
@@ -825,7 +736,7 @@ export default function FriendsPage() {
   const groupedFeedWorkouts = useMemo(
     () =>
       latestFeedWorkouts.reduce<Array<{ dayKey: string; items: FeedWorkoutItem[] }>>((acc, item) => {
-        const dayKey = normalizeDate(getWorkoutDate(item));
+        const dayKey = workoutDayKey(item);
         const last = acc[acc.length - 1];
         if (last && last.dayKey === dayKey) {
           last.items.push(item);
@@ -860,7 +771,7 @@ export default function FriendsPage() {
   );
 
   const hasPendingRequests = incomingRequests.length > 0 || outgoingRequests.length > 0;
-  const todayKey = normalizeDate(new Date());
+  const todayKey = localTodayKey();
   const friendWeekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
   const selectedFriendDayData = friendDetailDay ? selectedFriendDayMap.get(friendDetailDay) ?? null : null;
   const accentColor = exerciseNumberColor('pushups');
@@ -1074,7 +985,14 @@ export default function FriendsPage() {
                       </td>
                       <td style={tdNumCompact}>
                         <div style={metricStack}>
-                          {rowTypes.map((type) => <span key={`${uname}-streak-${type}`} style={metricValue}>{sBy[type].streak}</span>)}
+                          {rowTypes.map((type) => (
+                            <span key={`${uname}-streak-${type}`} style={metricValue}>
+                              {sBy[type].streak}
+                              {sBy[type].streakFreezeUsed ? (
+                                <span title={streakFreezeMessages[locale].hint} aria-label={streakFreezeMessages[locale].hint}> {streakFreezeMessages[locale].badge}</span>
+                              ) : null}
+                            </span>
+                          ))}
                         </div>
                       </td>
 
@@ -1458,7 +1376,7 @@ export default function FriendsPage() {
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(friendDetailDay, localeTag)} · {tt('всего')}: {selectedFriendDayData.totalReps}
+                  {formatDateWithWeekday(friendDetailDay, localeTag)} · {tt('всего')}: {selectedFriendDayData.totalPoints.toLocaleString(localeTag)} {tt('баллов')}
                 </div>
 
                 {selectedFriendDayData.items.map((w) => {

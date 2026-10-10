@@ -140,6 +140,8 @@ export type ProgressAnalytics = {
   bestSetRecord: NormalizedWorkout | null;
   averageSetValue: number | null;
   streakDays: number;
+  /** This week's streak freeze (F4) is spent on the current streak. */
+  streakFreezeUsed: boolean;
   trainingDays: number;
   totalSets: number;
 };

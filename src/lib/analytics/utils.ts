@@ -1,3 +1,4 @@
+import { workoutDayKey } from '@/lib/day-stats';
 import { calculateExercisePoints } from '@/lib/exercise-points';
 import { createByExercise, toExerciseType } from '@/lib/exercises';
 import type {
@@ -47,7 +48,9 @@ export function normalizeWorkouts(workouts: WorkoutRecord[]): NormalizedWorkout[
     .map((workout) => {
       const exerciseType = toExerciseType(workout.exerciseType);
       const reps = Number(workout.reps) || 0;
-      const date = startOfDay(new Date(workout.date));
+      // Calendar day of the record = its stored `date` (B23), as a local midnight for the charts.
+      const [year, month, day] = workoutDayKey(workout).split('-').map(Number);
+      const date = new Date(year, month - 1, day);
       const performedAt = getWorkoutTimestamp(workout);
       return {
         id: workout.id,
@@ -59,7 +62,7 @@ export function normalizeWorkouts(workouts: WorkoutRecord[]): NormalizedWorkout[
         load: toLoadPoints(reps, exerciseType, workout.loadKg),
       };
     })
-    .filter((workout) => Number.isFinite(workout.reps) && workout.reps > 0 && !Number.isNaN(workout.performedAt.getTime()))
+    .filter((workout) => Number.isFinite(workout.reps) && workout.reps > 0 && !Number.isNaN(workout.performedAt.getTime()) && !Number.isNaN(workout.date.getTime()))
     .sort((left, right) => left.performedAt.getTime() - right.performedAt.getTime());
 }
 

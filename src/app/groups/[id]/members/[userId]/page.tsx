@@ -3,11 +3,12 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
 import { formatExerciseValue, formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { dayPointsTotal, workoutDayKey } from '@/lib/day-stats';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, isLoadedExercise, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
@@ -47,8 +48,16 @@ type GroupWorkout = {
 type DayAggregate = {
   items: GroupWorkout[];
   byExercise: Map<string, number>;
-  totalReps: number;
+  /** «Всего за день» в баллах (B27). */
+  totalPoints: number;
 };
+
+function newClientRequestId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  } catch {}
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 type ProgramOverview = {
   activePrograms: Array<{
@@ -351,6 +360,8 @@ export default function GroupMemberDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [savingWorkout, setSavingWorkout] = useState(false);
+  const savingWorkoutRef = useRef(false);
   const [exerciseFilter, setExerciseFilter] = useState<ExerciseFilter>(
     isExerciseFilterValue(searchExercise) ? searchExercise : 'all',
   );
@@ -488,16 +499,16 @@ export default function GroupMemberDetailPage() {
   const dayMap = useMemo(() => {
     const map = new Map<string, DayAggregate>();
     workouts.forEach((workout) => {
-      const key = normalizeDate(new Date(workout.time || workout.date));
-      const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalReps: 0 };
+      const key = workoutDayKey(workout);
+      const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalPoints: 0 };
       row.items.push(workout);
       const exerciseType = toExerciseType(workout.exerciseType);
       row.byExercise.set(exerciseType, (row.byExercise.get(exerciseType) ?? 0) + (workout.reps || 0));
-      row.totalReps += workout.reps || 0;
       map.set(key, row);
     });
 
     for (const row of map.values()) {
+      row.totalPoints = dayPointsTotal(row.items);
       row.items.sort((left, right) => new Date(right.time || right.date).getTime() - new Date(left.time || left.date).getTime());
     }
 
@@ -534,7 +545,7 @@ export default function GroupMemberDetailPage() {
 
     const groups = new Map<string, GroupWorkout[]>();
     filtered.forEach((workout) => {
-      const dayKey = normalizeDate(new Date(workout.time || workout.date));
+      const dayKey = workoutDayKey(workout);
       const bucket = groups.get(dayKey) ?? [];
       bucket.push(workout);
       groups.set(dayKey, bucket);
@@ -594,7 +605,7 @@ export default function GroupMemberDetailPage() {
 
   function startEditWorkout(workout: GroupWorkout) {
     setEditingWorkoutId(workout.id);
-    setWorkoutDate(normalizeDate(new Date(workout.time || workout.date)));
+    setWorkoutDate(workoutDayKey(workout));
     setWorkoutTime(normalizeTime(new Date(workout.time || workout.date)));
     setWorkoutExercise(workout.exerciseType);
     setWorkoutReps(String(workout.reps));
@@ -603,15 +614,18 @@ export default function GroupMemberDetailPage() {
 
   async function saveManagedWorkout(event: FormEvent) {
     event.preventDefault();
-    if (!canManageMember) return;
+    if (!canManageMember || savingWorkoutRef.current) return;
     setError(null);
     setInfo(null);
+    savingWorkoutRef.current = true;
+    setSavingWorkout(true);
     try {
       await fetchJsonSafe('/api/workouts', {
         method: editingWorkoutId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editingWorkoutId || undefined,
+          clientRequestId: editingWorkoutId ? undefined : newClientRequestId(),
           userId: memberId,
           groupId,
           reps: Number(workoutReps),
@@ -626,6 +640,9 @@ export default function GroupMemberDetailPage() {
       await load();
     } catch (e) {
       setError(getErrorMessage(e));
+    } finally {
+      savingWorkoutRef.current = false;
+      setSavingWorkout(false);
     }
   }
 
@@ -1059,7 +1076,7 @@ export default function GroupMemberDetailPage() {
             <div style={gridCompact}>
               <select value={workoutExercise} onChange={(event) => setWorkoutExercise(event.target.value)} style={input}>
                 {EXERCISE_ORDER.map((type) => (
-                  <option key={type} value={type}>{type}</option>
+                  <option key={type} value={type}>{messages.nav.exercise[type] ?? type}</option>
                 ))}
               </select>
               <input value={workoutReps} onChange={(event) => setWorkoutReps(event.target.value)} placeholder={tt('Повторы')} style={input} />
@@ -1074,7 +1091,7 @@ export default function GroupMemberDetailPage() {
               />
             ) : null}
             <div style={actionRow}>
-              <button type="submit" style={btnPrimary}>{editingWorkoutId ? tt('Сохранить') : tt('Добавить')}</button>
+              <button type="submit" style={savingWorkout ? { ...btnPrimary, opacity: 0.6, cursor: 'progress' } : btnPrimary} disabled={savingWorkout} aria-busy={savingWorkout}>{editingWorkoutId ? tt('Сохранить') : tt('Добавить')}</button>
               {editingWorkoutId ? <button type="button" style={btnSecondary} onClick={resetWorkoutForm}>{tt('Отмена')}</button> : null}
             </div>
           </form>
@@ -1164,7 +1181,7 @@ export default function GroupMemberDetailPage() {
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(detailDay, localeTag)} · {tt('всего')}: {selectedDayData.totalReps}
+                  {formatDateWithWeekday(detailDay, localeTag)} · {tt('всего')}: {selectedDayData.totalPoints.toLocaleString(localeTag)} {tt('баллов')}
                 </div>
 
                 {selectedDayData.items.map((workout) => {

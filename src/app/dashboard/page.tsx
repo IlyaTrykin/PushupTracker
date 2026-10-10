@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
@@ -12,6 +12,7 @@ import { useExerciseLoad } from '@/lib/use-exercise-load';
 import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
 import SideLoadEntry, { WeightPicker } from './SideLoadEntry';
 import { useStopwatch } from '@/lib/use-stopwatch';
+import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
 import styles from './dashboard.module.css';
 
 type Workout = {
@@ -35,20 +36,11 @@ type WorkoutReward = {
 type DayAggregate = {
   items: Workout[];
   byExercise: Map<string, number>;
-  totalReps: number;
+  /** «Всего за день» в баллах (B27). */
+  totalPoints: number;
 };
 
-type Stats = {
-  totalAll: number;
-  totalToday: number;
-  totalWeek: number;
-  totalMonth: number;
-  totalYear: number;
-  avgPerDayMonth: number;
-  avgPerDayYear: number;
-  avgPerDayAll: number;
-  streak: number;
-};
+type Stats = PeriodStats;
 
 type StatBreakdown = Record<ExerciseType, number | string>;
 
@@ -202,80 +194,11 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
   return data;
 }
 
-function computeStats(workouts: Workout[]): Stats {
-  const byDay = new Map<string, number>();
-  workouts.forEach((w) => {
-    const key = normalizeDate(new Date(w.time || w.date));
-    byDay.set(key, (byDay.get(key) ?? 0) + (w.reps || 0));
-  });
-
-  const msInDay = 1000 * 60 * 60 * 24;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  const dow = today.getDay();
-  const offsetToMonday = (dow + 6) % 7;
-  const weekStart = new Date(today);
-  weekStart.setDate(today.getDate() - offsetToMonday);
-
-  const monthStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
-  const yearStart = new Date(today.getFullYear(), 0, 1);
-  const daysMonth = Math.floor((today.getTime() - monthStartDate.getTime()) / msInDay) + 1;
-  const daysYear = Math.floor((today.getTime() - yearStart.getTime()) / msInDay) + 1;
-
-  let totalAll = 0;
-  let totalWeek = 0;
-  let totalMonth = 0;
-  let totalYear = 0;
-
-  for (const [dayKey, repsSum] of byDay.entries()) {
-    totalAll += repsSum;
-    const [y, m, d] = dayKey.split('-').map(Number);
-    const dayDate = new Date(y, (m || 1) - 1, d || 1);
-
-    if (dayDate >= weekStart && dayDate <= today) totalWeek += repsSum;
-    if (dayDate >= monthStartDate && dayDate <= today) totalMonth += repsSum;
-    if (dayDate >= yearStart && dayDate <= today) totalYear += repsSum;
-  }
-
-  let avgPerDayAll = 0;
-  if (byDay.size > 0) {
-    const firstKey = Array.from(byDay.keys()).sort()[0];
-    const [fy, fm, fd] = firstKey.split('-').map(Number);
-    const firstDate = new Date(fy, (fm || 1) - 1, fd || 1);
-    const daysAll = Math.floor((today.getTime() - firstDate.getTime()) / msInDay) + 1;
-    avgPerDayAll = daysAll > 0 ? Math.round(totalAll / daysAll) : 0;
-  }
-
-  let streak = 0;
-  const allDays = Array.from(byDay.keys()).sort().reverse();
-  if (allDays.length > 0) {
-    const [ly, lm, ld] = allDays[0].split('-').map(Number);
-    let cursor = new Date(ly, (lm || 1) - 1, ld || 1);
-    while (true) {
-      const key = normalizeDate(cursor);
-      if (byDay.has(key)) {
-        streak += 1;
-        cursor = new Date(cursor.getTime() - msInDay);
-      } else {
-        break;
-      }
-    }
-  }
-
-  const totalToday = byDay.get(normalizeDate(today)) ?? 0;
-
-  return {
-    totalAll,
-    totalToday,
-    totalWeek,
-    totalMonth,
-    totalYear,
-    avgPerDayMonth: daysMonth > 0 ? Math.round(totalMonth / daysMonth) : 0,
-    avgPerDayYear: daysYear > 0 ? Math.round(totalYear / daysYear) : 0,
-    avgPerDayAll,
-    streak,
-  };
+function newClientRequestId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  } catch {}
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 // Пустые значения в статистике: ноль и прочерки средних без данных.
@@ -382,6 +305,11 @@ export default function DashboardPage() {
   );
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // B04: «Добавить» заблокирована, пока запрос в пути; повтор того же ввода после обрыва сети
+  // уходит с тем же clientRequestId, и сервер вернёт уже созданную запись.
+  const [adding, setAdding] = useState(false);
+  const addingRef = useRef(false);
+  const pendingRequestRef = useRef<{ id: string; signature: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
@@ -473,11 +401,17 @@ export default function DashboardPage() {
     return () => window.clearTimeout(t);
   }, [toastMessage]);
 
-  const stats = useMemo(() => computeStats(workouts), [workouts]);
+  const todayKey = localTodayKey();
+  const stats = useMemo(() => computePeriodStats(workouts, todayKey), [workouts, todayKey]);
   const statsByExercise = useMemo<Record<ExerciseType, Stats>>(
-    () => createByExercise((type) => computeStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === type))),
-    [workouts],
+    () => createByExercise((type) => computePeriodStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === type), todayKey)),
+    [workouts, todayKey],
   );
+  const freezeText = streakFreezeMessages[locale];
+  const streakBreakdown: StatBreakdown = createByExercise((type) => {
+    const s = statsByExercise[type];
+    return s.streakFreezeUsed ? `${s.streak} ${freezeText.badge}` : s.streak;
+  });
 
   const breakdownFromStats = (pick: (s: Stats) => number): StatBreakdown =>
     createByExercise((type) => pick(statsByExercise[type]));
@@ -486,16 +420,16 @@ export default function DashboardPage() {
   const dayMap = useMemo(() => {
     const map = new Map<string, DayAggregate>();
     workouts.forEach((w) => {
-      const key = normalizeDate(new Date(w.time || w.date));
-      const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalReps: 0 };
+      const key = workoutDayKey(w);
+      const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalPoints: 0 };
       row.items.push(w);
       const t = normalizeExerciseType(w.exerciseType);
       row.byExercise.set(t, (row.byExercise.get(t) ?? 0) + (w.reps || 0));
-      row.totalReps += w.reps || 0;
       map.set(key, row);
     });
 
     for (const row of map.values()) {
+      row.totalPoints = dayPointsTotal(row.items);
       row.items.sort((a, b) => new Date(b.time || b.date).getTime() - new Date(a.time || a.date).getTime());
     }
 
@@ -558,11 +492,25 @@ export default function DashboardPage() {
     extra: { loadKg?: number | null; repsLeft?: number; repsRight?: number } = {},
   ) => {
     const timeToSend = timeTouched ? time : normalizeTime(new Date());
-    const data = await fetchJsonSafe('/api/workouts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reps: value, ...extra, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType }),
-    });
+    const payload = { reps: value, ...extra, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType };
+    const signature = JSON.stringify({ ...payload, time: undefined, timeToSend: timeTouched ? time : null });
+    if (!pendingRequestRef.current || pendingRequestRef.current.signature !== signature) {
+      pendingRequestRef.current = { id: newClientRequestId(), signature };
+    }
+    let data: unknown;
+    try {
+      data = await fetchJsonSafe('/api/workouts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, clientRequestId: pendingRequestRef.current.id }),
+      });
+    } catch (error: unknown) {
+      // Ответ сервера (4xx/5xx) — запись не создана, следующий ввод получит новый id.
+      // Обрыв сети (TypeError) — id остаётся: повтор не создаст дубль, если запись всё же дошла.
+      if (!(error instanceof TypeError)) pendingRequestRef.current = null;
+      throw error;
+    }
+    pendingRequestRef.current = null;
     setInfo(tt('Добавлено'));
     setToastMessage(readWorkoutReward(data)?.message ?? null);
     setTime(normalizeTime(new Date()));
@@ -573,8 +521,24 @@ export default function DashboardPage() {
     await loadWorkouts();
   }, [date, loadWorkouts, time, timeTouched, tt]);
 
+  // Один запрос за раз: повторное нажатие, пока запрос в пути, игнорируется.
+  const runAdd = async (task: () => Promise<void>) => {
+    if (addingRef.current) return;
+    addingRef.current = true;
+    setAdding(true);
+    try {
+      await task();
+    } catch (error: unknown) {
+      setError(getErrorMessage(error));
+    } finally {
+      addingRef.current = false;
+      setAdding(false);
+    }
+  };
+
   const handleAdd = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (addingRef.current) return;
     setError(null);
     setInfo(null);
     if (activeExercise.unilateral) {
@@ -583,11 +547,7 @@ export default function DashboardPage() {
         setError(tt('Укажите повторы хотя бы для одной руки'));
         return;
       }
-      try {
-        await submitWorkout(total, exerciseType, { loadKg: exerciseLoad.loadKg, repsLeft, repsRight });
-      } catch (error: unknown) {
-        setError(getErrorMessage(error));
-      }
+      await runAdd(() => submitWorkout(total, exerciseType, { loadKg: exerciseLoad.loadKg, repsLeft, repsRight }));
       return;
     }
     if (!Number.isFinite(reps) || reps <= 0) {
@@ -595,11 +555,7 @@ export default function DashboardPage() {
       return;
     }
 
-    try {
-      await submitWorkout(reps, exerciseType, activeExercise.load ? { loadKg: exerciseLoad.loadKg } : {});
-    } catch (error: unknown) {
-      setError(getErrorMessage(error));
-    }
+    await runAdd(() => submitWorkout(reps, exerciseType, activeExercise.load ? { loadKg: exerciseLoad.loadKg } : {}));
   };
 
   const handleTimerStart = () => {
@@ -609,15 +565,12 @@ export default function DashboardPage() {
   };
 
   const handleTimerStop = async () => {
+    if (addingRef.current) return;
     const actual = timedStopwatch.finish();
     if (actual <= 0) return;
     setError(null);
     setInfo(null);
-    try {
-      await submitWorkout(actual, exerciseType);
-    } catch (error: unknown) {
-      setError(getErrorMessage(error));
-    }
+    await runAdd(() => submitWorkout(actual, exerciseType));
   };
 
   function formatClock(totalSeconds: number) {
@@ -629,7 +582,7 @@ export default function DashboardPage() {
 
   const startEdit = (w: Workout) => {
     setEditingId(w.id);
-    setEditDate(normalizeDate(new Date(w.time || w.date)));
+    setEditDate(workoutDayKey(w));
     setEditTime(normalizeTime(new Date(w.time || w.date)));
     setEditReps(w.reps || 0);
     setEditRepsLeft(w.repsLeft ?? 0);
@@ -642,10 +595,29 @@ export default function DashboardPage() {
     setEditingId(null);
   };
 
+  // B13: смена упражнения — поля нагрузки приводятся к новому упражнению.
+  const changeEditExerciseType = (next: ExerciseType) => {
+    const prev = getExercise(editExerciseType);
+    const target = getExercise(next);
+    if (prev.unilateral && !target.unilateral) {
+      setEditReps(editRepsLeft + editRepsRight || editReps);
+    } else if (!prev.unilateral && target.unilateral && editRepsLeft + editRepsRight === 0) {
+      setEditRepsLeft(editReps);
+      setEditRepsRight(0);
+    }
+    if (!target.load) setEditLoadKg(null);
+    else if (editLoadKg == null) setEditLoadKg(target.load.referenceKg);
+    setEditExerciseType(next);
+  };
+
   const saveEdit = async () => {
     if (!editingId) return;
     setError(null);
     setInfo(null);
+    if (getExercise(editExerciseType).unilateral && editRepsLeft + editRepsRight <= 0) {
+      setError(tt('Укажите повторы хотя бы для одной руки'));
+      return;
+    }
 
     try {
       await fetchJsonSafe('/api/workouts', {
@@ -656,7 +628,7 @@ export default function DashboardPage() {
           ...(getExercise(editExerciseType).unilateral
             ? { repsLeft: editRepsLeft, repsRight: editRepsRight }
             : { reps: editReps }),
-          ...(editLoadKg != null ? { loadKg: editLoadKg } : {}),
+          ...(editLoadKg != null && getExercise(editExerciseType).load ? { loadKg: editLoadKg } : {}),
           date: editDate,
           time: toIsoTime(editDate, editTime),
           exerciseType: editExerciseType,
@@ -690,7 +662,6 @@ export default function DashboardPage() {
 
   const selectedDayData = detailDay ? dayMap.get(detailDay) ?? null : null;
   const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt);
-  const todayKey = normalizeDate(new Date());
   const detailsVisible = detailsOpen && Boolean(detailDay && selectedDayData);
 
   const closeDetails = useCallback(() => {
@@ -857,7 +828,7 @@ export default function DashboardPage() {
                   onRepsLeftChange={setRepsLeft}
                   onRepsRightChange={setRepsRight}
                 />
-                <button type="button" onClick={() => void handleAdd()} style={addButton}>
+                <button type="button" onClick={() => void handleAdd()} style={adding ? addButtonBusy : addButton} disabled={adding} aria-busy={adding}>
                   {tt('Добавить')}
                 </button>
               </>
@@ -913,12 +884,12 @@ export default function DashboardPage() {
                     <button type="button" onClick={handleTimerStart} style={timerStartButton}>
                       ▶ {tt('Старт')}
                     </button>
-                    <button type="button" onClick={() => void handleAdd()} style={addButton}>
+                    <button type="button" onClick={() => void handleAdd()} style={adding ? addButtonBusy : addButton} disabled={adding} aria-busy={adding}>
                       {tt('Добавить')}
                     </button>
                   </div>
                 ) : (
-                  <button type="button" onClick={() => void handleAdd()} style={addButton}>
+                  <button type="button" onClick={() => void handleAdd()} style={adding ? addButtonBusy : addButton} disabled={adding} aria-busy={adding}>
                     {tt('Добавить')}
                   </button>
                 )}
@@ -931,7 +902,7 @@ export default function DashboardPage() {
                     onClick={timedStopwatch.running ? timedStopwatch.pause : timedStopwatch.resume}
                     style={plus5Button}
                   >
-                    {timedStopwatch.running ? tt('Пауза') : tt('Продолжить')}
+                    {timedStopwatch.running ? messages.programSession.rest.pause : messages.programSession.rest.resume}
                   </button>
                   <button
                     type="button"
@@ -939,6 +910,7 @@ export default function DashboardPage() {
                       void handleTimerStop();
                     }}
                     style={plus10Button}
+                    disabled={adding}
                   >
                     {tt('Стоп')}
                   </button>
@@ -968,7 +940,13 @@ export default function DashboardPage() {
           </div>
           <div className={styles.heroStat}>
             <div className={styles.heroStatLabel}>{tt('Серия дней подряд')}</div>
-            <div className={styles.heroStatValue}>{stats.streak}</div>
+            <div className={styles.heroStatValue}>
+              {stats.streak}
+              {stats.streakFreezeUsed ? (
+                <span title={freezeText.hint} aria-label={freezeText.hint} style={freezeBadge}> {freezeText.badge}</span>
+              ) : null}
+            </div>
+            {stats.streakFreezeUsed ? <div style={freezeCaption}>{freezeText.short}</div> : null}
           </div>
         </div>
       </section>
@@ -990,7 +968,7 @@ export default function DashboardPage() {
             <Stat label={tt('Среднее/день (месяц)')} value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} />
             <Stat label={tt('Среднее/день (год)')} value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} />
             <Stat label={tt('Среднее/день (всего)')} value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} />
-            <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={breakdownFromStats((s) => s.streak)} />
+            <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={streakBreakdown} />
           </section>
         ) : (
           <div className={styles.sectionLoading}>{messages.common.loading}</div>
@@ -1124,7 +1102,7 @@ export default function DashboardPage() {
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
                 <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(detailDay, localeTag)} · {tt('всего')}: {selectedDayData.totalReps}
+                  {formatDateWithWeekday(detailDay, localeTag)} · {tt('всего')}: {selectedDayData.totalPoints.toLocaleString(localeTag)} {tt('баллов')}
                 </div>
 
                 {selectedDayData.items.map((w) => {
@@ -1138,7 +1116,7 @@ export default function DashboardPage() {
                               <label>{tt('Упражнение')}</label>
                               <select
                                 value={editExerciseType}
-                                onChange={(e) => setEditExerciseType(e.target.value as ExerciseType)}
+                                onChange={(e) => changeEditExerciseType(e.target.value as ExerciseType)}
                                 style={editInput}
                               >
                                 {EXERCISE_ORDER.map((type) => (
@@ -1494,6 +1472,24 @@ const addButton: React.CSSProperties = {
   fontSize: 20,
   cursor: 'pointer',
   boxShadow: '0 20px 36px rgba(234, 88, 12, 0.24)',
+};
+
+const addButtonBusy: React.CSSProperties = {
+  ...addButton,
+  opacity: 0.6,
+  cursor: 'progress',
+};
+
+const freezeBadge: React.CSSProperties = {
+  fontSize: '0.8em',
+  cursor: 'help',
+};
+
+const freezeCaption: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#0369a1',
+  marginTop: 2,
 };
 
 const timerActionsGrid: React.CSSProperties = {

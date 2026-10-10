@@ -9,6 +9,7 @@ import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selec
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
 import { toLoadPoints } from '@/lib/analytics/utils';
 import { formatExerciseValue, formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { computePeriodStats, localTodayKey, streakFreezeMessages, workoutDayKey } from '@/lib/day-stats';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { t } from '@/i18n/translate';
@@ -77,6 +78,7 @@ type WorkoutStats = {
   totalMonth: number;
   totalAll: number;
   streak: number;
+  streakFreezeUsed: boolean;
 };
 
 type WorkoutStatsByExercise = Record<ExerciseType, WorkoutStats>;
@@ -149,14 +151,6 @@ function plusDaysString(days: number) {
   const now = new Date();
   now.setDate(now.getDate() + days);
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
-function normalizeDate(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function getWorkoutDate(value: Pick<GroupWorkout, 'time' | 'date'>) {
-  return new Date(value.time || value.date);
 }
 
 function toExerciseType(type: string | undefined): ExerciseType {
@@ -296,51 +290,10 @@ function isPeriodKeyValue(value: string | null): value is PeriodKey {
   return value === '7d' || value === '30d' || value === '90d' || value === 'all';
 }
 
+// Дни — по календарной дате записи, серия — по общему правилу с заморозкой (B12, B23).
 function computeStats(workouts: GroupWorkout[]): WorkoutStats {
-  const byDay = new Map<string, number>();
-  workouts.forEach((workout) => {
-    const key = normalizeDate(new Date(workout.time || workout.date));
-    byDay.set(key, (byDay.get(key) ?? 0) + (workout.reps || 0));
-  });
-
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const todayKey = normalizeDate(todayStart);
-  const mondayOffset = (todayStart.getDay() + 6) % 7;
-  const weekStart = new Date(todayStart);
-  weekStart.setDate(todayStart.getDate() - mondayOffset);
-  const monthStart = new Date(todayStart.getFullYear(), todayStart.getMonth(), 1);
-
-  let totalWeek = 0;
-  let totalMonth = 0;
-  let totalAll = 0;
-
-  for (const [dayKey, reps] of byDay.entries()) {
-    totalAll += reps;
-    const [y, m, d] = dayKey.split('-').map(Number);
-    const dayDate = new Date(y, (m || 1) - 1, d || 1);
-    if (dayDate >= weekStart && dayDate <= todayStart) totalWeek += reps;
-    if (dayDate >= monthStart && dayDate <= todayStart) totalMonth += reps;
-  }
-
-  let streak = 0;
-  if (byDay.size > 0) {
-    const latest = Array.from(byDay.keys()).sort().reverse()[0];
-    const [y, m, d] = latest.split('-').map(Number);
-    const cursor = new Date(y, (m || 1) - 1, d || 1);
-    while (byDay.has(normalizeDate(cursor))) {
-      streak += 1;
-      cursor.setDate(cursor.getDate() - 1);
-    }
-  }
-
-  return {
-    totalToday: byDay.get(todayKey) ?? 0,
-    totalWeek,
-    totalMonth,
-    totalAll,
-    streak,
-  };
+  const { totalToday, totalWeek, totalMonth, totalAll, streak, streakFreezeUsed } = computePeriodStats(workouts, localTodayKey());
+  return { totalToday, totalWeek, totalMonth, totalAll, streak, streakFreezeUsed };
 }
 
 function computeStatsByExercise(workouts: GroupWorkout[]): WorkoutStatsByExercise {
@@ -622,7 +575,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
   const groupedFeedItems = useMemo(() => {
     const groups = new Map<string, GroupFeedItem[]>();
     filteredFeedItems.forEach((item) => {
-      const dayKey = normalizeDate(getWorkoutDate(item));
+      const dayKey = workoutDayKey(item);
       const bucket = groups.get(dayKey) ?? [];
       bucket.push(item);
       groups.set(dayKey, bucket);
@@ -1204,7 +1157,14 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {rowTypes.map((type) => <span key={`${member.userId}-streak-${type}`} style={metricValue}>{statsByExercise[type].streak}</span>)}
+                        {rowTypes.map((type) => (
+                          <span key={`${member.userId}-streak-${type}`} style={metricValue}>
+                            {statsByExercise[type].streak}
+                            {statsByExercise[type].streakFreezeUsed ? (
+                              <span title={streakFreezeMessages[locale].hint} aria-label={streakFreezeMessages[locale].hint}> {streakFreezeMessages[locale].badge}</span>
+                            ) : null}
+                          </span>
+                        ))}
                       </div>
                     </td>
                     <td style={memberTd}>

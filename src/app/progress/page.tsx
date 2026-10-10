@@ -32,6 +32,7 @@ import { fillTemplate, toExerciseType } from '@/lib/analytics/utils';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
+import { streakFreezeMessages } from '@/lib/day-stats';
 import { EXERCISE_ORDER, isTimedExercise } from '@/lib/exercises';
 
 const pageStyle: CSSProperties = {
@@ -292,10 +293,12 @@ function MetricBadge({
   label,
   value,
   accent,
+  hint,
 }: {
   label: string;
   value: string;
   accent: string;
+  hint?: string;
 }) {
   return (
     <div
@@ -308,7 +311,8 @@ function MetricBadge({
       }}
     >
       <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>{label}</div>
-      <div style={{ fontSize: 17, color: '#0f172a', fontWeight: 900, marginTop: 2 }}>{value}</div>
+      <div style={{ fontSize: 17, color: '#0f172a', fontWeight: 900, marginTop: 2 }} title={hint}>{value}</div>
+      {hint ? <div style={{ fontSize: 11, color: '#0369a1', fontWeight: 600, marginTop: 2 }}>{hint}</div> : null}
     </div>
   );
 }
@@ -1077,7 +1081,12 @@ export default function ProgressPage() {
 
         <div style={{ position: 'relative', zIndex: 1, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
           <MetricBadge label={progress.header.bestSet} value={formatMetricValue(analytics.kpis.find((card) => card.id === 'bestSet')?.metric ?? { value: null, kind: 'count' }, localeTag, deferredExercise)} accent={accent} />
-          <MetricBadge label={progress.header.activeStreak} value={`${analytics.streakDays.toLocaleString(localeTag)} ${progress.header.daysShort}`} accent={accent} />
+          <MetricBadge
+            label={progress.header.activeStreak}
+            value={`${analytics.streakDays.toLocaleString(localeTag)} ${progress.header.daysShort}${analytics.streakFreezeUsed ? ` ${streakFreezeMessages[locale].badge}` : ''}`}
+            hint={analytics.streakFreezeUsed ? streakFreezeMessages[locale].short : undefined}
+            accent={accent}
+          />
           <MetricBadge label={progress.header.recordNote} value={bestSetNote} accent={accent} />
         </div>
       </section>

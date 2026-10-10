@@ -95,3 +95,21 @@ test('does not invent percentage growth when previous period has no data', () =>
   assert.equal(progress?.metric.value, null);
   assert.equal(progress?.comparison?.available, false);
 });
+
+test('streak uses the shared rule: alive through yesterday, one frozen miss a week (B12, F4)', () => {
+  const analytics = buildProgressAnalytics({
+    workouts: [
+      workout({ id: 'a', date: '2026-03-16', time: '09:00', reps: 10, exerciseType: 'pushups' }),
+      // Tue 17 missed — frozen.
+      workout({ id: 'b', date: '2026-03-18', time: '09:00', reps: 10, exerciseType: 'pushups' }),
+      workout({ id: 'c', date: '2026-03-19', time: '09:00', reps: 10, exerciseType: 'pushups' }),
+    ],
+    exercise: 'all',
+    period: '7d',
+    // Fri 20, nothing yet today.
+    today: new Date(2026, 2, 20, 12, 0, 0),
+  });
+
+  assert.equal(analytics.streakDays, 3);
+  assert.equal(analytics.streakFreezeUsed, true);
+});

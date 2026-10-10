@@ -1,26 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireUser, AuthError } from '@/lib/auth';
-import { sendWebPushToUsers } from '@/lib/web-push';
-import { formatExerciseValue } from '@/lib/exercise-metrics';
-import { isExerciseType } from '@/lib/exercises';
-import { parseWorkoutLoadFields } from '@/lib/workout-input';
-import { getWorkoutPoints, matchWorkoutReward } from '@/lib/workout-rewards';
+import { requireUser, requestLocale, AuthError } from '@/lib/auth';
+import { dayKeyInZone, dayKeyToDbDate, dbDateToDayKey, localHHMM, normalizeTimeZone, zonedTimeToInstant } from '@/lib/calendar-day';
+import { tooManyRequests } from '@/lib/rate-limit';
+import { WORKOUT_SELECT, WorkoutCreateError, createWorkoutForUser } from '@/lib/workout-create';
+import { parseWorkoutDay, parseWorkoutExerciseType, parseWorkoutLoadFields, parseWorkoutTime } from '@/lib/workout-input';
 import { GroupError, recordGroupAuditLog, requireManagedGroupMemberAccess } from '@/lib/groups';
 
 export const dynamic = 'force-dynamic';
-
-const WORKOUT_SELECT = {
-  id: true,
-  reps: true,
-  loadKg: true,
-  repsLeft: true,
-  repsRight: true,
-  date: true,
-  time: true,
-  exerciseType: true,
-  trainingSessionId: true,
-} as const;
 
 type WorkoutActor = {
   id: string;
@@ -30,50 +17,6 @@ type WorkoutActor = {
 
 function jsonError(message: string, status = 400, code?: string, details?: Record<string, unknown>) {
   return NextResponse.json(code ? { error: message, code, details } : { error: message, details }, { status });
-}
-
-function parseDate(dateStr: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-  if (!m) return null;
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  const dt = new Date(y, mo - 1, d);
-  if (Number.isNaN(dt.getTime())) return null;
-  return dt;
-}
-
-function parseTimeHHMM(timeStr: string): { hh: number; mm: number } | null {
-  const m = /^(\d{2}):(\d{2})$/.exec(timeStr);
-  if (!m) return null;
-  const hh = Number(m[1]);
-  const mm = Number(m[2]);
-  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
-  return { hh, mm };
-}
-
-function combineDateAndTime(date: Date, timeHHMM?: string | null): Date {
-  const base = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-  if (!timeHHMM) {
-    const now = new Date();
-    base.setHours(now.getHours(), now.getMinutes(), 0, 0);
-    return base;
-  }
-  const t = parseTimeHHMM(timeHHMM);
-  if (!t) return base;
-  base.setHours(t.hh, t.mm, 0, 0);
-  return base;
-}
-
-function combineDateWithExistingTime(date: Date, time: Date): Date {
-  const next = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-  next.setHours(
-    time.getHours(),
-    time.getMinutes(),
-    time.getSeconds(),
-    time.getMilliseconds(),
-  );
-  return next;
 }
 
 function getExerciseTypeFromQuery(request: Request): string | null {
@@ -100,10 +43,10 @@ function getGroupIdFromQuery(request: Request): string | null {
 async function getWorkoutOwnerUserOrThrow(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, username: true, deletedAt: true },
+    select: { id: true, username: true, deletedAt: true, timeZone: true },
   });
   if (!user || user.deletedAt) throw new GroupError('Пользователь не найден', 404, 'WORKOUT_USER_NOT_FOUND');
-  return { id: user.id, username: user.username };
+  return { id: user.id, username: user.username, timeZone: user.timeZone };
 }
 
 async function resolveWorkoutReadAccess(actor: WorkoutActor, request: Request) {
@@ -139,114 +82,6 @@ async function resolveWorkoutWriteAccess(actor: WorkoutActor, body: unknown) {
 
   const { group } = await requireManagedGroupMemberAccess(actor, groupId, targetUserId);
   return { targetUserId, groupId: group.id, managedByGroup: true };
-}
-
-async function getChallengeRankMap(challengeId: string): Promise<Map<string, number>> {
-  const challenge = await prisma.challenge.findUnique({
-    where: { id: challengeId },
-    select: {
-      id: true,
-      groupId: true,
-      exerciseType: true,
-      mode: true,
-      targetReps: true,
-      startDate: true,
-      endDate: true,
-      participants: {
-        where: { status: 'accepted' },
-        select: { userId: true, user: { select: { username: true } } },
-      },
-    },
-  });
-
-  if (!challenge) return new Map();
-  let acceptedIds = challenge.participants.map((p) => p.userId);
-  if (challenge.groupId) {
-    const activeMemberRows = await prisma.groupMembership.findMany({
-      where: {
-        groupId: challenge.groupId,
-        status: 'active',
-        group: { deletedAt: null },
-      },
-      select: { userId: true },
-    });
-    const activeMemberIds = new Set(activeMemberRows.map((row) => row.userId));
-    acceptedIds = acceptedIds.filter((userId) => activeMemberIds.has(userId));
-  }
-  if (!acceptedIds.length) return new Map();
-
-  const rows: Array<{ userId: string; username: string; total: number; tie?: number }> = [];
-
-  if (challenge.mode === 'daily_min') {
-    const threshold = Number(challenge.targetReps ?? 0);
-    const byDay = await prisma.workout.groupBy({
-      by: ['userId', 'date'],
-      where: {
-        userId: { in: acceptedIds },
-        exerciseType: challenge.exerciseType,
-        date: { gte: challenge.startDate, lte: challenge.endDate },
-      },
-      _sum: { reps: true },
-    });
-
-    const credited = new Map<string, number>();
-    byDay.forEach((row) => {
-      const reps = row._sum.reps ?? 0;
-      if (reps >= threshold) credited.set(row.userId, (credited.get(row.userId) ?? 0) + 1);
-    });
-
-    challenge.participants.forEach((p) => {
-      rows.push({ userId: p.userId, username: p.user.username, total: credited.get(p.userId) ?? 0 });
-    });
-  } else if (challenge.mode === 'sets_min') {
-    const threshold = Number(challenge.targetReps ?? 0);
-    const grouped = await prisma.workout.groupBy({
-      by: ['userId'],
-      where: {
-        userId: { in: acceptedIds },
-        exerciseType: challenge.exerciseType,
-        date: { gte: challenge.startDate, lte: challenge.endDate },
-        reps: { gte: threshold },
-      },
-      _count: { _all: true },
-      _sum: { reps: true },
-    });
-
-    const stats = new Map<string, { sets: number; reps: number }>();
-    grouped.forEach((g) => stats.set(g.userId, { sets: g._count._all ?? 0, reps: g._sum.reps ?? 0 }));
-
-    challenge.participants.forEach((p) => {
-      const v = stats.get(p.userId) ?? { sets: 0, reps: 0 };
-      rows.push({ userId: p.userId, username: p.user.username, total: v.sets, tie: v.reps });
-    });
-  } else {
-    const sums = await prisma.workout.groupBy({
-      by: ['userId'],
-      where: {
-        userId: { in: acceptedIds },
-        exerciseType: challenge.exerciseType,
-        date: { gte: challenge.startDate, lte: challenge.endDate },
-      },
-      _sum: { reps: true },
-    });
-
-    const map = new Map<string, number>();
-    sums.forEach((s) => map.set(s.userId, s._sum.reps ?? 0));
-
-    challenge.participants.forEach((p) => {
-      rows.push({ userId: p.userId, username: p.user.username, total: map.get(p.userId) ?? 0 });
-    });
-  }
-
-  rows.sort((a, b) => {
-    if (b.total !== a.total) return b.total - a.total;
-    if ((b.tie ?? 0) !== (a.tie ?? 0)) return (b.tie ?? 0) - (a.tie ?? 0);
-    return a.username.localeCompare(b.username, 'ru', { sensitivity: 'base' });
-  });
-
-  const rankMap = new Map<string, number>();
-  rows.forEach((r, i) => rankMap.set(r.userId, i + 1));
-  return rankMap;
 }
 
 export async function GET(request: Request) {
@@ -292,168 +127,42 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json().catch(() => null);
-    if (!body) return jsonError('Некорректный JSON');
+    if (!body || typeof body !== 'object') return jsonError('Некорректный JSON');
 
     const { targetUserId, groupId, managedByGroup } = await resolveWorkoutWriteAccess(actor, body);
     const owner = await getWorkoutOwnerUserOrThrow(targetUserId);
-    const dateStr = String(body.date || '');
-    const timeStr = body.time ? String(body.time) : null;
-    const exerciseType = String(body.exerciseType || '').trim();
+    const result = await createWorkoutForUser(owner, body, { source: 'web', actorId: actor.id });
+    const { workout } = result;
 
-    if (!exerciseType) return jsonError('exerciseType обязателен');
-    if (!isExerciseType(exerciseType)) return jsonError('Некорректный тип упражнения');
-    const parsedLoad = parseWorkoutLoadFields(exerciseType, body);
-    if (!parsedLoad.ok) return jsonError(parsedLoad.error);
-    const { reps, loadKg, repsLeft, repsRight } = parsedLoad.value;
-    const date = parseDate(dateStr);
-    if (!date) return jsonError('date должен быть в формате YYYY-MM-DD');
-
-    const dateMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const performedAt = (timeStr && timeStr.includes('T')) ? new Date(timeStr) : combineDateAndTime(date, timeStr);
-    const { earnedPoints, earnedPointsTenths } = getWorkoutPoints(reps, exerciseType, loadKg);
-
-    const activeChallenges = await prisma.challengeParticipant.findMany({
-      where: {
-        userId: owner.id,
-        status: 'accepted',
-        challenge: {
-          exerciseType,
-          startDate: { lte: dateMidnight },
-          endDate: { gte: dateMidnight },
-        },
-      },
-      select: {
-        challengeId: true,
-        challenge: { select: { id: true, name: true } },
-      },
-    });
-
-    const beforeRanks = new Map<string, Map<string, number>>();
-    for (const c of activeChallenges) {
-      beforeRanks.set(c.challengeId, await getChallengeRankMap(c.challengeId));
-    }
-
-    const created = await prisma.workout.create({
-      data: {
-        userId: owner.id,
-        reps,
-        loadKg,
-        repsLeft,
-        repsRight,
-        exerciseType,
-        date: dateMidnight,
-        time: performedAt,
-      },
-      select: WORKOUT_SELECT,
-    });
-
-    if (managedByGroup && groupId) {
+    if (managedByGroup && groupId && !result.replayed) {
       await recordGroupAuditLog({
         groupId,
         actorId: actor.id,
         targetUserId: owner.id,
         action: 'group_member_workout_created',
         entityType: 'workout',
-        entityId: created.id,
+        entityId: workout.id,
         metadata: {
-          reps,
-          loadKg,
-          date: dateMidnight.toISOString(),
-          time: performedAt.toISOString(),
-          exerciseType,
+          reps: workout.reps,
+          loadKg: workout.loadKg,
+          date: workout.date.toISOString(),
+          time: workout.time.toISOString(),
+          exerciseType: workout.exerciseType,
         },
       });
     }
 
-    const reward = matchWorkoutReward(
-      await prisma.workoutReward.findFirst({
-        where: { minPointsTenths: { lte: earnedPointsTenths } },
-        orderBy: [{ minPointsTenths: 'desc' }, { createdAt: 'asc' }],
-        select: { id: true, message: true, minPointsTenths: true, createdAt: true, updatedAt: true },
-      }),
-      earnedPoints,
-    );
-
-    try {
-      const notifications: Array<{ userId: string; type: string; title: string; body: string; link: string }> = [];
-      const pushMessages = new Map<string, { title: string; body: string; link: string; tag: string }>();
-      const workoutValue = loadKg != null
-        ? `${formatExerciseValue(reps, exerciseType, true)} × ${loadKg} кг`
-        : formatExerciseValue(reps, exerciseType, true);
-
-      const followers = await prisma.friendFollow.findMany({
-        where: { friendId: owner.id },
-        select: { followerId: true },
-      });
-
-      followers.forEach((f) => {
-        notifications.push({
-          userId: f.followerId,
-          type: 'friend_workout',
-          title: 'Новая тренировка друга',
-          body: `${owner.username}: ${workoutValue} (${exerciseType})`,
-          link: '/friends',
-        });
-        pushMessages.set(`friend_workout:${f.followerId}`, {
-          title: 'Новая тренировка друга',
-          body: `${owner.username}: ${workoutValue} (${exerciseType})`,
-          link: '/friends',
-          tag: `friend-workout-${owner.id}`,
-        });
-      });
-
-      for (const c of activeChallenges) {
-        const before = beforeRanks.get(c.challengeId) ?? new Map<string, number>();
-        const after = await getChallengeRankMap(c.challengeId);
-        const participants = new Set<string>([...before.keys(), ...after.keys()]);
-
-        participants.forEach((participantId) => {
-          const prev = before.get(participantId);
-          const next = after.get(participantId);
-          if (!prev || !next || prev === next) return;
-          if (participantId === owner.id) return;
-
-          const up = next < prev;
-          notifications.push({
-            userId: participantId,
-            type: 'challenge_rank_change',
-            title: 'Изменилось место в соревновании',
-            body: `${c.challenge.name}: ${prev} → ${next} (${up ? 'поднялись' : 'опустились'})`,
-            link: `/challenges/${c.challengeId}`,
-          });
-
-          pushMessages.set(`challenge_rank_change:${c.challengeId}:${participantId}`, {
-            title: 'Изменилось место в соревновании',
-            body: `${c.challenge.name}: ${prev} → ${next} (${up ? 'поднялись' : 'опустились'})`,
-            link: `/challenges/${c.challengeId}`,
-            tag: `challenge-rank-${c.challengeId}`,
-          });
-        });
-      }
-
-      if (notifications.length) {
-        await prisma.notification.createMany({ data: notifications });
-      }
-
-      if (pushMessages.size) {
-        for (const [k, msg] of pushMessages.entries()) {
-          const parts = k.split(':');
-          const userId = parts[parts.length - 1] || '';
-          const eventType = k.startsWith('challenge_rank_change:')
-            ? 'challenge_rank_change'
-            : k.startsWith('friend_workout:')
-              ? 'friend_workout'
-              : undefined;
-          if (!userId) continue;
-          await sendWebPushToUsers([userId], msg, eventType).catch((e) => console.error('WORKOUT PUSH SEND ERROR:', e));
-        }
-      }
-    } catch (e) {
-      console.error('WORKOUT NOTIFICATIONS ERROR:', e);
-    }
-
-    return NextResponse.json({ workout: created, reward });
+    return NextResponse.json({
+      workout,
+      reward: result.reward,
+      records: result.records,
+      achievements: result.achievements,
+    });
   } catch (e) {
+    if (e instanceof WorkoutCreateError) {
+      if (e.status === 429) return tooManyRequests(e.retryAfterSeconds, requestLocale(request));
+      return jsonError(e.message, e.status, e.code);
+    }
     if (e instanceof GroupError) return jsonError(e.message, e.status, e.code, e.details);
     console.error('WORKOUTS POST ERROR:', e);
     return jsonError('Внутренняя ошибка сервера', 500);
@@ -479,7 +188,10 @@ export async function PUT(request: Request) {
 
     const existing = await prisma.workout.findUnique({
       where: { id },
-      select: { id: true, userId: true, date: true, time: true, reps: true, loadKg: true, repsLeft: true, repsRight: true, exerciseType: true },
+      select: {
+        id: true, userId: true, date: true, time: true, reps: true, loadKg: true, repsLeft: true, repsRight: true, exerciseType: true,
+        user: { select: { timeZone: true } },
+      },
     });
     if (!existing) return jsonError('Запись не найдена', 404);
 
@@ -492,36 +204,41 @@ export async function PUT(request: Request) {
       groupId = access.group.id;
     }
 
-    const dateStr = body.date !== undefined ? String(body.date) : undefined;
-    const timeStr = body.time !== undefined ? String(body.time) : undefined;
+    const timeZone = normalizeTimeZone(existing.user.timeZone);
+    const now = new Date();
 
-    const data: { reps?: number; loadKg?: number | null; repsLeft?: number | null; repsRight?: number | null; date?: Date; time?: Date } = {};
-
-    const parsedLoad = parseWorkoutLoadFields(existing.exerciseType, body, existing);
-    if (!parsedLoad.ok) return jsonError(parsedLoad.error);
-    Object.assign(data, parsedLoad.value);
-
-    let newDate = existing.date;
-    if (dateStr !== undefined) {
-      const parsed = parseDate(dateStr);
-      if (!parsed) return jsonError('date должен быть в формате YYYY-MM-DD');
-      newDate = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-      data.date = newDate;
-      if (timeStr === undefined) {
-        data.time = combineDateWithExistingTime(newDate, existing.time);
-      }
+    // B13: the exercise may change; load fields are re-validated for the new one.
+    let exerciseType = existing.exerciseType;
+    if (body.exerciseType !== undefined && body.exerciseType !== existing.exerciseType) {
+      const parsedType = parseWorkoutExerciseType(body.exerciseType);
+      if (!parsedType.ok) return jsonError(parsedType.error, 400, 'WORKOUT_EXERCISE_INVALID');
+      exerciseType = parsedType.value;
     }
 
-    if (timeStr !== undefined) {
-      if (timeStr.includes('T')) {
-        const dt = new Date(timeStr);
-        if (Number.isNaN(dt.getTime())) return jsonError('Некорректное время');
-        data.time = dt;
-      } else {
-        const t = parseTimeHHMM(timeStr);
-        if (!t) return jsonError('time должен быть в формате HH:MM');
-        data.time = combineDateAndTime(newDate, timeStr);
-      }
+    const data: {
+      exerciseType?: string; reps?: number; loadKg?: number | null; repsLeft?: number | null; repsRight?: number | null; date?: Date; time?: Date;
+    } = {};
+
+    const parsedLoad = parseWorkoutLoadFields(exerciseType, body, existing);
+    if (!parsedLoad.ok) return jsonError(parsedLoad.error, 400, 'WORKOUT_VALUE_INVALID');
+    Object.assign(data, parsedLoad.value);
+    if (exerciseType !== existing.exerciseType) data.exerciseType = exerciseType;
+
+    let day = dbDateToDayKey(existing.date);
+    if (body.date !== undefined) {
+      const parsedDay = parseWorkoutDay(body.date, dayKeyInZone(now, timeZone));
+      if (!parsedDay.ok) return jsonError(parsedDay.error, 400, 'WORKOUT_DATE_INVALID');
+      day = parsedDay.value;
+      data.date = dayKeyToDbDate(day);
+    }
+
+    if (body.time !== undefined) {
+      const parsedTime = parseWorkoutTime(body.time, day, timeZone, now);
+      if (!parsedTime.ok) return jsonError(parsedTime.error, 400, 'WORKOUT_TIME_INVALID');
+      data.time = parsedTime.value;
+    } else if (data.date) {
+      // Moved to another day: keep the wall-clock time of the set.
+      data.time = zonedTimeToInstant(day, localHHMM(existing.time, timeZone), timeZone);
     }
 
     const updated = await prisma.workout.update({

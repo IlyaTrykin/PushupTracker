@@ -2,6 +2,7 @@ import { EXERCISE_COLORS, EXERCISE_ORDER } from '@/lib/analytics/constants';
 import { buildInsights } from '@/lib/analytics/insights';
 import type { Messages } from '@/i18n/messages';
 import { ruMessages } from '@/i18n/messages/ru';
+import { computeStreak } from '@/lib/streak';
 import type {
   AnalyticsValue,
   ComparisonValue,
@@ -43,7 +44,7 @@ function buildRange(
   const today = startOfDay(todayInput ?? new Date());
 
   if (period === 'all') {
-    const firstDay = workouts.length ? startOfDay(workouts[0].performedAt) : today;
+    const firstDay = workouts.reduce<Date>((min, workout) => (workout.date < min ? workout.date : min), today);
     const days = Math.max(1, Math.round((today.getTime() - firstDay.getTime()) / 86400000) + 1);
     return {
       key: period,
@@ -405,19 +406,10 @@ function buildKpis(params: {
   ];
 }
 
-function calculateStreak(workouts: NormalizedWorkout[], todayInput?: Date): number {
-  if (!workouts.length) return 0;
-  const today = startOfDay(todayInput ?? new Date());
-  const days = new Set(workouts.map((workout) => normalizeDayKey(workout.date)));
-  let cursor = today;
-  let streak = 0;
-
-  while (days.has(normalizeDayKey(cursor))) {
-    streak += 1;
-    cursor = addDays(cursor, -1);
-  }
-
-  return streak;
+function calculateStreak(workouts: NormalizedWorkout[], todayInput?: Date) {
+  // The single streak rule of the app (B12): alive if the last active day is today or yesterday, with F4 freeze.
+  const today = normalizeDayKey(startOfDay(todayInput ?? new Date()));
+  return computeStreak(workouts.map((workout) => normalizeDayKey(workout.date)), today);
 }
 
 export function buildProgressAnalytics(params: {
@@ -449,7 +441,8 @@ export function buildProgressAnalytics(params: {
     ? average(workoutsInRange.map((workout) => getMetricForWorkout(workout, params.exercise)))
     : null;
   const volumeSeries = buildTrendSeries(workoutsInRange, range, params.exercise);
-  const streakDays = calculateStreak(scopedAll, params.today);
+  const streak = calculateStreak(scopedAll, params.today);
+  const streakDays = streak.current;
   const workoutStructures = params.exercise === 'all' ? [] : buildWorkoutStructures(workoutsInRange);
 
   const analytics: ProgressAnalytics = {
@@ -483,6 +476,7 @@ export function buildProgressAnalytics(params: {
     bestSetRecord: bestSet.workout,
     averageSetValue,
     streakDays,
+    streakFreezeUsed: streak.freezeUsedThisWeek,
     trainingDays,
     totalSets,
   };
