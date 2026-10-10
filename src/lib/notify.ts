@@ -327,8 +327,10 @@ const prismaDeps: NotifyDeps = {
     const { sendNotificationEmail } = await import('@/lib/notification-email');
     await sendNotificationEmail(to, message, locale);
   },
-  // Telegram channel (T12): wire `sendTelegramMessage(chatId, telegramText(message, appUrl))` here.
-  sendTelegram: async () => {},
+  sendTelegram: async (chatId, message) => {
+    const { sendTelegramMessage } = await import('@/lib/telegram/api');
+    await sendTelegramMessage(chatId, telegramText(message, process.env.APP_URL || ''));
+  },
   defer: (task) => {
     void task().catch((error) => console.error('NOTIFY DELIVERY ERROR:', errorText(error)));
   },

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { PASSWORD_MIN_LENGTH } from '@/lib/account-validation';
 import NotificationSettings from './NotificationSettings';
+import TelegramConnect from '@/components/TelegramConnect';
 import { useI18n } from '@/i18n/provider';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { DAILY_GOAL_MAX_POINTS, DAILY_GOAL_MIN_POINTS, DEFAULT_REMINDER_TIME } from '@/lib/daily-goal';
@@ -561,6 +562,8 @@ export default function ProfilePage() {
           </div>
         </div>
       </section>
+
+      <TelegramConnect />
 
       <section style={panelCard}>
         <div style={sectionTitle}>{messages.profile.sections.notifications}</div>
