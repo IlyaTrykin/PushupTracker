@@ -34,9 +34,11 @@ test('a new window starts once the previous one is over', () => {
   assert.deepEqual(after.bucket, { windowStart: at(WINDOW), count: 1 });
 });
 
-test('clientIp takes the first X-Forwarded-For address', () => {
+test('clientIp takes the last X-Forwarded-For address, ignoring forged leading ones', () => {
   const req = (headers: Record<string, string>) => new Request('http://localhost/api/login', { headers });
-  assert.equal(clientIp(req({ 'x-forwarded-for': '203.0.113.7, 10.0.0.2' })), '203.0.113.7');
+  assert.equal(clientIp(req({ 'x-forwarded-for': '1.2.3.4, 203.0.113.7' })), '203.0.113.7');
+  const ips = new Set(Array.from({ length: 30 }, (_, i) => clientIp(req({ 'x-forwarded-for': `198.51.100.${i}, 203.0.113.7` }))));
+  assert.deepEqual([...ips], ['203.0.113.7']);
   assert.equal(clientIp(req({ 'x-forwarded-for': ' 2001:db8::1 ' })), '2001:db8::1');
   assert.equal(clientIp(req({ 'x-forwarded-for': '' })), 'unknown');
   assert.equal(clientIp(req({})), 'unknown');

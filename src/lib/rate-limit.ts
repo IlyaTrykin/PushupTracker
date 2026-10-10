@@ -70,10 +70,14 @@ export async function hitRateLimit(
   });
 }
 
-/** The client address as reported by the reverse proxy (first X-Forwarded-For entry). */
+/**
+ * The client address as reported by the reverse proxy: the LAST X-Forwarded-For entry,
+ * i.e. the one appended by the nearest proxy. Earlier entries are client-supplied and forgeable.
+ */
 export function clientIp(request: Request): string {
-  const first = (request.headers.get('x-forwarded-for') || '').split(',')[0]?.trim();
-  return first || 'unknown';
+  const parts = (request.headers.get('x-forwarded-for') || '').split(',');
+  const last = parts[parts.length - 1]?.trim();
+  return last || 'unknown';
 }
 
 /** 429 with `Retry-After` and a human message in minutes. */

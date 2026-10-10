@@ -1153,22 +1153,22 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {rowTypes.map((type) => <span key={`${member.userId}-today-${type}`} style={metricValue}>{statsByExercise[type].totalToday}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-today-${type}`} style={metricValue}>{formatExerciseValue(statsByExercise[type].totalToday, type, true, locale)}</span>)}
                       </div>
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {rowTypes.map((type) => <span key={`${member.userId}-all-${type}`} style={metricValue}>{statsByExercise[type].totalAll}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-all-${type}`} style={metricValue}>{formatExerciseValue(statsByExercise[type].totalAll, type, true, locale)}</span>)}
                       </div>
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {rowTypes.map((type) => <span key={`${member.userId}-month-${type}`} style={metricValue}>{statsByExercise[type].totalMonth}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-month-${type}`} style={metricValue}>{formatExerciseValue(statsByExercise[type].totalMonth, type, true, locale)}</span>)}
                       </div>
                     </td>
                     <td style={memberTdNum}>
                       <div style={metricStack}>
-                        {rowTypes.map((type) => <span key={`${member.userId}-week-${type}`} style={metricValue}>{statsByExercise[type].totalWeek}</span>)}
+                        {rowTypes.map((type) => <span key={`${member.userId}-week-${type}`} style={metricValue}>{formatExerciseValue(statsByExercise[type].totalWeek, type, true, locale)}</span>)}
                       </div>
                     </td>
                     <td style={memberTdNum}>
