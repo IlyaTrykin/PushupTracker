@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { requireUser, AuthError, invalidateSession } from '@/lib/auth';
+import { requireUser, AuthError, invalidateSession, requestLocale } from '@/lib/auth';
+import { normalizeTimeZone } from '@/lib/calendar-day';
+import { parseDailyGoalPoints, parseReminderTime } from '@/lib/daily-goal';
+import { dailyGoalMessages } from '@/i18n/messages/features/daily-goal';
 import { normalizeLocale } from '@/i18n/locale';
 import { setPreferredLocaleCookie } from '@/i18n/server';
 
@@ -14,8 +17,8 @@ function getErrorCode(error: unknown) {
   return '';
 }
 
-function jsonError(message: string, status = 400) {
-  return NextResponse.json({ error: message }, { status });
+function jsonError(message: string, status = 400, code?: string) {
+  return NextResponse.json(code ? { error: message, code } : { error: message }, { status });
 }
 
 function normalizeGender(v: unknown): string | null {
@@ -54,6 +57,9 @@ export async function GET(request: Request) {
         birthDate: true,
         weightKg: true,
         avatarPath: true,
+        timeZone: true,
+        dailyGoalPoints: true,
+        dailyReminderTime: true,
         deletedAt: true,
       },
     });
@@ -66,7 +72,8 @@ export async function GET(request: Request) {
   }
 }
 
-// Update profile fields: { username?, gender?, birthDate? }
+// Update profile fields: { username?, gender?, birthDate?, weightKg?, language?,
+//   timeZone? (IANA), dailyGoalPoints? (10–2000 | null), dailyReminderTime? ('HH:MM' | null) }
 export async function PATCH(request: Request) {
   try {
     const me = await requireUser(request);
@@ -83,6 +90,21 @@ export async function PATCH(request: Request) {
         ? null
         : undefined;
 
+    const goalText = dailyGoalMessages[requestLocale(request)].errors;
+    const nextTimeZone = body.timeZone !== undefined ? normalizeTimeZone(body.timeZone) : undefined;
+    let nextDailyGoal: number | null | undefined;
+    if (body.dailyGoalPoints !== undefined) {
+      const parsed = parseDailyGoalPoints(body.dailyGoalPoints);
+      if (!parsed.ok) return jsonError(goalText.goal, 400, 'DAILY_GOAL_INVALID');
+      nextDailyGoal = parsed.value;
+    }
+    let nextReminderTime: string | null | undefined;
+    if (body.dailyReminderTime !== undefined) {
+      const parsed = parseReminderTime(body.dailyReminderTime);
+      if (!parsed.ok) return jsonError(goalText.reminderTime, 400, 'REMINDER_TIME_INVALID');
+      nextReminderTime = parsed.value;
+    }
+
     const current = await prisma.user.findUnique({
       where: { id: me.id },
       select: {
@@ -93,6 +115,9 @@ export async function PATCH(request: Request) {
         birthDate: true,
         weightKg: true,
         avatarPath: true,
+        timeZone: true,
+        dailyGoalPoints: true,
+        dailyReminderTime: true,
         deletedAt: true,
       },
     });
@@ -148,6 +173,21 @@ export async function PATCH(request: Request) {
       }
     }
 
+    if (nextTimeZone !== undefined && nextTimeZone !== current.timeZone) {
+      data.timeZone = nextTimeZone;
+      changes.timeZone = { from: current.timeZone, to: nextTimeZone };
+    }
+
+    if (nextDailyGoal !== undefined && nextDailyGoal !== (current.dailyGoalPoints ?? null)) {
+      data.dailyGoalPoints = nextDailyGoal;
+      changes.dailyGoalPoints = { from: current.dailyGoalPoints ?? null, to: nextDailyGoal };
+    }
+
+    if (nextReminderTime !== undefined && nextReminderTime !== (current.dailyReminderTime ?? null)) {
+      data.dailyReminderTime = nextReminderTime;
+      changes.dailyReminderTime = { from: current.dailyReminderTime ?? null, to: nextReminderTime };
+    }
+
     if (Object.keys(data).length === 0) {
       return NextResponse.json({ ok: true });
     }
@@ -168,6 +208,9 @@ export async function PATCH(request: Request) {
           birthDate: true,
           weightKg: true,
           avatarPath: true,
+          timeZone: true,
+          dailyGoalPoints: true,
+          dailyReminderTime: true,
         },
       });
       await tx.userProfileHistory.create({

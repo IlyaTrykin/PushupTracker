@@ -6,6 +6,8 @@ import { PASSWORD_MIN_LENGTH } from '@/lib/account-validation';
 import NotificationSettings from './NotificationSettings';
 import { useI18n } from '@/i18n/provider';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
+import { DAILY_GOAL_MAX_POINTS, DAILY_GOAL_MIN_POINTS, DEFAULT_REMINDER_TIME } from '@/lib/daily-goal';
+import { dailyGoalMessages } from '@/i18n/messages/features/daily-goal';
 
 type Profile = {
   id: string;
@@ -19,7 +21,23 @@ type Profile = {
   birthDate: string | null;
   weightKg: number | null;
   avatarPath: string | null;
+  timeZone?: string;
+  dailyGoalPoints?: number | null;
+  dailyReminderTime?: string | null;
 };
+
+function supportedTimeZones(current: string): string[] {
+  let zones: string[] = [];
+  try {
+    const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+    zones = intl.supportedValuesOf?.('timeZone') ?? [];
+  } catch {}
+  let browserZone = '';
+  try {
+    browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {}
+  return Array.from(new Set([current, browserZone, ...zones].filter(Boolean))).sort();
+}
 
 function toDateInputValue(v: string | null | undefined): string {
   if (!v) return '';
@@ -72,7 +90,8 @@ async function resizeToWebp256(file: File): Promise<Blob> {
 
 export default function ProfilePage() {
   const { user, setUser } = useAuth();
-  const { messages } = useI18n();
+  const { locale, messages } = useI18n();
+  const goalText = dailyGoalMessages[locale];
   const cacheKey = useMemo(() => getUserScopedCacheKey('profile', user?.id, user?.username), [user?.id, user?.username]);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -87,6 +106,13 @@ export default function ProfilePage() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [dailyGoal, setDailyGoal] = useState('');
+  const [reminderTime, setReminderTime] = useState(DEFAULT_REMINDER_TIME);
+  const [timeZone, setTimeZone] = useState('');
+  const [savingGoal, setSavingGoal] = useState(false);
+  const [goalSaved, setGoalSaved] = useState(false);
+  const [goalError, setGoalError] = useState('');
+  const timeZones = useMemo(() => supportedTimeZones(timeZone), [timeZone]);
 
   const avatarUrl = useMemo(() => {
     const p = profile?.avatarPath || '';
@@ -103,11 +129,19 @@ export default function ProfilePage() {
       isAdmin: nextProfile.isAdmin,
       avatarPath: nextProfile.avatarPath,
       language: nextProfile.language,
+      ...(nextProfile.timeZone !== undefined ? {
+        timeZone: nextProfile.timeZone,
+        dailyGoalPoints: nextProfile.dailyGoalPoints ?? null,
+        dailyReminderTime: nextProfile.dailyReminderTime ?? null,
+      } : {}),
     }));
     setUsername(nextProfile.username || '');
     setGender(nextProfile.gender || '');
     setBirthDate(toDateInputValue(nextProfile.birthDate));
     setWeightKg(nextProfile.weightKg != null ? String(nextProfile.weightKg) : '');
+    setDailyGoal(nextProfile.dailyGoalPoints != null ? String(nextProfile.dailyGoalPoints) : '');
+    setReminderTime(nextProfile.dailyReminderTime || DEFAULT_REMINDER_TIME);
+    setTimeZone(nextProfile.timeZone || '');
   }, [setUser]);
 
   const load = useCallback(async ({ preferCache = false }: { preferCache?: boolean } = {}) => {
@@ -139,6 +173,40 @@ export default function ProfilePage() {
   useEffect(() => {
     void load({ preferCache: true });
   }, [load]);
+
+  // «Поставить цель» on the dashboard links to /profile#daily-goal; the section appears after loading.
+  useEffect(() => {
+    if (loading || typeof window === 'undefined' || window.location.hash !== '#daily-goal') return;
+    document.getElementById('daily-goal')?.scrollIntoView({ block: 'start' });
+  }, [loading]);
+
+  async function saveDailyGoal() {
+    setGoalError('');
+    setGoalSaved(false);
+    setSavingGoal(true);
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dailyGoalPoints: dailyGoal.trim() === '' ? null : Number(dailyGoal),
+          dailyReminderTime: reminderTime || null,
+          ...(timeZone ? { timeZone } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setGoalError(data.error || messages.profile.errors.save);
+      } else {
+        setGoalSaved(true);
+        await load();
+      }
+    } catch {
+      setGoalError(messages.profile.errors.network);
+    } finally {
+      setSavingGoal(false);
+    }
+  }
 
   async function save() {
     setError('');
@@ -399,6 +467,62 @@ export default function ProfilePage() {
           </button>
         </div>
       </div>
+      </section>
+
+      <section id="daily-goal" style={{ ...panelCard, scrollMarginTop: 80 }}>
+        <div style={sectionTitle}>{goalText.sectionTitle}</div>
+        <div style={fieldHint}>{goalText.sectionHint}</div>
+        <div style={{ display: 'grid', gap: 14 }}>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={fieldLabel}>{goalText.goalLabel}</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={DAILY_GOAL_MIN_POINTS}
+              max={DAILY_GOAL_MAX_POINTS}
+              step={1}
+              placeholder={goalText.goalPlaceholder}
+              value={dailyGoal}
+              onChange={(e) => { setDailyGoal(e.target.value); setGoalSaved(false); }}
+              style={fieldInput}
+            />
+            <span style={fieldHint}>{goalText.goalHint}</span>
+          </label>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={fieldLabel}>{goalText.reminderLabel}</span>
+            <input
+              type="time"
+              value={reminderTime}
+              onChange={(e) => { setReminderTime(e.target.value); setGoalSaved(false); }}
+              style={fieldInput}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={fieldLabel}>{goalText.timeZoneLabel}</span>
+            <select
+              value={timeZone}
+              onChange={(e) => { setTimeZone(e.target.value); setGoalSaved(false); }}
+              style={fieldInput}
+            >
+              {timeZones.map((zone) => (
+                <option key={zone} value={zone}>{zone.replace(/_/g, ' ')}</option>
+              ))}
+            </select>
+            <span style={fieldHint}>{goalText.timeZoneHint}</span>
+          </label>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={saveDailyGoal}
+              disabled={savingGoal}
+              style={{ ...buttonPrimary, cursor: savingGoal ? 'not-allowed' : 'pointer', opacity: savingGoal ? 0.6 : 1 }}
+            >
+              {savingGoal ? messages.common.saving : goalText.save}
+            </button>
+            {goalSaved ? <span style={{ ...fieldHint, color: '#15803d', fontWeight: 800 }}>{goalText.saved}</span> : null}
+          </div>
+          {goalError ? <div style={errorBox} role="alert">{goalError}</div> : null}
+        </div>
       </section>
 
       <section style={panelCard}>

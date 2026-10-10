@@ -55,6 +55,14 @@
   letter-spacing: -0.04em;
 }
 
+.todayRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
 .entryCard {
   position: relative;
   z-index: 1;

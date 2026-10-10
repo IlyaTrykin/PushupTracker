@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type ReactNode,
@@ -20,7 +21,37 @@ export type AuthUserState = {
   avatarPath?: string | null;
   language?: string;
   favoriteExercises?: string[];
+  /** From `GET /api/me` (not in the server-rendered initial user): IANA zone, daily goal (F1). */
+  timeZone?: string;
+  dailyGoalPoints?: number | null;
+  dailyReminderTime?: string | null;
+  /** Exercises with an active training program. */
+  activeProgramExercises?: string[];
 } | null;
+
+const BROWSER_ZONE_KEY_PREFIX = 'pushup-browser-tz:';
+
+function browserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+function readStored(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {}
+}
 
 type AuthContextValue = {
   user: AuthUserState;
@@ -38,20 +69,66 @@ export function AuthProvider({
   initialUser?: AuthUserState;
 }) {
   const [user, setUser] = useState<AuthUserState>(initialUser);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
 
-  const refreshUser = useCallback(async () => {
-    try {
-      const res = await fetch('/api/me', { cache: 'no-store', credentials: 'include' });
-      if (!res.ok) {
-        setUser(null);
-        return;
+  // Parallel callers (provider + a page on mount) share one request.
+  const refreshUser = useCallback(() => {
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const run = (async () => {
+      try {
+        const res = await fetch('/api/me', { cache: 'no-store', credentials: 'include' });
+        if (res.status === 401 || res.status === 403) {
+          setUser(null);
+          return;
+        }
+        // Offline or a server hiccup keeps the current user (the dashboard refreshes on mount).
+        if (!res.ok) return;
+        const data = (await res.json()) as AuthUserState;
+        setUser(data);
+      } catch {
+        // network error: keep the current user
+      } finally {
+        refreshInFlight.current = null;
       }
-      const data = (await res.json()) as AuthUserState;
-      setUser(data);
-    } catch {
-      setUser(null);
-    }
+    })();
+    refreshInFlight.current = run;
+    return run;
   }, []);
+
+  const userId = user?.id;
+  const savedTimeZone = user?.timeZone;
+
+  // The server-rendered user has no zone/goal fields: load them once after sign-in.
+  useEffect(() => {
+    if (userId && savedTimeZone === undefined) void refreshUser();
+  }, [refreshUser, savedTimeZone, userId]);
+
+  // Quietly send the browser zone when it changed on this device and differs from the saved one.
+  // A zone picked by hand in the profile stays until the browser zone itself changes (travel).
+  useEffect(() => {
+    if (!userId || savedTimeZone === undefined) return;
+    const zone = browserTimeZone();
+    if (!zone) return;
+    const key = `${BROWSER_ZONE_KEY_PREFIX}${userId}`;
+    const lastSeen = readStored(key);
+    if (lastSeen === zone) return;
+    writeStored(key, zone);
+    if (zone === savedTimeZone) return;
+    void (async () => {
+      try {
+        const res = await fetch('/api/profile', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ timeZone: zone }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as { user?: { timeZone?: string } } | null;
+        const next = data?.user?.timeZone ?? zone;
+        setUser((prev) => (prev && prev.id === userId ? { ...prev, timeZone: next } : prev));
+      } catch {}
+    })();
+  }, [savedTimeZone, userId]);
 
   useEffect(() => {
     const onAuthChanged = (event: Event) => {

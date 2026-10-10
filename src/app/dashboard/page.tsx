@@ -15,6 +15,10 @@ import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
 import SideLoadEntry, { WeightPicker } from './SideLoadEntry';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
+import { dayKeyInZone } from '@/lib/calendar-day';
+import { recommendToday } from '@/lib/recommendation';
+import DailyGoalRing from '@/components/DailyGoalRing';
+import TodayRecommendation from '@/components/TodayRecommendation';
 import styles from './dashboard.module.css';
 
 type Workout = {
@@ -269,7 +273,7 @@ function AvatarMini({ src }: { src?: string | null }) {
 }
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
@@ -408,6 +412,30 @@ export default function DashboardPage() {
 
   const todayKey = localTodayKey();
   const stats = useMemo(() => computePeriodStats(workouts, todayKey), [workouts, todayKey]);
+
+  // Daily goal (F1) and «Рекомендация на сегодня» (F12): the user's day by the saved zone.
+  useEffect(() => {
+    void refreshUser(); // fresh goal and active programs after visiting the profile or programs
+  }, [refreshUser]);
+  const userTimeZone = user?.timeZone;
+  const userDayKey = useMemo(() => {
+    if (!userTimeZone) return todayKey;
+    try {
+      return dayKeyInZone(new Date(), userTimeZone);
+    } catch {
+      return todayKey;
+    }
+  }, [todayKey, userTimeZone]);
+  const userDayPoints = useMemo(
+    () => dayPointsTotal(workouts.filter((w) => workoutDayKey(w) === userDayKey)),
+    [userDayKey, workouts],
+  );
+  const activeProgramExercises = user?.activeProgramExercises;
+  const showRecommendation = Array.isArray(activeProgramExercises) && !activeProgramExercises.includes(exerciseType);
+  const todayRecommendation = useMemo(
+    () => (showRecommendation ? recommendToday(workouts, exerciseType, userDayKey) : null),
+    [exerciseType, showRecommendation, userDayKey, workouts],
+  );
   const statsByExercise = useMemo<Record<ExerciseType, Stats>>(
     () => createByExercise((type) => computePeriodStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === type), todayKey)),
     [workouts, todayKey],
@@ -1020,6 +1048,19 @@ export default function DashboardPage() {
             {stats.streakFreezeUsed ? <div style={freezeCaption}>{freezeText.short}</div> : null}
           </div>
         </div>
+
+        {initialLoadReady && (user?.dailyGoalPoints !== undefined || showRecommendation) ? (
+          <div className={styles.todayRow}>
+            <DailyGoalRing donePoints={userDayPoints} goalPoints={user?.dailyGoalPoints} locale={locale} />
+            {showRecommendation ? (
+              <TodayRecommendation
+                recommendation={todayRecommendation}
+                exerciseName={catalogExerciseLabel(exerciseType, locale)}
+                locale={locale}
+              />
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className={styles.sectionCard}>
