@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rankChallengeParticipants } from './workout-create';
+import { friendWorkoutText, rankChallengeParticipants } from './workout-create';
 
 const day = (d: string) => new Date(`${d}T00:00:00.000Z`);
 
@@ -49,4 +49,11 @@ test('ranks follow the challenge table: loaded exercises in points, ties by user
   });
 
   assert.deepEqual([...ranks.entries()], [['h', 1], ['a', 2], ['z', 3]]);
+});
+
+test('friend notification: catalog name in the recipient language, cardio in km, others unchanged', () => {
+  const run = { exerciseType: 'run', reps: 5200, loadKg: null, durationSeconds: 1590 };
+  assert.deepEqual(friendWorkoutText('ru', 'bob', run).body, 'bob: Бег — 5,2 км · 26:30 (5:06/км)');
+  assert.equal(friendWorkoutText('en', 'bob', run).body, 'bob: Running — 5.2 km · 26:30 (5:06/km)');
+  assert.equal(friendWorkoutText('en', 'bob', { exerciseType: 'plank', reps: 60, loadKg: null }).body, 'bob: Plank — 60 s');
 });

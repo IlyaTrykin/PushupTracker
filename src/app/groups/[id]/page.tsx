@@ -60,6 +60,7 @@ type GroupWorkout = {
   loadKg?: number | null;
   repsLeft?: number | null;
   repsRight?: number | null;
+  durationSeconds?: number | null;
   date: string;
   time: string | null;
   exerciseType: string;
@@ -267,7 +268,7 @@ function formatAnalyticsValue(
   if (kind === 'count') return Math.round(value).toLocaleString(localeTag);
   if (kind === 'percent') return `${Math.round(value).toLocaleString(localeTag)}%`;
   if (filter === 'all') return `${Math.round(value).toLocaleString(localeTag)} ${loadUnit}`;
-  return formatExerciseValue(Math.round(value), filter, true);
+  return formatExerciseValue(Math.round(value), filter, true, localeTag.startsWith('en') ? 'en' : 'ru');
 }
 
 function isWorkoutInPeriod(workout: Pick<GroupWorkout, 'date' | 'time'>, period: PeriodKey) {

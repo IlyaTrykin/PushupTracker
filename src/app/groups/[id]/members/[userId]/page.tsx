@@ -40,6 +40,7 @@ type GroupWorkout = {
   loadKg?: number | null;
   repsLeft?: number | null;
   repsRight?: number | null;
+  durationSeconds?: number | null;
   date: string;
   time: string | null;
   exerciseType: string;
@@ -198,7 +199,7 @@ function formatAnalyticsValue(
   if (kind === 'count') return Math.round(value).toLocaleString(localeTag);
   if (kind === 'percent') return `${Math.round(value).toLocaleString(localeTag)}%`;
   if (filter === 'all') return `${Math.round(value).toLocaleString(localeTag)} ${loadUnit}`;
-  return formatExerciseValue(Math.round(value), filter, true);
+  return formatExerciseValue(Math.round(value), filter, true, localeTag.startsWith('en') ? 'en' : 'ru');
 }
 
 function isWorkoutInPeriod(workout: Pick<GroupWorkout, 'date' | 'time'>, period: PeriodKey) {
@@ -981,7 +982,7 @@ export default function GroupMemberDetailPage() {
                     {exerciseTotals.map(({ type, sum }) => (
                       <span key={`${cell.key}-${type}`} style={exerciseNumberItem}>
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={22} height={22} style={exerciseNumberIcon} unoptimized />
-                        <span style={exerciseNumber}>{formatExerciseValue(sum, type, true)}</span>
+                        <span style={exerciseNumber}>{formatExerciseValue(sum, type, true, locale)}</span>
                       </span>
                     ))}
                   </div>

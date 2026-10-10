@@ -63,6 +63,7 @@ interface Workout {
   loadKg?: number | null;
   repsLeft?: number | null;
   repsRight?: number | null;
+  durationSeconds?: number | null;
   date: string;          // ISO date
   time?: string | null;  // ISO datetime (если есть)
   exerciseType?: ExerciseType;

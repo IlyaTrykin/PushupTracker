@@ -4,7 +4,7 @@ import { requireUser, requestLocale, AuthError } from '@/lib/auth';
 import { dayKeyInZone, dayKeyToDbDate, dbDateToDayKey, localHHMM, normalizeTimeZone, zonedTimeToInstant } from '@/lib/calendar-day';
 import { tooManyRequests } from '@/lib/rate-limit';
 import { WORKOUT_SELECT, WorkoutCreateError, createWorkoutForUser } from '@/lib/workout-create';
-import { parseWorkoutDay, parseWorkoutExerciseType, parseWorkoutLoadFields, parseWorkoutTime } from '@/lib/workout-input';
+import { parseWorkoutDay, parseWorkoutDuration, parseWorkoutExerciseType, parseWorkoutLoadFields, parseWorkoutTime } from '@/lib/workout-input';
 import { GroupError, recordGroupAuditLog, requireManagedGroupMemberAccess } from '@/lib/groups';
 
 export const dynamic = 'force-dynamic';
@@ -189,7 +189,7 @@ export async function PUT(request: Request) {
     const existing = await prisma.workout.findUnique({
       where: { id },
       select: {
-        id: true, userId: true, date: true, time: true, reps: true, loadKg: true, repsLeft: true, repsRight: true, exerciseType: true,
+        id: true, userId: true, date: true, time: true, reps: true, loadKg: true, repsLeft: true, repsRight: true, durationSeconds: true, exerciseType: true,
         user: { select: { timeZone: true } },
       },
     });
@@ -216,13 +216,17 @@ export async function PUT(request: Request) {
     }
 
     const data: {
-      exerciseType?: string; reps?: number; loadKg?: number | null; repsLeft?: number | null; repsRight?: number | null; date?: Date; time?: Date;
+      exerciseType?: string; reps?: number; loadKg?: number | null; repsLeft?: number | null; repsRight?: number | null; durationSeconds?: number | null; date?: Date; time?: Date;
     } = {};
 
     const parsedLoad = parseWorkoutLoadFields(exerciseType, body, existing);
     if (!parsedLoad.ok) return jsonError(parsedLoad.error, 400, 'WORKOUT_VALUE_INVALID');
     Object.assign(data, parsedLoad.value);
     if (exerciseType !== existing.exerciseType) data.exerciseType = exerciseType;
+
+    const parsedDuration = parseWorkoutDuration(exerciseType, body, existing.durationSeconds);
+    if (!parsedDuration.ok) return jsonError(parsedDuration.error, 400, 'WORKOUT_DURATION_INVALID');
+    if (parsedDuration.value !== existing.durationSeconds) data.durationSeconds = parsedDuration.value;
 
     let day = dbDateToDayKey(existing.date);
     if (body.date !== undefined) {

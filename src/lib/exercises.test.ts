@@ -100,3 +100,17 @@ test('wall sit is timed like the plank', () => {
   assert.equal(EXERCISES.wall_sit.unit, 'seconds');
   assert.equal(calculateExercisePoints(120, 'wall_sit'), 30);
 });
+
+test('cardio is priced per metre: run and row 15 per km, bike 5 per km', () => {
+  assert.equal(calculateExercisePoints(5200, 'run'), 78);
+  assert.equal(calculateExercisePoints(20000, 'bike'), 100);
+  assert.equal(calculateExercisePoints(1000, 'row'), 15);
+});
+
+test('cardio exercises are distance-based, outside programs and not default favourites', () => {
+  for (const id of ['run', 'bike', 'row'] as const) {
+    assert.equal(EXERCISES[id].unit, 'distance', id);
+    assert.equal(EXERCISES[id].programSupported, false, id);
+    assert.ok(!resolveFavoriteExercises([]).includes(id), id);
+  }
+});

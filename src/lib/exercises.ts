@@ -33,11 +33,15 @@ export const EXERCISE_IDS = [
   'kettlebell_press',
   'kettlebell_jerk',
   'kettlebell_swing',
+  'run',
+  'bike',
+  'row',
 ] as const;
 
 export type ExerciseType = (typeof EXERCISE_IDS)[number];
 
-export type ExerciseUnit = 'reps' | 'seconds';
+// distance: значение хранится в метрах (Workout.reps), вводится в километрах.
+export type ExerciseUnit = 'reps' | 'seconds' | 'distance';
 
 export type ExerciseDefinition = {
   id: ExerciseType;
@@ -45,7 +49,7 @@ export type ExerciseDefinition = {
   // Трёхбуквенный код для плотных сеток (календарь программы).
   code: string;
   unit: ExerciseUnit;
-  // Баллы за повтор (или за секунду) при эталонном весе; комментарий — типичный максимум.
+  // Баллы за повтор (секунду, метр) при эталонном весе; комментарий — типичный максимум.
   pointsPerUnit: number;
   // Упражнение со снарядом: вес обязателен, баллы зависят от веса.
   load?: { referenceKg: number; presetsKg: number[] };
@@ -213,6 +217,34 @@ export const EXERCISES: Record<ExerciseType, ExerciseDefinition> = {
     programSupported: false,
     colors: { accent: '#0f766e', soft: '#ccfbf1', chart: '#115e59' },
   },
+  // Кардио: значение — метры. Бег и гребля 15 баллов за км, велосипед 5 (в 3 раза легче).
+  run: {
+    id: 'run',
+    label: { ru: 'Бег', en: 'Running' },
+    code: 'БЕГ',
+    unit: 'distance',
+    pointsPerUnit: 0.015,
+    programSupported: false,
+    colors: { accent: '#f97316', soft: '#ffedd5', chart: '#c2410c' },
+  },
+  bike: {
+    id: 'bike',
+    label: { ru: 'Велосипед', en: 'Cycling' },
+    code: 'ВЕЛ',
+    unit: 'distance',
+    pointsPerUnit: 0.005,
+    programSupported: false,
+    colors: { accent: '#65a30d', soft: '#ecfccb', chart: '#4d7c0f' },
+  },
+  row: {
+    id: 'row',
+    label: { ru: 'Гребля', en: 'Rowing' },
+    code: 'ГРБ',
+    unit: 'distance',
+    pointsPerUnit: 0.015,
+    programSupported: false,
+    colors: { accent: '#0891b2', soft: '#cffafe', chart: '#0e7490' },
+  },
 };
 
 export const EXERCISE_ORDER: readonly ExerciseType[] = EXERCISE_IDS;
@@ -252,6 +284,10 @@ export function isUnilateralExercise(value?: string | null): boolean {
 
 export function isTimedExercise(value?: string | null): boolean {
   return isExerciseType(value) && EXERCISES[value].unit === 'seconds';
+}
+
+export function isDistanceExercise(value?: string | null): boolean {
+  return isExerciseType(value) && EXERCISES[value].unit === 'distance';
 }
 
 // Баллы за одну единицу (повтор/секунду) с учётом веса снаряда.

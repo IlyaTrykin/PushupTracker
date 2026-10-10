@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
-import { exerciseValueLabel, formatExerciseValue, isTimedExercise, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { exerciseValueLabel, formatDistance, formatDuration, formatExerciseValue, isTimedExercise, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { parseDistanceKm, parseDurationInput } from '@/lib/workout-input';
+import { cardioMessages } from '@/i18n/messages/features/cardio';
 import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
 import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, getExercise, toExerciseType } from '@/lib/exercises';
 import { useExerciseLoad } from '@/lib/use-exercise-load';
@@ -21,6 +23,7 @@ type Workout = {
   loadKg?: number | null;
   repsLeft?: number | null;
   repsRight?: number | null;
+  durationSeconds?: number | null;
   date: string;
   time?: string;
   exerciseType?: string;
@@ -209,7 +212,7 @@ function hasBreakdownValue(value: number | string | undefined) {
   return trimmed !== '' && trimmed !== '-' && trimmed !== '—' && Number(trimmed) !== 0;
 }
 
-function Stat({ label, value, breakdown }: { label: string; value: number | string; breakdown?: StatBreakdown }) {
+function Stat({ label, value, breakdown, locale, metric = true }: { label: string; value: number | string; breakdown?: StatBreakdown; locale: string; metric?: boolean }) {
   // В плитке — только упражнения, по которым за период есть записи.
   const breakdownTypes = breakdown ? EXERCISE_ORDER.filter((type) => hasBreakdownValue(breakdown[type])) : [];
   return (
@@ -221,7 +224,7 @@ function Stat({ label, value, breakdown }: { label: string; value: number | stri
           {breakdownTypes.length ? breakdownTypes.map((type) => (
             <span key={`${label}-${type}`} style={statBreakdownItem}>
               <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={20} height={20} style={statBreakdownIcon} unoptimized />
-              <span style={statBreakdownValue}>{breakdown[type]}</span>
+              <span style={statBreakdownValue}>{metric ? formatExerciseValue(breakdown[type], type, true, locale).replace(/ сек$/, '') : breakdown[type]}</span>
             </span>
           )) : (
             <span style={statBreakdownValue}>—</span>
@@ -230,10 +233,6 @@ function Stat({ label, value, breakdown }: { label: string; value: number | stri
       ) : null}
     </div>
   );
-}
-
-function exerciseLabel(type: string | undefined) {
-  return catalogExerciseLabel(type);
 }
 
 function normalizeExerciseType(type: string | undefined): ExerciseType {
@@ -281,6 +280,9 @@ export default function DashboardPage() {
   const [time, setTime] = useState<string>(normalizeTime(new Date()));
   const [timeTouched, setTimeTouched] = useState(false);
   const [reps, setReps] = useState<number>(0);
+  const [distanceKm, setDistanceKm] = useState('');
+  const [durationText, setDurationText] = useState('');
+  const cardio = cardioMessages[locale];
   // Ключ исторический (секундомер был только у планки) — не меняем, чтобы не потерять идущий замер.
   const timedStopwatch = useStopwatch('dashboardPlankStopwatch');
   const activeExercise = getExercise(exerciseType);
@@ -318,6 +320,8 @@ export default function DashboardPage() {
   const [editTime, setEditTime] = useState<string>(normalizeTime(new Date()));
   const [editReps, setEditReps] = useState<number>(0);
   const [editExerciseType, setEditExerciseType] = useState<ExerciseType>('pushups');
+  const [editDistanceKm, setEditDistanceKm] = useState('');
+  const [editDurationText, setEditDurationText] = useState('');
   const [editRepsLeft, setEditRepsLeft] = useState(0);
   const [editRepsRight, setEditRepsRight] = useState(0);
   const [editLoadKg, setEditLoadKg] = useState<number | null>(null);
@@ -328,6 +332,7 @@ export default function DashboardPage() {
   const [workoutReactions, setWorkoutReactions] = useState<Record<string, WorkoutReactionPayload>>({});
   const [initialLoadReady, setInitialLoadReady] = useState(false);
   const isTimedSelected = activeExercise.unit === 'seconds';
+  const isDistanceSelected = activeExercise.unit === 'distance';
   const timerStarted = isTimedSelected && timedStopwatch.started;
   const workoutsCacheKey = useMemo(
     () => getWorkoutsCacheKey(user?.id, user?.username),
@@ -489,7 +494,7 @@ export default function DashboardPage() {
   const submitWorkout = useCallback(async (
     value: number,
     selectedType: ExerciseType,
-    extra: { loadKg?: number | null; repsLeft?: number; repsRight?: number } = {},
+    extra: { loadKg?: number | null; repsLeft?: number; repsRight?: number; durationSeconds?: number } = {},
   ) => {
     const timeToSend = timeTouched ? time : normalizeTime(new Date());
     const payload = { reps: value, ...extra, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType };
@@ -516,6 +521,8 @@ export default function DashboardPage() {
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);
+    setDistanceKm('');
+    setDurationText('');
     setRepsLeft(0);
     setRepsRight(0);
     await loadWorkouts();
@@ -548,6 +555,20 @@ export default function DashboardPage() {
         return;
       }
       await runAdd(() => submitWorkout(total, exerciseType, { loadKg: exerciseLoad.loadKg, repsLeft, repsRight }));
+      return;
+    }
+    if (isDistanceSelected) {
+      const distance = parseDistanceKm(distanceKm);
+      if (!distance.ok) {
+        setError(locale === 'en' ? 'Distance must be from 0.01 to 300 km' : distance.error);
+        return;
+      }
+      const duration = parseDurationInput(durationText);
+      if (!duration.ok) {
+        setError(locale === 'en' ? 'Time as mm:ss or h:mm:ss' : duration.error);
+        return;
+      }
+      await runAdd(() => submitWorkout(distance.value, exerciseType, duration.value != null ? { durationSeconds: duration.value } : {}));
       return;
     }
     if (!Number.isFinite(reps) || reps <= 0) {
@@ -589,6 +610,8 @@ export default function DashboardPage() {
     setEditRepsRight(w.repsRight ?? 0);
     setEditLoadKg(w.loadKg ?? null);
     setEditExerciseType(normalizeExerciseType(w.exerciseType));
+    setEditDistanceKm(getExercise(w.exerciseType).unit === 'distance' ? formatDistance(w.reps || 0, 'en').replace(/ km$/, '') : '');
+    setEditDurationText(w.durationSeconds ? formatDuration(w.durationSeconds) : '');
   };
 
   const cancelEdit = () => {
@@ -605,6 +628,10 @@ export default function DashboardPage() {
       setEditRepsLeft(editReps);
       setEditRepsRight(0);
     }
+    if (target.unit === 'distance' && prev.unit !== 'distance') {
+      setEditDistanceKm('');
+      setEditDurationText('');
+    }
     if (!target.load) setEditLoadKg(null);
     else if (editLoadKg == null) setEditLoadKg(target.load.referenceKg);
     setEditExerciseType(next);
@@ -619,15 +646,28 @@ export default function DashboardPage() {
       return;
     }
 
+    let distancePatch: { reps: number; durationSeconds: number | null } | null = null;
+    if (getExercise(editExerciseType).unit === 'distance') {
+      const distance = parseDistanceKm(editDistanceKm);
+      const duration = parseDurationInput(editDurationText);
+      if (!distance.ok || !duration.ok) {
+        setError(locale === 'en' ? 'Check distance (0.01–300 km) and time (mm:ss)' : (!distance.ok ? distance.error : (duration as { error: string }).error));
+        return;
+      }
+      distancePatch = { reps: distance.value, durationSeconds: duration.value };
+    }
+
     try {
       await fetchJsonSafe('/api/workouts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editingId,
-          ...(getExercise(editExerciseType).unilateral
-            ? { repsLeft: editRepsLeft, repsRight: editRepsRight }
-            : { reps: editReps }),
+          ...(distancePatch
+            ? distancePatch
+            : getExercise(editExerciseType).unilateral
+              ? { repsLeft: editRepsLeft, repsRight: editRepsRight }
+              : { reps: editReps }),
           ...(editLoadKg != null && getExercise(editExerciseType).load ? { loadKg: editLoadKg } : {}),
           date: editDate,
           time: toIsoTime(editDate, editTime),
@@ -709,8 +749,8 @@ export default function DashboardPage() {
                     type="button"
                     onClick={() => handleExerciseTypeChange(type)}
                     style={exerciseTypePickerButton(active)}
-                    title={tt(exerciseLabel(type))}
-                    aria-label={tt(exerciseLabel(type))}
+                    title={catalogExerciseLabel(type, locale)}
+                    aria-label={catalogExerciseLabel(type, locale)}
                     aria-pressed={active}
                   >
                     <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={38} height={38} style={exerciseTypePickerIcon} unoptimized />
@@ -757,7 +797,7 @@ export default function DashboardPage() {
                         style={moreExercisesItem(exerciseType === type)}
                       >
                         <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={30} height={30} unoptimized />
-                        <span>{tt(exerciseLabel(type))}</span>
+                        <span>{catalogExerciseLabel(type, locale)}</span>
                       </button>
                     )) : (
                       <div style={moreExercisesEmpty}>{messages.favoriteExercises.empty}</div>
@@ -834,7 +874,38 @@ export default function DashboardPage() {
               </>
             ) : null}
 
-            {!activeExercise.unilateral ? (
+            {isDistanceSelected ? (
+              // Кардио: дистанция в км и необязательное время; секундомера и «+5» нет.
+              <div style={cardioEntryWrap}>
+                <label style={cardioLabel}>
+                  {cardio.distanceLabel}
+                  <input
+                    inputMode="decimal"
+                    value={distanceKm}
+                    onChange={(e) => setDistanceKm(e.target.value.replace(/[^\d.,]/g, '').slice(0, 7))}
+                    placeholder={cardio.distancePlaceholder}
+                    style={cardioDistanceInput}
+                    aria-label={cardio.distanceLabel}
+                  />
+                </label>
+                <label style={cardioLabel}>
+                  {cardio.durationLabel}
+                  <input
+                    inputMode="numeric"
+                    value={durationText}
+                    onChange={(e) => setDurationText(e.target.value.replace(/[^\d:]/g, '').slice(0, 8))}
+                    placeholder={cardio.durationPlaceholder}
+                    style={cardioDurationInput}
+                    aria-label={cardio.durationLabel}
+                  />
+                </label>
+                <button type="button" onClick={() => void handleAdd()} style={adding ? addButtonBusy : addButton} disabled={adding} aria-busy={adding}>
+                  {tt('Добавить')}
+                </button>
+              </div>
+            ) : null}
+
+            {!activeExercise.unilateral && !isDistanceSelected ? (
             <>
             {activeExercise.load ? (
               <WeightPicker
@@ -932,11 +1003,11 @@ export default function DashboardPage() {
         <div className={styles.heroStats}>
           <div className={styles.heroStat}>
             <div className={styles.heroStatLabel}>{tt('Сегодня')}</div>
-            <div className={styles.heroStatValue}>{formatExerciseValue(selectedStats.totalToday, exerciseType, true)}</div>
+            <div className={styles.heroStatValue}>{formatExerciseValue(selectedStats.totalToday, exerciseType, true, locale)}</div>
           </div>
           <div className={styles.heroStat}>
             <div className={styles.heroStatLabel}>{tt('Текущая неделя')}</div>
-            <div className={styles.heroStatValue}>{formatExerciseValue(selectedStats.totalWeek, exerciseType, true)}</div>
+            <div className={styles.heroStatValue}>{formatExerciseValue(selectedStats.totalWeek, exerciseType, true, locale)}</div>
           </div>
           <div className={styles.heroStat}>
             <div className={styles.heroStatLabel}>{tt('Серия дней подряд')}</div>
@@ -960,15 +1031,15 @@ export default function DashboardPage() {
 
         {initialLoadReady ? (
           <section className="app-tiles">
-            <Stat label={tt('Сегодня')} value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} />
-            <Stat label={tt('Всего')} value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} />
-            <Stat label={tt('Текущий год')} value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} />
-            <Stat label={tt('Текущий месяц')} value={stats.totalMonth} breakdown={breakdownFromStats((s) => s.totalMonth)} />
-            <Stat label={tt('Текущая неделя')} value={stats.totalWeek} breakdown={breakdownFromStats((s) => s.totalWeek)} />
-            <Stat label={tt('Среднее/день (месяц)')} value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} />
-            <Stat label={tt('Среднее/день (год)')} value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} />
-            <Stat label={tt('Среднее/день (всего)')} value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} />
-            <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={streakBreakdown} />
+            <Stat label={tt('Сегодня')} value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} locale={locale} />
+            <Stat label={tt('Всего')} value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} locale={locale} />
+            <Stat label={tt('Текущий год')} value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} locale={locale} />
+            <Stat label={tt('Текущий месяц')} value={stats.totalMonth} breakdown={breakdownFromStats((s) => s.totalMonth)} locale={locale} />
+            <Stat label={tt('Текущая неделя')} value={stats.totalWeek} breakdown={breakdownFromStats((s) => s.totalWeek)} locale={locale} />
+            <Stat label={tt('Среднее/день (месяц)')} value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} locale={locale} />
+            <Stat label={tt('Среднее/день (год)')} value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} locale={locale} />
+            <Stat label={tt('Среднее/день (всего)')} value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} locale={locale} />
+            <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={streakBreakdown} locale={locale} metric={false} />
           </section>
         ) : (
           <div className={styles.sectionLoading}>{messages.common.loading}</div>
@@ -1056,8 +1127,8 @@ export default function DashboardPage() {
                     <div style={exerciseNumbersRow}>
                       {exerciseTotals.map(({ type, sum }) => (
                         <span key={type} style={exerciseNumberItem}>
-                          <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={22} height={22} style={exerciseNumberIcon} unoptimized />
-                          <span style={exerciseNumber}>{sum}</span>
+                          <Image src={exerciseFeedIcon(type)} alt={catalogExerciseLabel(type, locale)} width={22} height={22} style={exerciseNumberIcon} unoptimized />
+                          <span style={exerciseNumber}>{type === 'run' || type === 'bike' || type === 'row' ? formatDistance(sum, locale).replace(/ (км|km)$/, '') : sum}</span>
                         </span>
                       ))}
                     </div>
@@ -1069,8 +1140,8 @@ export default function DashboardPage() {
             <div style={legendWrap}>
               {calendarTypes.map((type) => (
                 <div key={type} style={legendItem}>
-                  <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={20} height={20} style={legendIcon} unoptimized />
-                  <span>{tt(exerciseLabel(type))}</span>
+                  <Image src={exerciseFeedIcon(type)} alt={catalogExerciseLabel(type, locale)} width={20} height={20} style={legendIcon} unoptimized />
+                  <span>{catalogExerciseLabel(type, locale)}</span>
                 </div>
               ))}
             </div>
@@ -1120,7 +1191,7 @@ export default function DashboardPage() {
                                 style={editInput}
                               >
                                 {EXERCISE_ORDER.map((type) => (
-                                  <option key={type} value={type}>{tt(exerciseLabel(type))}</option>
+                                  <option key={type} value={type}>{catalogExerciseLabel(type, locale)}</option>
                                 ))}
                               </select>
                             </div>
@@ -1144,6 +1215,17 @@ export default function DashboardPage() {
                                 <div style={{ display: 'grid', gap: 4 }}>
                                   <label>{tt('Правая')}</label>
                                   <input type="number" value={editRepsRight} onChange={(e) => setEditRepsRight(Number(e.target.value))} style={editInput} />
+                                </div>
+                              </>
+                            ) : getExercise(editExerciseType).unit === 'distance' ? (
+                              <>
+                                <div style={{ display: 'grid', gap: 4 }}>
+                                  <label>{cardio.distanceLabel}</label>
+                                  <input inputMode="decimal" value={editDistanceKm} onChange={(e) => setEditDistanceKm(e.target.value.replace(/[^\d.,]/g, ''))} style={editInput} />
+                                </div>
+                                <div style={{ display: 'grid', gap: 4 }}>
+                                  <label>{cardio.durationLabel}</label>
+                                  <input inputMode="numeric" value={editDurationText} onChange={(e) => setEditDurationText(e.target.value.replace(/[^\d:]/g, ''))} placeholder={cardio.durationPlaceholder} style={editInput} />
                                 </div>
                               </>
                             ) : (
@@ -1176,11 +1258,11 @@ export default function DashboardPage() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap', width: '100%' }}>
                             <div style={{ display: 'grid', gap: 4 }}>
                               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                                <Image src={exerciseFeedIcon(w.exerciseType)} alt={tt(exerciseLabel(w.exerciseType))} width={16} height={16} style={detailsExerciseIcon} unoptimized />
-                                <span style={{ fontWeight: 800 }}>{tt(exerciseLabel(w.exerciseType))}</span>
+                                <Image src={exerciseFeedIcon(w.exerciseType)} alt={catalogExerciseLabel(w.exerciseType, locale)} width={16} height={16} style={detailsExerciseIcon} unoptimized />
+                                <span style={{ fontWeight: 800 }}>{catalogExerciseLabel(w.exerciseType, locale)}</span>
                               </div>
                               <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag)}</b></div>
-                              <div>{tt(exerciseValueLabel(w.exerciseType))}: <b>{formatWorkoutValue(w, locale)}</b></div>
+                              <div>{getExercise(w.exerciseType).unit === 'distance' ? cardioMessages[locale].valueLabel : tt(exerciseValueLabel(w.exerciseType))}: <b>{formatWorkoutValue(w, locale)}</b></div>
                             </div>
 
                             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1401,6 +1483,36 @@ const resetDateButton: React.CSSProperties = {
   fontWeight: 800,
   fontSize: 13,
   cursor: 'pointer',
+};
+
+const cardioEntryWrap: React.CSSProperties = { display: 'grid', gap: 12, width: '100%', maxWidth: 520, marginInline: 'auto' };
+const cardioLabel: React.CSSProperties = { display: 'grid', gap: 6, fontWeight: 700, color: '#475569', fontSize: 14 };
+const cardioDistanceInput: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  textAlign: 'center',
+  fontWeight: 800,
+  fontSize: 'clamp(48px, 14vw, 96px)',
+  lineHeight: 1.1,
+  padding: '14px 12px',
+  borderRadius: 28,
+  border: '1px solid rgba(148, 163, 184, 0.26)',
+  outline: 'none',
+  color: '#0f172a',
+  background: '#fff',
+};
+const cardioDurationInput: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  textAlign: 'center',
+  fontWeight: 700,
+  fontSize: 28,
+  padding: '12px 12px',
+  borderRadius: 20,
+  border: '1px solid rgba(148, 163, 184, 0.26)',
+  outline: 'none',
+  color: '#0f172a',
+  background: '#fff',
 };
 
 const repsInputStyle: React.CSSProperties = {

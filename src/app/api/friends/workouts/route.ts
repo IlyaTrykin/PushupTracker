@@ -10,6 +10,7 @@ type WorkoutResponseItem = {
   loadKg: number | null;
   repsLeft: number | null;
   repsRight: number | null;
+  durationSeconds: number | null;
   date: string;
   time: string | null;
   exerciseType: ExerciseType;
@@ -68,7 +69,7 @@ export async function GET(request: NextRequest) {
     const workouts = await prisma.workout.findMany({
       where,
       orderBy: [{ date: 'desc' }, { time: 'desc' }],
-      select: { id: true, userId: true, reps: true, loadKg: true, repsLeft: true, repsRight: true, date: true, time: true, exerciseType: true },
+      select: { id: true, userId: true, reps: true, loadKg: true, repsLeft: true, repsRight: true, durationSeconds: true, date: true, time: true, exerciseType: true },
     });
 
     const byUser: Record<string, WorkoutResponseItem[]> = {};
@@ -82,6 +83,7 @@ export async function GET(request: NextRequest) {
         loadKg: w.loadKg,
         repsLeft: w.repsLeft,
         repsRight: w.repsRight,
+        durationSeconds: w.durationSeconds,
         date: toIsoString(w.date),
         time: w.time ? toIsoString(w.time) : null,
         exerciseType: w.exerciseType as ExerciseType,

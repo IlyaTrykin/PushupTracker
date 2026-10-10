@@ -2,8 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CLIENT_REQUEST_ID_MAX_LENGTH,
+  MAX_WORKOUT_VALUE,
   WORKOUT_CREATE_LIMIT_PER_DAY,
+  maxWorkoutValue,
   parseClientRequestId,
+  parseDistanceKm,
+  parseDurationInput,
+  parseWorkoutDuration,
   parseWorkoutDay,
   parseWorkoutExerciseType,
   parseWorkoutLoadFields,
@@ -99,4 +104,37 @@ test('clientRequestId: optional, a short token', () => {
 
 test('creation limit is 300 per day (spec story 17/48)', () => {
   assert.equal(WORKOUT_CREATE_LIMIT_PER_DAY, 300);
+});
+
+test('distance input accepts km with comma or dot, 0.01 to 300', () => {
+  assert.deepEqual(parseDistanceKm('5,2'), { ok: true, value: 5200 });
+  assert.deepEqual(parseDistanceKm('5.25'), { ok: true, value: 5250 });
+  assert.deepEqual(parseDistanceKm(0.01), { ok: true, value: 10 });
+  assert.deepEqual(parseDistanceKm('300'), { ok: true, value: 300000 });
+  for (const bad of ['', '0', '0,001', '300,01', '-1', 'abc', '1,2,3']) assert.equal(parseDistanceKm(bad).ok, false, bad);
+});
+
+test('duration input is mm:ss or h:mm:ss; empty means none', () => {
+  assert.deepEqual(parseDurationInput('26:30'), { ok: true, value: 1590 });
+  assert.deepEqual(parseDurationInput('1:02:05'), { ok: true, value: 3725 });
+  assert.deepEqual(parseDurationInput(''), { ok: true, value: null });
+  for (const bad of ['26', '26:75', '1:2:3:4', 'aa:bb', '0:00']) assert.equal(parseDurationInput(bad).ok, false, bad);
+});
+
+test('the value ceiling depends on the unit: 10 km passes for cardio, 10000 reps do not', () => {
+  assert.equal(maxWorkoutValue('run'), 300000);
+  assert.equal(maxWorkoutValue('pushups'), MAX_WORKOUT_VALUE);
+  assert.deepEqual(parseWorkoutLoadFields('run', { reps: 10000 }), { ok: true, value: { reps: 10000, loadKg: null, repsLeft: null, repsRight: null } });
+  assert.equal(parseWorkoutLoadFields('run', { reps: 300001 }).ok, false);
+  assert.equal(parseWorkoutLoadFields('run', { reps: 5 }).ok, false);
+  assert.equal(parseWorkoutLoadFields('pushups', { reps: 10000 }).ok, false);
+});
+
+test('duration is kept only for cardio and falls back to the stored value on edit', () => {
+  assert.deepEqual(parseWorkoutDuration('run', { durationSeconds: 1590 }), { ok: true, value: 1590 });
+  assert.deepEqual(parseWorkoutDuration('run', {}, 1590), { ok: true, value: 1590 });
+  assert.deepEqual(parseWorkoutDuration('run', { durationSeconds: null }, 1590), { ok: true, value: null });
+  assert.deepEqual(parseWorkoutDuration('pushups', { durationSeconds: 60 }), { ok: true, value: null });
+  assert.equal(parseWorkoutDuration('run', { durationSeconds: 0 }).ok, false);
+  assert.equal(parseWorkoutDuration('run', { durationSeconds: 999999 }).ok, false);
 });

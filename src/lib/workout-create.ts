@@ -6,12 +6,15 @@
 
 import { dayKeyInZone, dayKeyToDbDate, normalizeTimeZone } from './calendar-day';
 import { challengeTotalDays, scoreChallenge, type ChallengeWorkoutRow } from './challenge-scoring';
-import { formatExerciseValue } from './exercise-metrics';
+import { formatWorkoutValue } from './exercise-metrics';
+import { exerciseLabel, isDistanceExercise } from './exercises';
+import { challengeRankMessage, friendWorkoutMessage, notifyUsers, type LocalizedMessage, type NotifyLocale } from './notify';
 import { onWorkoutCreated, type CreatedWorkout, type WorkoutHookResult } from './workout-hooks';
 import {
   WORKOUT_CREATE_LIMIT_PER_DAY,
   parseClientRequestId,
   parseWorkoutDay,
+  parseWorkoutDuration,
   parseWorkoutExerciseType,
   parseWorkoutLoadFields,
   parseWorkoutTime,
@@ -24,6 +27,7 @@ export const WORKOUT_SELECT = {
   loadKg: true,
   repsLeft: true,
   repsRight: true,
+  durationSeconds: true,
   date: true,
   time: true,
   exerciseType: true,
@@ -42,6 +46,8 @@ export type WorkoutCreateInput = {
   repsLeft?: unknown;
   repsRight?: unknown;
   loadKg?: unknown;
+  /** Cardio only: seconds. */
+  durationSeconds?: unknown;
   date?: unknown;
   time?: unknown;
   clientRequestId?: unknown;
@@ -207,6 +213,7 @@ export async function createWorkoutForUser(
     parseWorkoutLoadFields(exerciseType, input as Record<string, unknown>),
     'WORKOUT_VALUE_INVALID',
   );
+  const durationSeconds = ok(parseWorkoutDuration(exerciseType, input as Record<string, unknown>), 'WORKOUT_DURATION_INVALID');
   const rawDate = input.date === undefined || input.date === null || input.date === '' ? today : input.date;
   const day = ok(parseWorkoutDay(rawDate, today), 'WORKOUT_DATE_INVALID');
   const time = ok(parseWorkoutTime(input.time, day, timeZone, now), 'WORKOUT_TIME_INVALID');
@@ -247,7 +254,7 @@ export async function createWorkoutForUser(
   let workout: CreatedWorkout;
   try {
     workout = await prisma.workout.create({
-      data: { userId: user.id, reps, loadKg, repsLeft, repsRight, exerciseType, date, time, clientRequestId },
+      data: { userId: user.id, reps, loadKg, repsLeft, repsRight, durationSeconds, exerciseType, date, time, clientRequestId },
       select: WORKOUT_SELECT,
     });
   } catch (e) {
@@ -278,37 +285,31 @@ export async function createWorkoutForUser(
   return { workout, reward, records: hooks.records, achievements: hooks.achievements, replayed: false };
 }
 
+type FriendWorkoutFields = { exerciseType: string; reps: number; loadKg: number | null; durationSeconds?: number | null };
+
+/** «bob: Бег — 5,2 км · 26:30 (5:06/км)» in the recipient's language; the builder from notify.ts, cardio shown in km. */
+export function friendWorkoutText(locale: NotifyLocale, username: string, workout: FriendWorkoutFields): LocalizedMessage {
+  const message = friendWorkoutMessage(locale, { username, exerciseType: workout.exerciseType, value: workout.reps, loadKg: workout.loadKg });
+  if (!isDistanceExercise(workout.exerciseType)) return message;
+  return { ...message, body: `${username}: ${exerciseLabel(workout.exerciseType, locale)} — ${formatWorkoutValue(workout, locale)}` };
+}
+
 async function notifyAboutWorkout(
   owner: WorkoutCreateUser,
-  workout: CreatedWorkout,
+  workout: CreatedWorkout & { durationSeconds?: number | null },
   activeChallenges: Array<{ challengeId: string; challenge: { name: string } }>,
   beforeRanks: Map<string, Map<string, number>>,
 ): Promise<void> {
   const prisma = await db();
-  const { queueWebPushToUsers } = await import('./web-push');
-  const { exerciseType, reps, loadKg } = workout;
-
-  const value = loadKg != null
-    ? `${formatExerciseValue(reps, exerciseType, true)} × ${loadKg} кг`
-    : formatExerciseValue(reps, exerciseType, true);
 
   const followers = await prisma.friendFollow.findMany({
     where: { friendId: owner.id },
     select: { followerId: true },
   });
   const followerIds = followers.map((f) => f.followerId).filter((id) => id !== owner.id);
-
-  const friendMessage = {
-    title: 'Новая тренировка друга',
-    body: `${owner.username}: ${value} (${exerciseType})`,
-    link: '/friends',
-  };
-  const notifications: Array<{ userId: string; type: string; title: string; body: string; link: string }> =
-    followerIds.map((userId) => ({ userId, type: 'friend_workout', ...friendMessage }));
-  const pushes: Array<() => void> = [];
-  if (followerIds.length) {
-    pushes.push(() => queueWebPushToUsers(followerIds, { ...friendMessage, tag: `friend-workout-${owner.id}` }, 'friend_workout'));
-  }
+  await notifyUsers(followerIds, 'friend_workout', (locale) => friendWorkoutText(locale, owner.username, workout), {
+    tag: `friend-workout-${owner.id}`,
+  });
 
   for (const c of activeChallenges) {
     const before = beforeRanks.get(c.challengeId) ?? new Map<string, number>();
@@ -316,16 +317,12 @@ async function notifyAboutWorkout(
     for (const [participantId, next] of after) {
       const prev = before.get(participantId);
       if (!prev || prev === next || participantId === owner.id) continue;
-      const message = {
-        title: 'Изменилось место в соревновании',
-        body: `${c.challenge.name}: ${prev} → ${next} (${next < prev ? 'поднялись' : 'опустились'})`,
-        link: `/challenges/${c.challengeId}`,
-      };
-      notifications.push({ userId: participantId, type: 'challenge_rank_change', ...message });
-      pushes.push(() => queueWebPushToUsers([participantId], { ...message, tag: `challenge-rank-${c.challengeId}` }, 'challenge_rank_change'));
+      await notifyUsers(
+        [participantId],
+        'challenge_rank_change',
+        (locale) => challengeRankMessage(locale, { challengeId: c.challengeId, challengeName: c.challenge.name, previousRank: prev, rank: next }),
+        { tag: `challenge-rank-${c.challengeId}` },
+      );
     }
   }
-
-  if (notifications.length) await prisma.notification.createMany({ data: notifications });
-  pushes.forEach((send) => send());
 }
