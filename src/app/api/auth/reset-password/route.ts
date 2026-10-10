@@ -1,10 +1,9 @@
 import bcrypt from 'bcryptjs';
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
 import { validateNewPassword } from '@/lib/account-validation';
 import { authRateLimitRules, authText, checkRateLimits, requestLocale, validationErrorText } from '@/lib/auth';
 import { clientIp, tooManyRequests } from '@/lib/rate-limit';
-import { consumePasswordResetToken } from '@/lib/password-reset';
+import { completePasswordReset } from '@/lib/password-reset';
 
 export async function POST(request: Request) {
   const locale = requestLocale(request);
@@ -26,33 +25,10 @@ export async function POST(request: Request) {
     const passwordCheck = validateNewPassword(password);
     if (!passwordCheck.ok) return jsonError(validationErrorText(locale, passwordCheck.code), 400, passwordCheck.code);
 
-    // Atomic: of two requests with the same token only one gets through.
-    const consumed = await consumePasswordResetToken(token);
-    if (!consumed) return jsonError(text.resetLinkInvalid, 400, 'RESET_LINK_INVALID');
-
+    // Link, password, history and sessions change together; any failure → 500 below.
     const passwordHash = await bcrypt.hash(password, 10);
-
-    await prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: consumed.userId },
-        data: { passwordHash },
-      });
-
-      await tx.userProfileHistory.create({
-        data: {
-          userId: consumed.userId,
-          changedById: consumed.userId,
-          changes: { passwordReset: { at: new Date().toISOString() } },
-        },
-      });
-
-      await tx.passwordResetToken.updateMany({
-        where: { userId: consumed.userId, usedAt: null },
-        data: { usedAt: new Date() },
-      });
-    });
-
-    await prisma.session.deleteMany({ where: { userId: consumed.userId } }).catch(() => {});
+    const reset = await completePasswordReset(token, passwordHash);
+    if (!reset) return jsonError(text.resetLinkInvalid, 400, 'RESET_LINK_INVALID');
 
     return NextResponse.json({ ok: true });
   } catch (e) {

@@ -182,3 +182,33 @@ test('the exemption is exact: a lookalike path is still checked', () => {
   );
   assert.equal(verdict.ok, false);
 });
+
+test('a chunked JSON body without Content-Length → 411', () => {
+  const chunked = {
+    host: 'tracker.example.com',
+    origin: 'https://tracker.example.com',
+    'content-type': 'application/json',
+    'transfer-encoding': 'chunked',
+  };
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    assert.deepEqual(
+      checkApiRequest(meta(method, '/api/workouts', chunked)),
+      { ok: false, status: 411, code: 'LENGTH_REQUIRED' },
+      method,
+    );
+  }
+  // With a length the usual limit applies; a bodiless JSON-typed DELETE still passes.
+  assert.deepEqual(checkApiRequest(meta('POST', '/api/workouts', { ...chunked, 'content-length': '42' })), { ok: true });
+  const noBody = { host: chunked.host, origin: chunked.origin, 'content-type': 'application/json' };
+  assert.deepEqual(checkApiRequest(meta('DELETE', '/api/friends', noBody)), { ok: true });
+});
+
+test('the Telegram webhook and avatar multipart may stream without Content-Length', () => {
+  const base = { host: 'tracker.example.com', 'transfer-encoding': 'chunked' };
+  assert.deepEqual(
+    checkApiRequest(meta('POST', '/api/telegram/webhook', { ...base, 'content-type': 'application/json' })),
+    { ok: true },
+  );
+  const multipart = { ...base, origin: 'https://tracker.example.com', 'content-type': 'multipart/form-data; boundary=x' };
+  assert.deepEqual(checkApiRequest(meta('POST', '/api/profile/avatar', multipart)), { ok: true });
+});

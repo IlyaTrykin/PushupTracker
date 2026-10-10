@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 
 const RESET_TTL_MINUTES = 30;
@@ -60,40 +61,76 @@ type ResetTokenWhere = {
   OR?: ResetTokenWhere[];
 };
 
-/** The part of the Prisma client the reset-token functions use (a fake in tests). */
-export type PasswordResetStore = {
-  passwordResetToken: {
-    create(args: { data: { userId: string; tokenHash: string; expiresAt: Date } }): Promise<unknown>;
-    findUnique(args: {
-      where: { tokenHash: string };
-      select: { id: true; userId: true };
-    }): Promise<{ id: string; userId: string } | null>;
-    updateMany(args: { where: ResetTokenWhere; data: { usedAt: Date } }): Promise<{ count: number }>;
-    deleteMany(args: { where: ResetTokenWhere }): Promise<unknown>;
-  };
+type PasswordResetTokenTable = {
+  create(args: { data: { userId: string; tokenHash: string; expiresAt: Date } }): Promise<unknown>;
+  findUnique(args: {
+    where: { tokenHash: string };
+    select: { id: true; userId: true };
+  }): Promise<{ id: string; userId: string } | null>;
+  updateMany(args: { where: ResetTokenWhere; data: { usedAt: Date } }): Promise<{ count: number }>;
+  deleteMany(args: { where: ResetTokenWhere }): Promise<unknown>;
 };
 
-/** Issues a new link token; any earlier unused tokens of the user stop working. */
+/** What runs inside one DB transaction of the reset flow. */
+export type PasswordResetTx = {
+  passwordResetToken: PasswordResetTokenTable;
+  /** Locks the user row until the transaction ends: link issuing for one account is serialised. */
+  lockUser(userId: string): Promise<void>;
+  user: { update(args: { where: { id: string }; data: { passwordHash: string } }): Promise<unknown> };
+  userProfileHistory: {
+    create(args: {
+      data: { userId: string; changedById: string; changes: { passwordReset: { at: string } } };
+    }): Promise<unknown>;
+  };
+  session: { deleteMany(args: { where: { userId: string } }): Promise<unknown> };
+};
+
+/** The part of the Prisma client the reset functions use (a fake in tests). */
+export type PasswordResetStore = {
+  passwordResetToken: PasswordResetTokenTable;
+  transaction<T>(fn: (tx: PasswordResetTx) => Promise<T>): Promise<T>;
+};
+
+function prismaTx(tx: Prisma.TransactionClient): PasswordResetTx {
+  return {
+    passwordResetToken: tx.passwordResetToken,
+    user: tx.user,
+    userProfileHistory: tx.userProfileHistory,
+    session: tx.session,
+    async lockUser(userId) {
+      await tx.$executeRaw`SELECT 1 FROM "User" WHERE "id" = ${userId} FOR NO KEY UPDATE`;
+    },
+  };
+}
+
+const prismaStore: PasswordResetStore = {
+  get passwordResetToken() {
+    return prisma.passwordResetToken;
+  },
+  transaction: (fn) => prisma.$transaction((tx) => fn(prismaTx(tx))),
+};
+
+/**
+ * Issues a new link token; any earlier unused tokens of the user stop working. Cancelling
+ * the old tokens and inserting the new one happen in one transaction under a lock on the
+ * user, so simultaneous requests still leave exactly one live link.
+ */
 export async function createPasswordResetToken(
   userId: string,
-  db: PasswordResetStore = prisma,
+  db: PasswordResetStore = prismaStore,
 ): Promise<{ token: string; expiresAt: Date }> {
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = sha256(token);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + RESET_TTL_MINUTES * 60 * 1000);
 
-  await db.passwordResetToken.updateMany({
-    where: { userId, usedAt: null },
-    data: { usedAt: now },
-  });
-
-  await db.passwordResetToken.create({
-    data: {
-      userId,
-      tokenHash,
-      expiresAt,
-    },
+  await db.transaction(async (tx) => {
+    await tx.lockUser(userId);
+    await tx.passwordResetToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: now },
+    });
+    await tx.passwordResetToken.create({ data: { userId, tokenHash, expiresAt } });
   });
 
   // Keep table compact: drop used and expired tokens (the new one is neither).
@@ -111,7 +148,7 @@ export async function createPasswordResetToken(
 /** Marks the token used and returns its owner — exactly once, even under concurrent requests. */
 export async function consumePasswordResetToken(
   token: string,
-  db: PasswordResetStore = prisma,
+  db: Pick<PasswordResetStore, 'passwordResetToken'> = prismaStore,
 ): Promise<{ userId: string } | null> {
   const tokenHash = sha256(token);
   const now = new Date();
@@ -128,6 +165,41 @@ export async function consumePasswordResetToken(
   });
 
   return count === 1 ? { userId: row.userId } : null;
+}
+
+/**
+ * Sets the new password by a reset link: returns the owner, or null for a dead link.
+ * Burning the link, the new hash, the history row and dropping every session are one
+ * transaction — if any step fails nothing changes, the link stays usable and the caller
+ * answers 500 rather than «ok».
+ */
+export async function completePasswordReset(
+  token: string,
+  passwordHash: string,
+  db: PasswordResetStore = prismaStore,
+): Promise<{ userId: string } | null> {
+  return db.transaction(async (tx) => {
+    // Lock order as in createPasswordResetToken — user first, then tokens — so a parallel
+    // «send me a link» and this reset never deadlock on each other.
+    const owner = await tx.passwordResetToken.findUnique({
+      where: { tokenHash: sha256(token) },
+      select: { id: true, userId: true },
+    });
+    if (!owner) return null;
+    await tx.lockUser(owner.userId);
+    // Atomic: of two requests with the same token only one gets through.
+    const consumed = await consumePasswordResetToken(token, tx);
+    if (!consumed) return null;
+    const { userId } = consumed;
+    const now = new Date();
+    await tx.user.update({ where: { id: userId }, data: { passwordHash } });
+    await tx.userProfileHistory.create({
+      data: { userId, changedById: userId, changes: { passwordReset: { at: now.toISOString() } } },
+    });
+    await tx.passwordResetToken.updateMany({ where: { userId, usedAt: null }, data: { usedAt: now } });
+    await tx.session.deleteMany({ where: { userId } });
+    return consumed;
+  });
 }
 
 export async function sendPasswordResetEmail(params: {

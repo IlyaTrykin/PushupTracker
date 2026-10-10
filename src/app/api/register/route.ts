@@ -1,5 +1,4 @@
-import { NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { NextResponse, after } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { normalizeLocale } from '@/i18n/locale';
@@ -10,6 +9,60 @@ import { sendAdminNewUserRegisteredEmail } from '@/lib/notification-email';
 import { normalizeEmail, validateNewPassword, validateNewUsername } from '@/lib/account-validation';
 import { authRateLimitRules, authText, checkRateLimits, requestLocale, validationErrorText } from '@/lib/auth';
 import { clientIp, tooManyRequests } from '@/lib/rate-limit';
+import { registerAccount } from './register-account';
+
+async function notifyAdminsOfRegistration(
+  user: { id: string; username: string; email: string },
+  request: Request,
+): Promise<void> {
+  const admins = await prisma.user.findMany({
+    where: { isAdmin: true, deletedAt: null },
+    select: { id: true, username: true, email: true },
+  });
+  if (!admins.length) return;
+
+  const adminIds = admins.map((a) => a.id);
+  const title = 'Новая регистрация пользователя';
+  const body = `${user.username} (${user.email})`;
+  const link = '/admin/users';
+  const adminIdsForPush = await filterUsersByChannel(adminIds, 'admin_new_user_registered', 'push');
+  const adminIdsForEmail = await filterUsersByChannel(adminIds, 'admin_new_user_registered', 'email');
+  const adminIdsForInApp = Array.from(new Set([...adminIdsForPush, ...adminIdsForEmail]));
+
+  if (adminIdsForInApp.length) {
+    await prisma.notification.createMany({
+      data: adminIdsForInApp.map((adminId) => ({
+        userId: adminId,
+        type: 'admin_new_user_registered',
+        title,
+        body,
+        link,
+      })),
+    });
+  }
+
+  if (adminIdsForPush.length) {
+    await sendWebPushToUsers(adminIdsForPush, { title, body, link, tag: `admin-register-${user.id}` }).catch(
+      (pushError) => {
+        console.error('REGISTER ADMIN PUSH ERROR:', pushError);
+      },
+    );
+  }
+
+  for (const admin of admins) {
+    if (!admin.email) continue;
+    if (!adminIdsForEmail.includes(admin.id)) continue;
+    await sendAdminNewUserRegisteredEmail({
+      to: admin.email,
+      adminUsername: admin.username,
+      newUsername: user.username,
+      newEmail: user.email,
+      request,
+    }).catch((mailError) => {
+      console.error('REGISTER ADMIN EMAIL ERROR:', mailError);
+    });
+  }
+}
 
 export async function POST(request: Request) {
   const locale = requestLocale(request);
@@ -53,92 +106,20 @@ export async function POST(request: Request) {
       );
     }
 
-    // Ник уникален без учёта регистра; занятость ника и email — один общий ответ.
-    const taken = await prisma.user.findFirst({
-      where: {
-        OR: [{ username: { equals: username, mode: 'insensitive' } }, { email }],
-      },
-      select: { id: true },
-    });
-    const accountTaken = () =>
-      NextResponse.json({ error: text.accountTaken, code: 'ACCOUNT_TAKEN' }, { status: 409 });
-    if (taken) return accountTaken();
-
+    // Хеш до проверки занятости: ответ «занято» не быстрее успешной регистрации.
     const passwordHash = await bcrypt.hash(password, 10);
-
-    let user;
-    try {
-      user = await prisma.user.create({
-        data: {
-          email,
-          username,
-          passwordHash,
-          language,
-        },
-      });
-    } catch (createError) {
-      if (createError instanceof Prisma.PrismaClientKnownRequestError && createError.code === 'P2002') {
-        return accountTaken();
-      }
-      throw createError;
+    const outcome = await registerAccount({ email, username, passwordHash, language }, prisma);
+    if (!outcome.ok) {
+      return NextResponse.json({ error: text.accountTaken, code: outcome.code }, { status: outcome.status });
     }
+    const user = outcome.user;
 
-    // Админам отправляем in-app/push/email о новой регистрации (ошибки не ломают регистрацию).
-    try {
-      const admins = await prisma.user.findMany({
-        where: { isAdmin: true, deletedAt: null },
-        select: { id: true, username: true, email: true },
-      });
-
-      if (admins.length) {
-        const adminIds = admins.map((a) => a.id);
-        const title = 'Новая регистрация пользователя';
-        const body = `${user.username} (${user.email})`;
-        const link = '/admin/users';
-        const adminIdsForPush = await filterUsersByChannel(adminIds, 'admin_new_user_registered', 'push');
-        const adminIdsForEmail = await filterUsersByChannel(adminIds, 'admin_new_user_registered', 'email');
-        const adminIdsForInApp = Array.from(new Set([...adminIdsForPush, ...adminIdsForEmail]));
-
-        if (adminIdsForInApp.length) {
-          await prisma.notification.createMany({
-            data: adminIdsForInApp.map((adminId) => ({
-              userId: adminId,
-              type: 'admin_new_user_registered',
-              title,
-              body,
-              link,
-            })),
-          });
-        }
-
-        if (adminIdsForPush.length) {
-          await sendWebPushToUsers(adminIdsForPush, {
-            title,
-            body,
-            link,
-            tag: `admin-register-${user.id}`,
-          }).catch((pushError) => {
-            console.error('REGISTER ADMIN PUSH ERROR:', pushError);
-          });
-        }
-
-        for (const admin of admins) {
-          if (!admin.email) continue;
-          if (!adminIdsForEmail.includes(admin.id)) continue;
-          await sendAdminNewUserRegisteredEmail({
-            to: admin.email,
-            adminUsername: admin.username,
-            newUsername: user.username,
-            newEmail: user.email,
-            request,
-          }).catch((mailError) => {
-            console.error('REGISTER ADMIN EMAIL ERROR:', mailError);
-          });
-        }
-      }
-    } catch (notifyError) {
-      console.error('REGISTER ADMIN NOTIFY ERROR:', notifyError);
-    }
+    // Админам — in-app/push/email о новой регистрации; после ответа, ошибки только в лог.
+    after(() =>
+      notifyAdminsOfRegistration(user, request).catch((notifyError) => {
+        console.error('REGISTER ADMIN NOTIFY ERROR:', notifyError);
+      }),
+    );
 
     const res = NextResponse.json({
       id: user.id,

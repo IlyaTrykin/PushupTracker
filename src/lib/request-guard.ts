@@ -3,7 +3,8 @@
  * - CSRF: unsafe methods must come from our own origin (`Origin`, else `Referer`);
  * - Content-Type: only JSON (plus multipart on the avatar uploads), so a same-site page
  *   cannot post a CORS-free `text/plain` or form body with the session cookie;
- * - body size by `Content-Length`, before anything reads the body.
+ * - body size by `Content-Length`, before anything reads the body; a JSON body streamed
+ *   without it (chunked) is refused with 411, since its size cannot be checked up front.
  */
 
 export const JSON_BODY_LIMIT_BYTES = 64 * 1024;
@@ -17,11 +18,11 @@ export const ORIGIN_EXEMPT_API_PATHS: readonly string[] = ['/api/telegram/webhoo
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-export type GuardFailureCode = 'FORBIDDEN_ORIGIN' | 'UNSUPPORTED_CONTENT_TYPE' | 'PAYLOAD_TOO_LARGE';
+export type GuardFailureCode = 'FORBIDDEN_ORIGIN' | 'UNSUPPORTED_CONTENT_TYPE' | 'PAYLOAD_TOO_LARGE' | 'LENGTH_REQUIRED';
 
 export type GuardVerdict =
   | { ok: true }
-  | { ok: false; status: 403 | 413 | 415; code: GuardFailureCode };
+  | { ok: false; status: 403 | 411 | 413 | 415; code: GuardFailureCode };
 
 export type ApiRequestMeta = {
   method: string;
@@ -34,6 +35,7 @@ export type ApiRequestMeta = {
 const FORBIDDEN_ORIGIN: GuardVerdict = { ok: false, status: 403, code: 'FORBIDDEN_ORIGIN' };
 const UNSUPPORTED_CONTENT_TYPE: GuardVerdict = { ok: false, status: 415, code: 'UNSUPPORTED_CONTENT_TYPE' };
 const PAYLOAD_TOO_LARGE: GuardVerdict = { ok: false, status: 413, code: 'PAYLOAD_TOO_LARGE' };
+const LENGTH_REQUIRED: GuardVerdict = { ok: false, status: 411, code: 'LENGTH_REQUIRED' };
 
 function parseUrl(raw: string | null | undefined): URL | null {
   if (!raw) return null;
@@ -109,6 +111,12 @@ export function checkApiRequest(meta: ApiRequestMeta): GuardVerdict {
   }
 
   const length = contentLength(headers.get('content-length'));
+  // A body without Content-Length (Transfer-Encoding: chunked) would dodge the size limit.
+  // Exempt: the Telegram webhook and avatar multipart — Next buffers at most 10 MB of a body
+  // behind the proxy (`proxyClientMaxBodySize`), and the avatar routes check the file size.
+  const streamed = length === null && headers.get('transfer-encoding') !== null;
+  if (streamed && !originExempt && !(isMultipart && multipartAllowed)) return LENGTH_REQUIRED;
+
   const limit = isMultipart && multipartAllowed ? MULTIPART_BODY_LIMIT_BYTES : JSON_BODY_LIMIT_BYTES;
   if (length !== null && length > limit) return PAYLOAD_TOO_LARGE;
 
@@ -119,6 +127,7 @@ const GUARD_MESSAGES: Record<GuardFailureCode, { ru: string; en: string }> = {
   FORBIDDEN_ORIGIN: { ru: 'Запрос с чужого сайта отклонён', en: 'Cross-site request rejected' },
   UNSUPPORTED_CONTENT_TYPE: { ru: 'Неподдерживаемый формат запроса', en: 'Unsupported request format' },
   PAYLOAD_TOO_LARGE: { ru: 'Слишком большой запрос', en: 'Request is too large' },
+  LENGTH_REQUIRED: { ru: 'Нужен заголовок Content-Length', en: 'Content-Length header is required' },
 };
 
 /** JSON body for a rejected request, in the project's `{ error, code }` shape. */

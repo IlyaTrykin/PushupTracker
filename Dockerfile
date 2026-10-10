@@ -56,4 +56,6 @@ EXPOSE 3000
 # Entrypoint стартует от root только чтобы отдать том uploads пользователю node,
 # затем сбрасывает привилегии: миграции и next start работают от node.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["bash", "-lc", "npx prisma migrate deploy && npx next start -p 3000"]
+# next — через exec, без обёртки npx: процесс node сам становится потомком init (tini) и
+# получает SIGTERM от `docker stop` напрямую; npm/sh не гасятся раньше него с ошибкой.
+CMD ["bash", "-lc", "npx prisma migrate deploy && exec ./node_modules/.bin/next start -p 3000"]

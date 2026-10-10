@@ -36,12 +36,17 @@ services:
         BUILD_TIME: ${BUILD_TIME:-}
     container_name: pushup-web
     restart: unless-stopped
+    # tini (docker-init) как PID 1: SIGTERM от `docker stop` доходит до next (CMD запускает его
+    # через exec), контейнер гасится за доли секунды, а не по таймауту. TINI_KILL_PROCESS_GROUP
+    # ниже — сигнал всей группе процессов, на случай дочерних процессов node.
+    init: true
     env_file:
       - .env
     environment:
       # Фоновый планировщик (напоминания, итоги недели, чистка БД) включается ТОЛЬКО здесь:
       # dev, локальный `next start` и локальный docker его не запускают.
       SCHEDULER_ENABLED: '1'
+      TINI_KILL_PROCESS_GROUP: '1'
     depends_on:
       db:
         condition: service_healthy

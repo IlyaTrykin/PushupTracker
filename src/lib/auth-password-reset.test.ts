@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   PasswordResetConfigError,
   buildPasswordResetUrl,
+  completePasswordReset,
   consumePasswordResetToken,
   createPasswordResetToken,
   sendPasswordResetEmail,
@@ -69,7 +70,59 @@ function fakeStore() {
       },
     },
   };
-  return store;
+  // Per-user lock held until the transaction ends (like SELECT … FOR NO KEY UPDATE).
+  const locks = new Map<string, Promise<void>>();
+  const sessionsDeleted: string[] = [];
+  let failSessionDelete = false;
+  const tx = (held: Array<() => void>) => ({
+    ...store,
+    async lockUser(userId: string) {
+      while (locks.has(userId)) await locks.get(userId);
+      let release!: () => void;
+      locks.set(userId, new Promise<void>((resolve) => (release = resolve)));
+      held.push(() => {
+        locks.delete(userId);
+        release();
+      });
+    },
+    user: {
+      async update() {
+        await tick();
+        return {};
+      },
+    },
+    userProfileHistory: {
+      async create() {
+        await tick();
+        return {};
+      },
+    },
+    session: {
+      async deleteMany({ where }: { where: { userId: string } }) {
+        await tick();
+        if (failSessionDelete) throw new Error('session table unavailable');
+        sessionsDeleted.push(where.userId);
+        return { count: 1 };
+      },
+    },
+  });
+  return {
+    ...store,
+    async transaction<T>(fn: (t: ReturnType<typeof tx>) => Promise<T>): Promise<T> {
+      const held: Array<() => void> = [];
+      try {
+        return await fn(tx(held));
+      } finally {
+        held.forEach((release) => release());
+      }
+    },
+    liveTokens: (userId: string, now = new Date()) =>
+      rows.filter((r) => r.userId === userId && r.usedAt === null && r.expiresAt > now).length,
+    sessionsDeleted,
+    failSessionDeleteOnce() {
+      failSessionDelete = true;
+    },
+  };
 }
 
 function withEnv<T>(patch: Record<string, string | undefined>, fn: () => T): T {
@@ -106,6 +159,27 @@ test('requesting a new link cancels the previous one', async () => {
   const second = await createPasswordResetToken('user-1', db);
   assert.equal(await consumePasswordResetToken(first.token, db), null);
   assert.deepEqual(await consumePasswordResetToken(second.token, db), { userId: 'user-1' });
+});
+
+test('simultaneous link requests leave exactly one live token', async () => {
+  const db = fakeStore();
+  await Promise.all(Array.from({ length: 5 }, () => createPasswordResetToken('user-1', db)));
+  assert.equal(db.liveTokens('user-1'), 1);
+});
+
+test('a reset that cannot drop the sessions fails instead of reporting success', async () => {
+  const db = fakeStore();
+  const { token } = await createPasswordResetToken('user-1', db);
+  db.failSessionDeleteOnce();
+  await assert.rejects(completePasswordReset(token, 'new-hash', db), /session table unavailable/);
+});
+
+test('a successful reset drops the sessions and burns the link', async () => {
+  const db = fakeStore();
+  const { token } = await createPasswordResetToken('user-1', db);
+  assert.deepEqual(await completePasswordReset(token, 'new-hash', db), { userId: 'user-1' });
+  assert.deepEqual(db.sessionsDeleted, ['user-1']);
+  assert.equal(await completePasswordReset(token, 'other-hash', db), null);
 });
 
 test('an unknown token is refused', async () => {

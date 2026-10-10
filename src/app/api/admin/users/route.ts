@@ -17,6 +17,25 @@ function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
+const USERNAME_TAKEN = 'Пользователь с таким username уже существует';
+const EMAIL_TAKEN = 'Пользователь с таким email уже существует';
+
+/** Ник занят без учёта регистра (как индекс `User_username_lower_key`); `exceptId` — сам правимый. */
+async function usernameTaken(username: string, exceptId?: string): Promise<boolean> {
+  const hit = await prisma.user.findFirst({
+    where: { username: { equals: username, mode: 'insensitive' }, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    select: { id: true },
+  });
+  return Boolean(hit);
+}
+
+/** P2002 (гонка мимо проверки) → 409 с текстом по полю; иначе null. */
+function uniqueViolationResponse(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return null;
+  const target = JSON.stringify(error.meta?.target ?? '');
+  return jsonError(target.includes('email') ? EMAIL_TAKEN : USERNAME_TAKEN, 409);
+}
+
 function usernameFromEmail(email: string) {
   const base = email.split('@')[0] || 'user';
   return base.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 32) || 'user';
@@ -76,19 +95,23 @@ export async function POST(request: Request) {
   if (!username) return jsonError('username обязателен');
 
   const existsEmail = await prisma.user.findUnique({ where: { email } });
-  if (existsEmail) return jsonError('Пользователь с таким email уже существует', 409);
+  if (existsEmail) return jsonError(EMAIL_TAKEN, 409);
 
-  const existsUsername = await prisma.user.findUnique({ where: { username } }).catch(() => null);
-  if (existsUsername) return jsonError('Пользователь с таким username уже существует', 409);
+  if (await usernameTaken(username)) return jsonError(USERNAME_TAKEN, 409);
 
   const passwordHash = await bcrypt.hash(password, 10);
 
-  const user = await prisma.user.create({
-    data: { email, username, passwordHash, isAdmin },
-    select: { id: true, email: true, username: true, isAdmin: true },
-  });
-
-  return NextResponse.json({ user });
+  try {
+    const user = await prisma.user.create({
+      data: { email, username, passwordHash, isAdmin },
+      select: { id: true, email: true, username: true, isAdmin: true },
+    });
+    return NextResponse.json({ user });
+  } catch (e) {
+    const taken = uniqueViolationResponse(e);
+    if (taken) return taken;
+    throw e;
+  }
 }
 
 // body: { id, email?, username?, password?, isAdmin? }
@@ -162,7 +185,12 @@ export async function PATCH(request: Request) {
     if (!email) return jsonError('Некорректный email');
     data.email = email;
   }
-  if (body.username !== undefined) data.username = String(body.username || '').trim();
+  if (body.username !== undefined) {
+    const username = String(body.username || '').trim();
+    if (!username) return jsonError('username обязателен');
+    if (await usernameTaken(username, id)) return jsonError(USERNAME_TAKEN, 409);
+    data.username = username;
+  }
   if (body.isAdmin !== undefined) data.isAdmin = Boolean(body.isAdmin);
 
   const passwordChanged = body.password !== undefined;
@@ -176,11 +204,18 @@ export async function PATCH(request: Request) {
     return jsonError('Нельзя снять права администратора с текущей сессии', 400);
   }
 
-  const user = await prisma.user.update({
-    where: { id },
-    data,
-    select: { id: true, email: true, username: true, avatarPath: true, isAdmin: true, createdAt: true, deletedAt: true },
-  });
+  let user;
+  try {
+    user = await prisma.user.update({
+      where: { id },
+      data,
+      select: { id: true, email: true, username: true, avatarPath: true, isAdmin: true, createdAt: true, deletedAt: true },
+    });
+  } catch (e) {
+    const taken = uniqueViolationResponse(e);
+    if (taken) return taken;
+    throw e;
+  }
 
   // A new password set by the admin logs the user out everywhere (as reset and change-password do).
   // The admin changing their own password keeps the current session.
