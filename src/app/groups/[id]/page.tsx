@@ -10,6 +10,8 @@ import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/li
 import { toLoadPoints } from '@/lib/analytics/utils';
 import { formatExerciseValue, formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { computePeriodStats, localTodayKey, streakFreezeMessages, workoutDayKey } from '@/lib/day-stats';
+import GroupGoalCard from '@/components/GroupGoalCard';
+import { groupGoalMessages } from '@/i18n/messages/features/group-goal';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { t } from '@/i18n/translate';
@@ -196,7 +198,7 @@ function getIsoWeekNumber(date: Date): number {
   return Math.ceil((((copy.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }
 
-function describeAuditAction(tt: (input: string) => string, log: GroupAuditLogItem) {
+function describeAuditAction(tt: (input: string) => string, log: GroupAuditLogItem, locale: 'ru' | 'en') {
   const actor = log.actor?.username || tt('Система');
   const target = log.targetUser?.username || tt('участник');
 
@@ -235,6 +237,10 @@ function describeAuditAction(tt: (input: string) => string, log: GroupAuditLogIt
       return `${actor} ${tt('создал соревнование группы')}`;
     case 'group_challenge_deleted':
       return `${actor} ${tt('удалил соревнование группы')}`;
+    case 'group_goal_created':
+      return `${actor} ${groupGoalMessages[locale].audit.created}`;
+    case 'group_goal_deleted':
+      return `${actor} ${groupGoalMessages[locale].audit.deleted}`;
     case 'group_member_stats_inclusion_updated':
       return `${actor} ${tt('обновил участие участника в статистике группы')} ${target}`;
     default:
@@ -426,6 +432,8 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
   const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = (input: string) => t(locale, input);
+  const challengeModeLabel = (mode: string) =>
+    (groupGoalMessages[locale].challengeModes as Record<string, string>)[mode] || mode;
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const groupId = String(params?.id || '');
@@ -900,6 +908,8 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       {error ? <p style={errorBanner}>{error}</p> : null}
       {info ? <p style={infoBanner}>{info}</p> : null}
       {isManageView && !group.canManage ? <p style={errorBanner}>{tt('Недостаточно прав для управления группой.')}</p> : null}
+
+      {isOverview ? <GroupGoalCard groupId={group.id} canManage={group.canManage} /> : null}
 
       {group.canManage && isOverview ? (
       <section style={card}>
@@ -1500,10 +1510,10 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                 ))}
               </select>
               <select value={challengeMode} onChange={(event) => setChallengeMode(event.target.value)} style={input}>
-                <option value="most">most</option>
-                <option value="target">target</option>
-                <option value="daily_min">daily_min</option>
-                <option value="sets_min">sets_min</option>
+                <option value="most">{groupGoalMessages[locale].challengeModes.most}</option>
+                <option value="target">{groupGoalMessages[locale].challengeModes.target}</option>
+                <option value="daily_min">{groupGoalMessages[locale].challengeModes.daily_min}</option>
+                <option value="sets_min">{groupGoalMessages[locale].challengeModes.sets_min}</option>
               </select>
             </div>
             {challengeMode !== 'most' ? (
@@ -1523,7 +1533,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
             <div key={challenge.id} style={subCard}>
               <h3 style={subTitle}>{challenge.name}</h3>
               <div style={metaLine}>
-                {challenge.exerciseType} · {challenge.mode} · {new Date(challenge.startDate).toLocaleDateString(locale)} - {new Date(challenge.endDate).toLocaleDateString(locale)}
+                {exerciseLabel(challenge.exerciseType as ExerciseFilter, messages.nav.exercise) || challenge.exerciseType} · {challengeModeLabel(challenge.mode)} · {new Date(challenge.startDate).toLocaleDateString(locale)} - {new Date(challenge.endDate).toLocaleDateString(locale)}
               </div>
               <div style={metaLine}>
                 {tt('Участники')}: {challenge.participants.map((participant) => participant.user.username).join(', ')}
@@ -1542,7 +1552,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
             {auditLogs.map((log) => (
               <div key={log.id} style={rowCard}>
                 <div style={{ display: 'grid', gap: 4 }}>
-                  <strong>{describeAuditAction(tt, log)}</strong>
+                  <strong>{describeAuditAction(tt, log, locale)}</strong>
                   <span style={metaLine}>{new Date(log.createdAt).toLocaleString(locale)}</span>
                 </div>
               </div>
