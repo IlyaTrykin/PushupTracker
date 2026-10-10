@@ -4,6 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
+import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
@@ -793,6 +794,8 @@ export default function FriendsPage() {
     () => Array.from(new Set([...feedReactionIds, ...modalReactionIds])),
     [feedReactionIds, modalReactionIds],
   );
+  // F3: 🏆 at workouts that set a record or earned a badge.
+  const achievementMarks = useWorkoutAchievementMarks(allVisibleReactionIds);
 
   useEffect(() => {
     const first = selectedFriendWorkouts[0];
@@ -1152,6 +1155,7 @@ export default function FriendsPage() {
                         <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={18} height={18} style={feedTypeIcon} unoptimized />
 
                         <div style={feedReps}>
+                          <AchievementBadge mark={achievementMarks[w.id]} locale={locale === 'en' ? 'en' : 'ru'} />
                           {formatWorkoutValue(w, locale, false)}
                           {formatWorkoutSides(w, locale) ? <div style={feedSides}>{formatWorkoutSides(w, locale)}</div> : null}
                         </div>
@@ -1401,7 +1405,10 @@ export default function FriendsPage() {
                           <Image src={exerciseFeedIcon(workoutType)} alt={tt(exerciseLabel(workoutType))} width={16} height={16} style={friendWorkoutTypeIcon} unoptimized />
                         </div>
                         <div>{formatTimeHHMM(w.time || w.date)}</div>
-                        <div style={{ fontWeight: 900 }}>{formatWorkoutValue(w, locale)}</div>
+                        <div style={{ fontWeight: 900 }}>
+                          <AchievementBadge mark={achievementMarks[w.id]} locale={locale === 'en' ? 'en' : 'ru'} />
+                          {formatWorkoutValue(w, locale)}
+                        </div>
                       </div>
 
                       {reaction?.summary?.length ? (

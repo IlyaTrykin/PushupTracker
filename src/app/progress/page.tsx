@@ -34,6 +34,8 @@ import { getIntlLocale } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { streakFreezeMessages } from '@/lib/day-stats';
 import { EXERCISE_ORDER, isTimedExercise } from '@/lib/exercises';
+import { achievementsMessages } from '@/i18n/messages/features/achievements';
+import AchievementsPanel from './AchievementsPanel';
 
 const pageStyle: CSSProperties = {
   '--analytics-accent': '#b45309',
@@ -1231,6 +1233,10 @@ export default function ProgressPage() {
           </Section>
         </>
       ) : null}
+
+      <Section title={achievementsMessages[locale === 'en' ? 'en' : 'ru'].sectionTitle} subtitle={achievementsMessages[locale === 'en' ? 'en' : 'ru'].sectionSubtitle}>
+        <AchievementsPanel locale={locale === 'en' ? 'en' : 'ru'} />
+      </Section>
     </div>
   );
 }

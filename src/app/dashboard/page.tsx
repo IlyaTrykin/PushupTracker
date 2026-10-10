@@ -19,6 +19,7 @@ import { dayKeyInZone } from '@/lib/calendar-day';
 import { recommendToday } from '@/lib/recommendation';
 import DailyGoalRing from '@/components/DailyGoalRing';
 import TodayRecommendation from '@/components/TodayRecommendation';
+import RecordToast, { readCelebration, type Celebration } from '@/components/RecordToast';
 import styles from './dashboard.module.css';
 
 type Workout = {
@@ -311,6 +312,9 @@ export default function DashboardPage() {
   );
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // F3: «Новый рекорд подхода!» / «Рекорд дня!» / new badges from the POST response.
+  const [celebration, setCelebration] = useState<Celebration | null>(null);
+  const closeCelebration = useCallback(() => setCelebration(null), []);
   // B04: «Добавить» заблокирована, пока запрос в пути; повтор того же ввода после обрыва сети
   // уходит с тем же clientRequestId, и сервер вернёт уже созданную запись.
   const [adding, setAdding] = useState(false);
@@ -546,6 +550,7 @@ export default function DashboardPage() {
     pendingRequestRef.current = null;
     setInfo(tt('Добавлено'));
     setToastMessage(readWorkoutReward(data)?.message ?? null);
+    setCelebration(readCelebration(data));
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);
@@ -764,6 +769,9 @@ export default function DashboardPage() {
   return (
     <div className={`app-page ${styles.page}`}>
       {toastMessage ? <div className="app-toast">{toastMessage}</div> : null}
+      {celebration && !toastMessage ? (
+        <RecordToast celebration={celebration} locale={locale === 'en' ? 'en' : 'ru'} onClose={closeCelebration} />
+      ) : null}
 
       <section className={styles.hero}>
         <div className={styles.entryCard}>

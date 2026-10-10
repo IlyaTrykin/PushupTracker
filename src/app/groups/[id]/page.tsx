@@ -11,6 +11,7 @@ import { toLoadPoints } from '@/lib/analytics/utils';
 import { formatExerciseValue, formatWorkoutSides, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { computePeriodStats, localTodayKey, streakFreezeMessages, workoutDayKey } from '@/lib/day-stats';
 import GroupGoalCard from '@/components/GroupGoalCard';
+import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
 import { groupGoalMessages } from '@/i18n/messages/features/group-goal';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
@@ -580,6 +581,10 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       .filter((item) => deferredExerciseFilter === 'all' || item.exerciseType === deferredExerciseFilter)
       .filter((item) => isWorkoutInPeriod(item, deferredFeedPeriod));
   }, [deferredExerciseFilter, deferredFeedPeriod, statsGroupWorkouts]);
+
+  // F3: 🏆 at workouts that set a record or earned a badge.
+  const feedWorkoutIds = useMemo(() => filteredFeedItems.map((item) => item.id), [filteredFeedItems]);
+  const achievementMarks = useWorkoutAchievementMarks(feedWorkoutIds);
 
   const groupedFeedItems = useMemo(() => {
     const groups = new Map<string, GroupFeedItem[]>();
@@ -1479,6 +1484,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                         </div>
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={18} height={18} style={feedTypeIcon} unoptimized />
                         <div style={feedReps}>
+                          <AchievementBadge mark={achievementMarks[workout.id]} locale={locale === 'en' ? 'en' : 'ru'} />
                           {formatWorkoutValue(workout, locale, false)}
                           {formatWorkoutSides(workout, locale) ? <div style={feedSides}>{formatWorkoutSides(workout, locale)}</div> : null}
                         </div>
