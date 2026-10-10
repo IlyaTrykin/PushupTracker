@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
-import PushNotificationsToggle from '@/components/PushNotificationsToggle';
+import { PASSWORD_MIN_LENGTH } from '@/lib/account-validation';
+import NotificationSettings from './NotificationSettings';
 import { useI18n } from '@/i18n/provider';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 
@@ -225,7 +226,7 @@ export default function ProfilePage() {
       setError(messages.profile.password.missingCurrent);
       return;
     }
-    if (newPassword.length < 6) {
+    if (Array.from(newPassword).length < PASSWORD_MIN_LENGTH) {
       setError(messages.profile.password.minLength);
       return;
     }
@@ -447,7 +448,7 @@ export default function ProfilePage() {
             {messages.profile.notifications.adminSummary}
           </div>
         ) : null}
-        <PushNotificationsToggle />
+        <NotificationSettings />
       </section>
 
       <section style={dangerCard}>

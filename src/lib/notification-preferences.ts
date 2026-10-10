@@ -10,17 +10,28 @@ export type NotificationEventType =
   | 'friend_workout'
   | 'friend_reaction'
   | 'program_reminder'
-  | 'admin_new_user_registered';
+  | 'admin_new_user_registered'
+  | 'daily_goal_reminder'
+  | 'weekly_league'
+  | 'weekly_summary'
+  | 'friend_achievement'
+  | 'group_goal_completed';
 
-export type NotificationChannel = 'push' | 'email';
+export type NotificationChannel = 'push' | 'email' | 'telegram';
 
-type NotificationEventDef = {
+export type ChannelPreference = { push: boolean; email: boolean; telegram: boolean };
+
+export type NotificationEventDef = {
   eventType: NotificationEventType;
   label: string;
   defaultPush: boolean;
   defaultEmail: boolean;
+  /** Telegram is opt-in per event (matches `NotificationPreference.telegramEnabled @default(false)`). */
+  defaultTelegram?: boolean;
   adminOnly?: boolean;
 };
+
+type StoredPreference = { pushEnabled: boolean; emailEnabled: boolean; telegramEnabled: boolean };
 
 export const NOTIFICATION_EVENT_DEFS: NotificationEventDef[] = [
   {
@@ -84,7 +95,41 @@ export const NOTIFICATION_EVENT_DEFS: NotificationEventDef[] = [
     defaultEmail: true,
     adminOnly: true,
   },
+  {
+    eventType: 'daily_goal_reminder',
+    label: 'Напоминание о цели дня',
+    defaultPush: true,
+    defaultEmail: false,
+  },
+  {
+    eventType: 'weekly_league',
+    label: 'Итог лиги недели',
+    defaultPush: true,
+    defaultEmail: false,
+  },
+  {
+    eventType: 'weekly_summary',
+    label: 'Итоги недели',
+    defaultPush: true,
+    defaultEmail: false,
+  },
+  {
+    eventType: 'friend_achievement',
+    label: 'Рекорды и достижения друзей',
+    defaultPush: true,
+    defaultEmail: false,
+  },
+  {
+    eventType: 'group_goal_completed',
+    label: 'Цель группы выполнена',
+    defaultPush: true,
+    defaultEmail: false,
+  },
 ];
+
+export function isNotificationEventType(value: unknown): value is NotificationEventType {
+  return typeof value === 'string' && NOTIFICATION_EVENT_DEFS.some((d) => d.eventType === value);
+}
 
 const eventDefMap = new Map(NOTIFICATION_EVENT_DEFS.map((d) => [d.eventType, d]));
 
@@ -97,6 +142,25 @@ export function getDefaultFor(eventType: NotificationEventType): NotificationEve
   };
 }
 
+/**
+ * Channels for one user and event: the stored row if any, otherwise the event defaults.
+ * `null` — the event is admin-only and the user is not an admin (nothing at all is sent).
+ */
+export function resolveChannelPreference(
+  def: NotificationEventDef,
+  row: StoredPreference | null | undefined,
+  isAdmin: boolean,
+): ChannelPreference | null {
+  if (def.adminOnly && !isAdmin) return null;
+  if (!row) return { push: def.defaultPush, email: def.defaultEmail, telegram: Boolean(def.defaultTelegram) };
+  return { push: row.pushEnabled, email: row.emailEnabled, telegram: row.telegramEnabled };
+}
+
+/** Telegram channel exists only when the bot token is configured (T12). */
+export function isTelegramConfigured(): boolean {
+  return Boolean((process.env.TELEGRAM_BOT_TOKEN || '').trim());
+}
+
 export async function getResolvedPreferencesForUser(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -105,18 +169,19 @@ export async function getResolvedPreferencesForUser(userId: string) {
   const availableDefs = NOTIFICATION_EVENT_DEFS.filter((def) => !def.adminOnly || user?.isAdmin);
   const rows = await prisma.notificationPreference.findMany({
     where: { userId },
-    select: { eventType: true, pushEnabled: true, emailEnabled: true },
+    select: { eventType: true, pushEnabled: true, emailEnabled: true, telegramEnabled: true },
   });
 
   const byEvent = new Map(rows.map((r) => [r.eventType as NotificationEventType, r]));
 
   return availableDefs.map((def) => {
-    const row = byEvent.get(def.eventType);
+    const channels = resolveChannelPreference(def, byEvent.get(def.eventType), true)!;
     return {
       eventType: def.eventType,
       label: def.label,
-      pushEnabled: row ? row.pushEnabled : def.defaultPush,
-      emailEnabled: row ? row.emailEnabled : def.defaultEmail,
+      pushEnabled: channels.push,
+      emailEnabled: channels.email,
+      telegramEnabled: channels.telegram,
     };
   });
 }
@@ -139,17 +204,15 @@ export async function filterUsersByChannel(
       userId: { in: uniqueUserIds },
       eventType,
     },
-    select: { userId: true, pushEnabled: true, emailEnabled: true },
+    select: { userId: true, pushEnabled: true, emailEnabled: true, telegramEnabled: true },
   });
 
   const rowMap = new Map(rows.map((r) => [r.userId, r]));
   const def = getDefaultFor(eventType);
 
   return uniqueUserIds.filter((uid) => {
-    if (def.adminOnly && !userMap.get(uid)?.isAdmin) return false;
-    const row = rowMap.get(uid);
-    if (!row) return channel === 'push' ? def.defaultPush : def.defaultEmail;
-    return channel === 'push' ? row.pushEnabled : row.emailEnabled;
+    const channels = resolveChannelPreference(def, rowMap.get(uid), Boolean(userMap.get(uid)?.isAdmin));
+    return Boolean(channels?.[channel]);
   });
 }
 

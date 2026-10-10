@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { PASSWORD_MIN_LENGTH } from '@/lib/account-validation';
 
 type UserRow = {
   id: string;
@@ -659,11 +660,11 @@ export default function AdminUsersClient() {
             />
           </label>
           <label className="field">
-            <span className="field-label">{tt('Пароль (>=6)')}</span>
+            <span className="field-label">{tt(`Пароль (≥${PASSWORD_MIN_LENGTH})`)}</span>
             <input
               className="text-input"
               type="password"
-              placeholder={tt('Пароль (>=6)')}
+              placeholder={tt(`Пароль (≥${PASSWORD_MIN_LENGTH})`)}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
             />

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
+import { challengeResponseMessage, notifyUsers } from '@/lib/notify';
 
 type InviteAnswer = 'accepted' | 'declined';
 
 // Ответ на приглашение в челлендж (B20): меняется только статус pending, повторное
 // нажатие возвращает текущий статус без второго уведомления создателю; передумать
-// после ответа нельзя. Тексты уведомлений — по-русски (клиент переводит через t()).
+// после ответа нельзя. Уведомление создателю — только in-app, на его языке.
 export async function respondToChallengeInvite(
   request: NextRequest,
   ctx: { params: Promise<{ id: string }> },
@@ -61,19 +62,12 @@ export async function respondToChallengeInvite(
     const { creatorId, name } = participant.challenge;
     if (creatorId && creatorId !== user.id) {
       const accepted = answer === 'accepted';
-      await prisma.notification
-        .create({
-          data: {
-            userId: creatorId,
-            type: accepted ? 'challenge_accept' : 'challenge_decline',
-            title: accepted ? 'Приглашение принято' : 'Приглашение отклонено',
-            body: accepted
-              ? `${user.username} принял приглашение в соревнование: ${name}`
-              : `${user.username} отклонил приглашение в соревнование: ${name}`,
-            link: `/challenges/${id}`,
-          },
-        })
-        .catch((e) => console.error('CHALLENGE INVITE ANSWER NOTIFICATION ERROR:', e));
+      await notifyUsers(
+        [creatorId],
+        'challenge_invite',
+        (locale) => challengeResponseMessage(locale, { challengeId: id, challengeName: name, username: user.username, accepted }),
+        { inAppOnly: true, type: accepted ? 'challenge_accept' : 'challenge_decline' },
+      );
     }
 
     return NextResponse.json({ ok: true, status: answer });

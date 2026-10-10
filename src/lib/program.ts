@@ -1,7 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { sendWebPushToUsers } from '@/lib/web-push';
-import { EXERCISES, isExerciseType } from '@/lib/exercises';
+import { notifyUsers, programStoppedMessage } from '@/lib/notify';
 import { dayKeyToDbDate, dbDateToDayKey, diffDays, normalizeTimeZone, type DayKey } from '@/lib/calendar-day';
 import {
   ProgramError,
@@ -38,10 +37,6 @@ export type {
 const PROGRAM_INTERRUPTED_MESSAGE =
   'Программа была прервана из-за длительного пропуска. Создайте новую программу, когда будете готовы продолжить.';
 const RETEST_REQUIRED_MESSAGE = 'Пропуск более двух недель. Пройдите повторный тест и перегенерируйте программу.';
-
-function exerciseTypeLabel(exerciseType: string): string {
-  return isExerciseType(exerciseType) ? EXERCISES[exerciseType].label.ru.toLowerCase() : exerciseType;
-}
 
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
@@ -379,52 +374,21 @@ export async function syncProgramSchedule(
   const carriedMissDays = Math.max(0, earliest.shiftedCount) + overdueDays;
 
   if (carriedMissDays > 14) {
-    const stopLink = `/program?stoppedProgram=${encodeURIComponent(program.id)}`;
-    const stopTitle = 'Программа прервана';
-    const stopBody = `Программа по упражнению "${exerciseTypeLabel(program.exerciseType)}" прервана из-за пропуска более 2 недель. Создайте новую, когда будете готовы.`;
-
-    await prisma.$transaction(async (tx) => {
-      await tx.trainingProgram.update({
-        where: { id: program.id },
-        data: {
-          needsRetest: true,
-          isActive: false,
-          status: 'inactive',
-        },
-      });
-
-      const alreadySent = await tx.notification.findFirst({
-        where: {
-          userId: program.userId,
-          type: 'program_stopped',
-          link: stopLink,
-        },
-        select: { id: true },
-      });
-
-      if (!alreadySent) {
-        await tx.notification.create({
-          data: {
-            userId: program.userId,
-            type: 'program_stopped',
-            title: stopTitle,
-            body: stopBody,
-            link: stopLink,
-          },
-        });
-      }
+    await prisma.trainingProgram.update({
+      where: { id: program.id },
+      data: {
+        needsRetest: true,
+        isActive: false,
+        status: 'inactive',
+      },
     });
 
-    await sendWebPushToUsers(
+    await notifyUsers(
       [program.userId],
-      {
-        title: stopTitle,
-        body: stopBody,
-        link: stopLink,
-        tag: `program-stopped-${program.id}`,
-      },
       'program_reminder',
-    ).catch(() => {});
+      (locale) => programStoppedMessage(locale, { programId: program.id, exerciseType: program.exerciseType }),
+      { type: 'program_stopped', tag: `program-stopped-${program.id}`, dedupeKey: () => `program-stopped:${program.id}` },
+    );
 
     return { shiftedDays: 0, needsRetest: true };
   }
@@ -445,207 +409,6 @@ export async function syncProgramSchedule(
   });
 
   return { shiftedDays: overdueDays, needsRetest: false };
-}
-
-/**
- * «Пропущена тренировка» (1 ч / 24 ч / предупреждение о прерывании) for one user at `now`.
- * Not called on page load — the scheduler (T07) runs it.
- */
-export async function sendProgramMissedSessionNotificationsForUser(userId: string, now: Date) {
-  const oneHourMs = 60 * 60 * 1000;
-  const oneDayMs = 24 * oneHourMs;
-
-  const overdueSessions = await prisma.trainingSession.findMany({
-    where: {
-      completed: false,
-      scheduledAt: { lt: now },
-      program: {
-        userId,
-        isActive: true,
-      },
-    },
-    orderBy: [{ programId: 'asc' }, { scheduledAt: 'asc' }],
-    select: {
-      id: true,
-      programId: true,
-      scheduledAt: true,
-      shiftedCount: true,
-      program: {
-        select: {
-          id: true,
-          exerciseType: true,
-        },
-      },
-    },
-  });
-
-  if (!overdueSessions.length) return;
-
-  const timeZone = await getUserTimeZone(userId);
-  const today = programDayOf(now, timeZone);
-
-  const firstOverdueByProgram = new Map<string, typeof overdueSessions[number]>();
-  for (const s of overdueSessions) {
-    if (!firstOverdueByProgram.has(s.programId)) firstOverdueByProgram.set(s.programId, s);
-  }
-
-  for (const session of firstOverdueByProgram.values()) {
-    const overdueMs = now.getTime() - session.scheduledAt.getTime();
-    const carriedMissDays = Math.max(0, session.shiftedCount)
-      + Math.max(0, diffDays(today, programDayOf(session.scheduledAt, timeZone)));
-    if (overdueMs < oneHourMs) continue;
-
-    const link = `/program/session/${session.id}`;
-    const exerciseName = exerciseTypeLabel(session.program.exerciseType);
-
-    const sentRows = await prisma.notification.findMany({
-      where: {
-        userId,
-        type: {
-          in: ['program_missed_1h', 'program_missed_24h', 'program_stop_warning'],
-        },
-        link,
-      },
-      select: { type: true },
-    });
-    const sentTypes = new Set(sentRows.map((x) => x.type));
-
-    const notifications: Array<{ type: string; title: string; body: string; link: string }> = [];
-    const pushes: Array<{ title: string; body: string; link: string; tag: string }> = [];
-
-    if (overdueMs >= oneHourMs && !sentTypes.has('program_missed_1h')) {
-      notifications.push({
-        type: 'program_missed_1h',
-        title: 'Пропущена плановая тренировка',
-        body: `Прошёл 1 час после плановой тренировки (${exerciseName}). Вы можете выполнить её сейчас.`,
-        link,
-      });
-      pushes.push({
-        title: 'Пропущена тренировка',
-        body: `1 час после плановой тренировки (${exerciseName}).`,
-        link,
-        tag: `program-missed-1h-${session.id}`,
-      });
-    }
-
-    if (overdueMs >= oneDayMs && !sentTypes.has('program_missed_24h')) {
-      notifications.push({
-        type: 'program_missed_24h',
-        title: 'Тренировка по программе не выполнена',
-        body: `Прошли сутки после плановой тренировки (${exerciseName}).`,
-        link,
-      });
-      pushes.push({
-        title: 'Тренировка не выполнена',
-        body: `Прошли сутки после плановой тренировки (${exerciseName}).`,
-        link,
-        tag: `program-missed-24h-${session.id}`,
-      });
-    }
-
-    if (carriedMissDays >= 7 && carriedMissDays < 14 && !sentTypes.has('program_stop_warning')) {
-      notifications.push({
-        type: 'program_stop_warning',
-        title: 'Программа будет прервана через неделю',
-        body: 'Если пропуск плановой тренировки превысит 2 недели, программа автоматически прервётся.',
-        link,
-      });
-      pushes.push({
-        title: 'Риск прерывания программы',
-        body: 'Ещё неделя пропуска и программа будет автоматически прервана.',
-        link,
-        tag: `program-stop-warning-${session.id}`,
-      });
-    }
-
-    if (notifications.length) {
-      await prisma.notification.createMany({
-        data: notifications.map((n) => ({
-          userId,
-          type: n.type,
-          title: n.title,
-          body: n.body,
-          link: n.link,
-        })),
-      });
-    }
-
-    for (const p of pushes) {
-      await sendWebPushToUsers(
-        [userId],
-        {
-          title: p.title,
-          body: p.body,
-          link: p.link,
-          tag: p.tag,
-        },
-        'program_reminder',
-      ).catch(() => {});
-    }
-  }
-}
-
-/**
- * «Скоро тренировка» for sessions in the window −15…+30 min around `now`.
- * Not called on page load — the scheduler (T07) runs it.
- */
-export async function sendProgramRemindersForUser(userId: string, now: Date) {
-  const windowEnd = new Date(now.getTime() + 30 * 60 * 1000);
-  const windowStart = new Date(now.getTime() - 15 * 60 * 1000);
-
-  const due = await prisma.trainingSession.findMany({
-    where: {
-      completed: false,
-      reminderSentAt: null,
-      scheduledAt: { gte: windowStart, lte: windowEnd },
-      program: {
-        userId,
-        isActive: true,
-        needsRetest: false,
-      },
-    },
-    orderBy: { scheduledAt: 'asc' },
-    select: {
-      id: true,
-      scheduledAt: true,
-      program: { select: { exerciseType: true } },
-    },
-  });
-
-  if (!due.length) return 0;
-
-  const first = due[0];
-  const text = due.length === 1
-    ? `Через ${Math.max(0, Math.round((first.scheduledAt.getTime() - now.getTime()) / 60000))} мин: тренировка ${first.program.exerciseType}`
-    : `У вас ${due.length} тренировок по программе в ближайшее время`;
-
-  await prisma.notification.createMany({
-    data: due.map((s) => ({
-      userId,
-      type: 'program_reminder',
-      title: 'Напоминание о тренировке',
-      body: 'Пора выполнить запланированную тренировку по программе',
-      link: `/program/session/${s.id}`,
-    })),
-  }).catch(() => {});
-
-  await sendWebPushToUsers(
-    [userId],
-    {
-      title: 'Напоминание о тренировке',
-      body: text,
-      link: `/program/session/${first.id}`,
-      tag: 'program-reminder',
-    },
-    'program_reminder',
-  ).catch(() => {});
-
-  await prisma.trainingSession.updateMany({
-    where: { id: { in: due.map((x) => x.id) } },
-    data: { reminderSentAt: now },
-  });
-
-  return due.length;
 }
 
 function calcPerformanceFactor(args: {

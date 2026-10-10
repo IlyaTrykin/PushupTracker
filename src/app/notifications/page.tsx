@@ -46,9 +46,10 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
 
 export default function NotificationsPage() {
   const { user } = useAuth();
-  const { locale } = useI18n();
+  const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = (input: string) => t(locale, input);
+  const typeLabels: Record<string, string> = { ...messages.push.events, ...messages.push.notificationTypes };
   const cacheKey = useMemo(() => getUserScopedCacheKey('notifications', user?.id, user?.username), [user?.id, user?.username]);
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -157,11 +158,11 @@ export default function NotificationsPage() {
               <div style={notificationHead}>
                 <div style={{ display: 'grid', gap: 8 }}>
                   <div style={titleRow}>
-                    <div style={notificationTitle}>{n.title}</div>
+                    <div style={notificationTitle}>{tt(n.title)}</div>
                     {!n.isRead ? <span style={pill}>{tt('Новое')}</span> : null}
                   </div>
                   <div style={metaLine}>
-                    {new Date(n.createdAt).toLocaleString(localeTag)} · <span style={metaStrong}>{tt(n.type)}</span>
+                    {new Date(n.createdAt).toLocaleString(localeTag)} · <span style={metaStrong}>{typeLabels[n.type] || n.type}</span>
                   </div>
                   {n.body ? <div style={notificationBody}>{tt(n.body)}</div> : null}
                   {n.link ? (

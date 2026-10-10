@@ -118,7 +118,7 @@ export const ruMessages = {
     },
     sections: {
       password: 'Смена пароля',
-      notifications: 'Push уведомления',
+      notifications: 'Уведомления',
     },
     password: {
       current: 'Текущий пароль',
@@ -127,7 +127,7 @@ export const ruMessages = {
       submit: 'Сменить пароль',
       submitting: 'Изменение…',
       missingCurrent: 'Введите текущий пароль',
-      minLength: 'Новый пароль должен быть не меньше 6 символов',
+      minLength: 'Новый пароль должен быть не меньше 8 символов',
       mismatch: 'Подтверждение пароля не совпадает',
     },
     notifications: {
@@ -172,6 +172,7 @@ export const ruMessages = {
     eventColumn: 'Событие',
     pushColumn: 'Push',
     emailColumn: 'E-mail',
+    telegramColumn: 'Telegram',
     events: {
       friend_request: 'Запрос в друзья',
       challenge_invite: 'Приглашение в соревнование',
@@ -183,6 +184,20 @@ export const ruMessages = {
       friend_reaction: 'Реакция друга на тренировку',
       program_reminder: 'Напоминание о тренировке по программе',
       admin_new_user_registered: 'Новая регистрация пользователя',
+      daily_goal_reminder: 'Напоминание о цели дня',
+      weekly_league: 'Итог лиги недели',
+      weekly_summary: 'Итоги недели',
+      friend_achievement: 'Рекорды и достижения друзей',
+      group_goal_completed: 'Цель группы выполнена',
+    },
+    notificationTypes: {
+      challenge_accept: 'Приглашение принято',
+      challenge_decline: 'Приглашение отклонено',
+      friend_request_accepted: 'Запрос в друзья принят',
+      program_missed_1h: 'Пропущена тренировка',
+      program_missed_24h: 'Тренировка не выполнена',
+      program_stop_warning: 'Риск прерывания программы',
+      program_stopped: 'Программа прервана',
     },
   },
   programSession: {

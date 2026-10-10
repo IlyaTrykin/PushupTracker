@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
-import { isChannelEnabledForUser } from '@/lib/notification-preferences';
-import { sendChallengeInviteEmail } from '@/lib/notification-email';
-import { queueWebPushToUsers } from '@/lib/web-push';
+import { challengeInviteMessage, notifyUsers } from '@/lib/notify';
 import { isExerciseType } from '@/lib/exercises';
 import { dayKeyToDbDate, parseDayKey } from '@/lib/calendar-day';
 import { hitRateLimit, tooManyRequests } from '@/lib/rate-limit';
@@ -205,44 +203,15 @@ export async function POST(request: NextRequest) {
       select: { id: true, name: true },
     });
 
-    // Уведомления: in-app сразу, push и письма — в фоне, ответ их не ждёт (S09, B34).
+    // Уведомления: in-app сразу, push и письма — в фоне, ответ их не ждёт (S09, B34);
+    // текст — на языке каждого приглашённого.
     if (invitedIds.length) {
-      const title = 'Приглашение в соревнование';
-      const notifyBody = `${me.username} пригласил вас в соревнование: ${name}`;
-      await prisma.notification.createMany({
-        data: invitedIds.map((id) => ({
-          userId: id,
-          type: 'challenge_invite',
-          title,
-          body: notifyBody,
-          link: `/challenges/${created.id}`,
-        })),
-      }).catch((e) => console.error('CHALLENGE INVITE NOTIFICATION ERROR:', e));
-
-      queueWebPushToUsers(
+      await notifyUsers(
         invitedIds,
-        { title, body: notifyBody, link: `/challenges?invite=${created.id}`, tag: `challenge-invite-${created.id}` },
         'challenge_invite',
+        (locale) => challengeInviteMessage(locale, { challengeId: created.id, challengeName: name, inviterUsername: me.username }),
+        { tag: `challenge-invite-${created.id}` },
       );
-
-      void (async () => {
-        const recipients = await prisma.user.findMany({
-          where: { id: { in: invitedIds }, deletedAt: null },
-          select: { id: true, username: true, email: true },
-        });
-        for (const u of recipients) {
-          if (!u.email) continue;
-          if (!(await isChannelEnabledForUser(u.id, 'challenge_invite', 'email'))) continue;
-          await sendChallengeInviteEmail({
-            to: u.email,
-            invitedUsername: u.username,
-            creatorUsername: me.username,
-            challengeId: created.id,
-            challengeName: name,
-            request,
-          }).catch((e) => console.error('CHALLENGE INVITE EMAIL ERROR:', e));
-        }
-      })().catch((e) => console.error('CHALLENGE INVITE EMAIL ERROR:', e));
     }
 
     return NextResponse.json(created);

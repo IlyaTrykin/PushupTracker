@@ -1,6 +1,13 @@
 import { DEFAULT_LOCALE, getIntlLocaleTag, type Locale } from '@/i18n/locale';
 import { EXERCISES } from '@/lib/exercises';
 
+/** «отжимания» / «pushups» → «push-ups» for stored notification texts. */
+function exerciseNameToEnglish(name: string): string {
+  const key = name.trim().toLowerCase();
+  const exercise = Object.values(EXERCISES).find((e) => e.label.ru.toLowerCase() === key || e.id === key);
+  return exercise ? exercise.label.en.toLowerCase() : name;
+}
+
 type RegexTranslation = {
   pattern: RegExp;
   replace: (...match: string[]) => string;
@@ -504,6 +511,118 @@ const exactTextMap: Record<string, string> = {
   'Ошибка восстановления': 'Restore error',
   'Ошибка загрузки аватара': 'Avatar upload error',
   'Не удалось обработать изображение': 'Failed to process the image',
+  // B25: page strings
+  'Безопасность': 'Security',
+  'Задай новый пароль и мы сразу вернём тебя ко входу.': 'Set a new password and we will take you straight back to sign-in.',
+  'Восстановление доступа': 'Account recovery',
+  'Центр уведомлений': 'Notification centre',
+  'Уведомления': 'Notifications',
+  'Все системные события, приглашения и обновления собраны в одном потоке.': 'All system events, invitations and updates in one feed.',
+  'Новое': 'New',
+  'Соревновательный режим': 'Competition mode',
+  'Челленджи': 'Challenges',
+  'Запускай соревнования, управляй приглашениями и отслеживай завершённые дуэли в одном месте.': 'Start challenges, manage invitations and follow finished duels in one place.',
+  'Ожидает подтверждения': 'Awaiting confirmation',
+  'Пользователи и поощрения': 'Users and rewards',
+  // Server errors and notification texts (accounts, social, platform)
+  'Пригласить можно только друзей': 'You can invite only your friends',
+  'Заявка уже отправлена и ожидает подтверждения': 'The request has already been sent and is awaiting confirmation',
+  'Заявка уже отправлена': 'The request has already been sent',
+  'Заявка уже обработана': 'The request has already been handled',
+  'Заявка не найдена': 'Request not found',
+  'Вы уже ответили на это приглашение': 'You have already answered this invitation',
+  'В соревнованиях группы участие подтверждается автоматически': 'In group challenges participation is confirmed automatically',
+  'Приглашение не найдено': 'Invitation not found',
+  'Адрес push-подписки не поддерживается': 'This push subscription address is not supported',
+  'Некорректная push-подписка': 'Invalid push subscription',
+  'Конфликт одновременных изменений, повторите': 'Concurrent change conflict, please try again',
+  'Запрос с чужого сайта отклонён': 'Request from another site rejected',
+  'Неподдерживаемый формат запроса': 'Unsupported request format',
+  'Слишком большой запрос': 'Request is too large',
+  'Ссылка недействительна или устарела': 'The link is invalid or has expired',
+  'Ссылка-приглашение недействительна': 'The invite link is invalid',
+  'Токен обязателен': 'Token is required',
+  'Введите пароль': 'Enter a password',
+  'Введите текущий пароль': 'Enter your current password',
+  'Текущий пароль неверный': 'The current password is incorrect',
+  'Новый пароль должен отличаться от текущего': 'The new password must differ from the current one',
+  'Пароль должен быть не меньше 8 символов': 'The password must be at least 8 characters',
+  'Пароль должен быть не длиннее 128 символов': 'The password must be at most 128 characters',
+  'Заполните все поля': 'Fill in all fields',
+  'Укажите ник': 'Enter a username',
+  'Укажите корректный email': 'Enter a valid email',
+  'Ник должен быть длиной от 3 до 32 символов': 'The username must be 3 to 32 characters long',
+  'Ник может содержать только латинские буквы, цифры и символы . _ -': 'The username may contain only Latin letters, digits and . _ -',
+  'Ник или email уже заняты': 'The username or email is already taken',
+  'Восстановление пароля временно недоступно. Напишите администратору.': 'Password recovery is temporarily unavailable. Contact the administrator.',
+  'Если аккаунт с таким email существует, письмо со ссылкой уже отправлено.': 'If an account with this email exists, a letter with a link has been sent.',
+  'Разрешены только изображения JPEG, PNG, WebP или GIF': 'Only JPEG, PNG, WebP or GIF images are allowed',
+  'Файл не является изображением JPEG, PNG, WebP или GIF': 'The file is not a JPEG, PNG, WebP or GIF image',
+  'Некорректная форма': 'Invalid form',
+  'Некорректный JSON': 'Invalid JSON',
+  'Ожидался корректный JSON в теле запроса': 'A valid JSON body was expected',
+  'Некорректный email': 'Invalid email',
+  'Некорректный тип упражнения': 'Invalid exercise type',
+  'Вы уже друзья': 'You are already friends',
+  'Вы уже состоите в этой группе': 'You are already a member of this group',
+  'Нельзя добавить в друзья самого себя': 'You cannot add yourself as a friend',
+  'Пользователь с таким ником не найден': 'No user with this username',
+  'Укажите ник друга (username)': "Enter the friend's username",
+  'Связь дружбы не найдена': 'Friendship not found',
+  'Следить можно только за подтверждённым другом': 'You can follow only a confirmed friend',
+  'Неизвестное действие': 'Unknown action',
+  'Нет доступа': 'Access denied',
+  'Нет доступа к группе': 'No access to the group',
+  'Нет доступа к тренировке': 'No access to the workout',
+  'Нет прав на управление группой': 'You cannot manage this group',
+  'Участник группы не найден': 'Group member not found',
+  'Тренировка не найдена': 'Workout not found',
+  'Запись не найдена': 'Entry not found',
+  'Соревнование не найдено': 'Challenge not found',
+  'Удалять может только создатель': 'Only the creator can delete it',
+  'Введите название соревнования': 'Enter the challenge name',
+  'Даты должны быть в формате YYYY-MM-DD': 'Dates must be in YYYY-MM-DD format',
+  'endDate не может быть раньше startDate': 'The end date cannot be before the start date',
+  'В группе нет участников для соревнования': 'The group has no members for a challenge',
+  'Недопустимая реакция': 'Reaction not allowed',
+  'Новый запрос в друзья': 'New friend request',
+  'Новая реакция на тренировку': 'New reaction to your workout',
+  'Новая регистрация пользователя': 'New user registration',
+  'Слишком много сообщений, попробуйте позже': 'Too many messages, try again later',
+  'Сообщение не может быть пустым': 'The message cannot be empty',
+  'Сообщение слишком длинное': 'The message is too long',
+  'Не удалось отправить сообщение': 'Failed to send the message',
+  'Отправка почты не настроена': 'Email sending is not configured',
+  'Название группы обязательно': 'Group name is required',
+  'Название группы слишком длинное': 'Group name is too long',
+  'Не выбран новый владелец группы': 'No new group owner selected',
+  'Этот пользователь уже является владельцем': 'This user is already the owner',
+  'Нельзя исключить владельца группы без передачи прав': 'The group owner cannot be removed without transferring ownership',
+  'Передайте права владельца другому участнику или удалите группу': 'Transfer ownership to another member or delete the group',
+  'Владелец последнего участника должен удалить группу': 'As the last member, the owner must delete the group',
+  'Эта тренировка ещё не наступила. Откройте её из расписания, чтобы начать.': 'This workout has not started yet. Open it from the schedule to begin.',
+  'Время должно быть в формате ЧЧ:ММ': 'Time must be in HH:MM format',
+  'Некорректное время': 'Invalid time',
+  'Некорректная дата: нужен существующий день в формате ГГГГ-ММ-ДД': 'Invalid date: use an existing day in YYYY-MM-DD format',
+  'Повторы для руки должны быть целым числом ≥ 0': 'Reps per arm must be a whole number ≥ 0',
+  'Вес должен быть в диапазоне 30..250 кг': 'Weight must be within 30..250 kg',
+  'Имя обязательно': 'Name is required',
+  'Имя уже занято': 'This name is already taken',
+  'Имя слишком длинное (макс. 32)': 'The name is too long (max 32)',
+  'Имя может содержать только латиницу, цифры и символы ._-': 'The name may contain only Latin letters, digits and ._-',
+  'Пользователь с таким email уже существует': 'A user with this email already exists',
+  'Пользователь с таким username уже существует': 'A user with this username already exists',
+  'Нельзя удалить самого себя': 'You cannot delete yourself',
+  'Нельзя снять права администратора с текущей сессии': 'You cannot remove admin rights from the current session',
+  'Профиль не удалён': 'The profile is not deleted',
+  'Срок восстановления истёк (1 год)': 'The restore period has expired (1 year)',
+  'Не удалось создать поощрение': 'Failed to create the reward',
+  'Не удалось сохранить поощрение': 'Failed to save the reward',
+  'Не удалось удалить поощрение': 'Failed to delete the reward',
+  'Нет полей для обновления': 'Nothing to update',
+  'Неизвестный eventType': 'Unknown event type',
+  'Пользователь не найден': 'User not found',
+  'Изменение позиции в соревновании': 'Challenge rank changed',
 };
 
 const regexTranslations: RegexTranslation[] = [
@@ -615,6 +734,126 @@ const regexTranslations: RegexTranslation[] = [
     pattern: /^пик (.+)$/,
     replace: (_full, peak) => `peak ${peak}`,
   },
+  {
+    pattern: /^Не в друзьях: (.+)$/,
+    replace: (_full, names) => `Not your friends: ${names}`,
+  },
+  {
+    pattern: /^Заявку отклонили\. Повторить можно через (\d+) дн\.$/,
+    replace: (_full, days) => `Your request was declined. You can try again in ${days} day${days === '1' ? '' : 's'}.`,
+  },
+  {
+    pattern: /^Пользователь отклонил вашу заявку\. Повторить можно через (\d+) дн\.$/,
+    replace: (_full, days) => `The user declined your request. You can try again in ${days} day${days === '1' ? '' : 's'}.`,
+  },
+  {
+    pattern: /^Слишком много попыток, попробуйте через (\d+) мин$/,
+    replace: (_full, minutes) => `Too many attempts, try again in ${minutes} min`,
+  },
+  {
+    pattern: /^(.+) принял приглашение в соревнование: (.+)$/,
+    replace: (_full, username, name) => `${username} accepted the challenge invitation: ${name}`,
+  },
+  {
+    pattern: /^(.+) отклонил приглашение в соревнование: (.+)$/,
+    replace: (_full, username, name) => `${username} declined the challenge invitation: ${name}`,
+  },
+  {
+    pattern: /^(.+) принял ваш запрос в друзья$/,
+    replace: (_full, username) => `${username} accepted your friend request`,
+  },
+  {
+    pattern: /^(.+) отправил вам запрос в друзья$/,
+    replace: (_full, username) => `${username} sent you a friend request`,
+  },
+  {
+    pattern: /^(.+) хочет вступить в группу (.+)$/,
+    replace: (_full, username, group) => `${username} wants to join the group ${group}`,
+  },
+  {
+    pattern: /^Вы вступили в группу (.+)$/,
+    replace: (_full, group) => `You joined the group ${group}`,
+  },
+  {
+    pattern: /^Вступление в группу (.+) отклонено$/,
+    replace: (_full, group) => `Your request to join ${group} was declined`,
+  },
+  {
+    pattern: /^В соревновании может быть не больше (\d+) участников$/,
+    replace: (_full, max) => `A challenge can have at most ${max} participants`,
+  },
+  {
+    pattern: /^Название соревнования — не длиннее (\d+) символов$/,
+    replace: (_full, max) => `The challenge name must be at most ${max} characters`,
+  },
+  {
+    pattern: /^Файл слишком большой \(макс\. (\d+) МБ\)$/,
+    replace: (_full, max) => `The file is too large (max ${max} MB)`,
+  },
+  {
+    pattern: /^Можно выбрать не больше (\d+) упражнений$/,
+    replace: (_full, max) => `You can choose at most ${max} exercises`,
+  },
+  {
+    pattern: /^Заполните все подходы перед завершением \(осталось: (\d+)\)$/,
+    replace: (_full, left) => `Fill in every set before finishing (left: ${left})`,
+  },
+  {
+    pattern: /^Количество должно быть целым числом от 1 до (\d+)$/,
+    replace: (_full, max) => `The amount must be a whole number from 1 to ${max}`,
+  },
+  {
+    pattern: /^Укажите вес снаряда \(кг, до (\d+)\)$/,
+    replace: (_full, max) => `Enter the weight (kg, up to ${max})`,
+  },
+  {
+    pattern: /^Дата должна быть не раньше (\S+) и не позже завтрашнего дня$/,
+    replace: (_full, min) => `The date must be no earlier than ${min} and no later than tomorrow`,
+  },
+  {
+    pattern: /^Прош[её]л 1 час после плановой тренировки \((.+)\)\. (?:Вы можете выполнить её сейчас|Её можно выполнить сейчас)\.$/,
+    replace: (_full, name) => `An hour has passed since your planned workout (${exerciseNameToEnglish(name)}). You can still do it now.`,
+  },
+  {
+    pattern: /^1 час после плановой тренировки \((.+)\)\.$/,
+    replace: (_full, name) => `An hour since your planned workout (${exerciseNameToEnglish(name)}).`,
+  },
+  {
+    pattern: /^Прошли сутки после плановой тренировки \((.+)\)\.$/,
+    replace: (_full, name) => `A day has passed since your planned workout (${exerciseNameToEnglish(name)}).`,
+  },
+  {
+    pattern: /^Через (\d+) мин тренировка по программе: (.+)$/,
+    replace: (_full, minutes, name) => `Program workout in ${minutes} min: ${exerciseNameToEnglish(name)}`,
+  },
+  {
+    pattern: /^Через (\d+) мин: тренировка (.+)$/,
+    replace: (_full, minutes, name) => `Program workout in ${minutes} min: ${exerciseNameToEnglish(name)}`,
+  },
+  {
+    pattern: /^Пора начинать тренировку по программе: (.+)$/,
+    replace: (_full, name) => `Time for your program workout: ${exerciseNameToEnglish(name)}`,
+  },
+  {
+    pattern: /^Скоро тренировки по программе: (.+)$/,
+    replace: (_full, names) => `Program workouts coming up: ${names.split(', ').map(exerciseNameToEnglish).join(', ')}`,
+  },
+  {
+    pattern: /^У вас (\d+) тренировок по программе в ближайшее время$/,
+    replace: (_full, count) => `You have ${count} program workouts coming up`,
+  },
+  {
+    pattern: /^Программа по упражнению «(.+)» прервана из-за пропуска более 2 недель\. Создайте новую, когда будете готовы\.$/,
+    replace: (_full, name) => `Your ${exerciseNameToEnglish(name)} program was stopped after a break longer than 2 weeks. Create a new one when you are ready.`,
+  },
+  {
+    pattern: /^Пароль \(≥(\d+)\)$/,
+    replace: (_full, min) => `Password (≥${min})`,
+  },
+  {
+    pattern: /^(.+) (\S+) на вашу тренировку \((\d+)\)$/,
+    replace: (_full, username, emoji, value) => `${username} ${emoji} on your workout (${value})`,
+  },
 ];
 
 const fragments: Array<[string, string]> = [
@@ -641,17 +880,30 @@ const fragments: Array<[string, string]> = [
   ['Реакция', 'Reaction'],
 ];
 
+// Fragments are replaced only as whole words: `\b` does not see Cyrillic letters, so the
+// borders are explicit («Все» must not turn into «Sunе», «секундомер» into «secундомер»).
+const WORD_LETTER = 'A-Za-zА-Яа-яЁё';
+
+type CompiledFragment = { pattern: RegExp; to: string };
+
+function compileFragments(list: Array<[string, string]>): CompiledFragment[] {
+  return list.map(([from, to]) => ({
+    pattern: new RegExp(`(?<![${WORD_LETTER}])${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![${WORD_LETTER}])`, 'g'),
+    to,
+  }));
+}
+
 type RuntimeTranslationDictionary = {
   exactTextMap: Record<string, string>;
   regexTranslations: RegexTranslation[];
-  fragments: Array<[string, string]>;
+  fragments: CompiledFragment[];
 };
 
 const RUNTIME_TRANSLATIONS: Partial<Record<Locale, RuntimeTranslationDictionary>> = {
   en: {
     exactTextMap,
     regexTranslations,
-    fragments,
+    fragments: compileFragments(fragments),
   },
 };
 
@@ -678,8 +930,8 @@ export function t(locale: Locale, input: string): string {
   }
 
   let next = input;
-  for (const [from, to] of dictionary.fragments) {
-    next = next.replaceAll(from, to);
+  for (const fragment of dictionary.fragments) {
+    next = next.replace(fragment.pattern, fragment.to);
   }
   return next;
 }

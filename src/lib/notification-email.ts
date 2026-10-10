@@ -10,6 +10,36 @@ export function esc(input: string): string {
     .replace(/'/g, '&#39;');
 }
 
+export type NotificationEmailMessage = { title: string; body?: string; link?: string };
+
+function absoluteLink(link: string | undefined, appUrl: string): string | null {
+  if (!link) return null;
+  if (/^https?:\/\//i.test(link)) return link;
+  return `${appUrl.replace(/\/+$/, '')}${link.startsWith('/') ? '' : '/'}${link}`;
+}
+
+/** Subject/text/html of a generic notification letter (used by `notifyUsers`). */
+export function buildNotificationEmail(
+  message: NotificationEmailMessage,
+  locale: 'ru' | 'en',
+  appUrl: string,
+): { subject: string; text: string; html: string } {
+  const url = absoluteLink(message.link, appUrl);
+  const openLabel = locale === 'en' ? 'Open in PushUp' : 'Открыть в приложении';
+  const textParts = [message.title, message.body, url ? `${openLabel}: ${url}` : null].filter(Boolean);
+  const htmlParts = [
+    `<p><b>${esc(message.title)}</b></p>`,
+    message.body ? `<p>${esc(message.body)}</p>` : '',
+    url ? `<p><a href="${esc(url)}">${esc(openLabel)}</a></p>` : '',
+  ];
+  return { subject: message.title, text: `${textParts.join('\n\n')}\n`, html: htmlParts.join('') };
+}
+
+export async function sendNotificationEmail(to: string, message: NotificationEmailMessage, locale: 'ru' | 'en') {
+  const letter = buildNotificationEmail(message, locale, getAppBaseUrl());
+  return sendMail({ to, ...letter });
+}
+
 export async function sendFriendRequestEmail(args: {
   to: string;
   inviterUsername: string;
@@ -23,24 +53,6 @@ export async function sendFriendRequestEmail(args: {
   const subject = 'Новый запрос в друзья';
   const text = `Здравствуйте, ${args.invitedUsername}.\n\n${args.inviterUsername} отправил вам запрос в друзья.\nПринять или отклонить запрос: ${link}\n`;
   const html = `<p>Здравствуйте, <b>${esc(args.invitedUsername)}</b>.</p><p><b>${esc(args.inviterUsername)}</b> отправил вам запрос в друзья.</p><p><a href="${esc(link)}">Открыть запрос и принять/отклонить</a></p>`;
-
-  return sendMail({ to: args.to, subject, text, html });
-}
-
-export async function sendChallengeInviteEmail(args: {
-  to: string;
-  invitedUsername: string;
-  creatorUsername: string;
-  challengeId: string;
-  challengeName: string;
-  request?: Request;
-}) {
-  const app = getAppBaseUrl(args.request);
-  const link = `${app}/challenges?invite=${encodeURIComponent(args.challengeId)}`;
-
-  const subject = 'Приглашение в соревнование';
-  const text = `Здравствуйте, ${args.invitedUsername}.\n\n${args.creatorUsername} пригласил вас в соревнование "${args.challengeName}".\nПринять или отклонить приглашение: ${link}\n`;
-  const html = `<p>Здравствуйте, <b>${esc(args.invitedUsername)}</b>.</p><p><b>${esc(args.creatorUsername)}</b> пригласил вас в соревнование: <b>${esc(args.challengeName)}</b>.</p><p><a href="${esc(link)}">Открыть приглашение и принять/отклонить</a></p>`;
 
   return sendMail({ to: args.to, subject, text, html });
 }

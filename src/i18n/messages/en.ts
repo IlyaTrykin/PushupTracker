@@ -119,7 +119,7 @@ export const enMessages: DeepPartial<Messages> = {
     },
     sections: {
       password: 'Change Password',
-      notifications: 'Push Notifications',
+      notifications: 'Notifications',
     },
     password: {
       current: 'Current password',
@@ -128,7 +128,7 @@ export const enMessages: DeepPartial<Messages> = {
       submit: 'Change password',
       submitting: 'Updating…',
       missingCurrent: 'Enter your current password',
-      minLength: 'The new password must be at least 6 characters',
+      minLength: 'The new password must be at least 8 characters',
       mismatch: 'Password confirmation does not match',
     },
     notifications: {
@@ -173,6 +173,7 @@ export const enMessages: DeepPartial<Messages> = {
     eventColumn: 'Event',
     pushColumn: 'Push',
     emailColumn: 'E-mail',
+    telegramColumn: 'Telegram',
     events: {
       friend_request: 'Friend request',
       challenge_invite: 'Challenge invitation',
@@ -184,6 +185,20 @@ export const enMessages: DeepPartial<Messages> = {
       friend_reaction: "Friend's reaction to a workout",
       program_reminder: 'Program workout reminder',
       admin_new_user_registered: 'New user registration',
+      daily_goal_reminder: 'Daily goal reminder',
+      weekly_league: 'Weekly league result',
+      weekly_summary: 'Weekly summary',
+      friend_achievement: "Friends' records and achievements",
+      group_goal_completed: 'Group goal completed',
+    },
+    notificationTypes: {
+      challenge_accept: 'Invitation accepted',
+      challenge_decline: 'Invitation declined',
+      friend_request_accepted: 'Friend request accepted',
+      program_missed_1h: 'Missed workout',
+      program_missed_24h: 'Workout not done',
+      program_stop_warning: 'Program at risk',
+      program_stopped: 'Program stopped',
     },
   },
   programSession: {
