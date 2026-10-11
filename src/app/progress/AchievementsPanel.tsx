@@ -5,6 +5,7 @@ import { achievementsMessages, fillAchievementText } from '@/i18n/messages/featu
 import { getIntlLocale } from '@/i18n/translate';
 import { ACHIEVEMENT_DEFS, formatRecordValue, type BadgeCode, type PersonalBest } from '@/lib/achievements';
 import { exerciseIcon, exerciseLabel } from '@/lib/exercises';
+import { ShareButton } from '@/components/ShareCardSheet';
 
 type Locale = 'ru' | 'en';
 type AchievementsPayload = {
@@ -48,6 +49,8 @@ export default function AchievementsPanel({ locale, userId }: { locale: Locale; 
   if (!data) return <div style={muted}>{failed ? text.loadFailed : text.loading}</div>;
 
   const earnedAt = new Map(data.badges.map((badge) => [badge.code, badge.achievedAt]));
+  // Only your own achievements get «Поделиться»: the card carries your invite link.
+  const own = !userId;
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -63,6 +66,11 @@ export default function AchievementsPanel({ locale, userId }: { locale: Locale; 
                 <div style={at ? badgeDate : { ...badgeDate, color: '#94a3b8' }}>
                   {at ? fillAchievementText(text.earnedOn, { date: formatDay(at, locale) }) : text.notEarned}
                 </div>
+                {at && own ? (
+                  <div style={{ marginTop: 4 }}>
+                    <ShareButton input={{ kind: 'badge', code: def.code }} />
+                  </div>
+                ) : null}
               </div>
             </div>
           );
@@ -81,12 +89,18 @@ export default function AchievementsPanel({ locale, userId }: { locale: Locale; 
             </div>
             <div style={recordCell}>
               <span style={recordLabel}>{text.bestSet}</span>
-              <span style={recordValue}>{formatRecordValue(best.bestSet.value, best.exerciseType, locale)}</span>
+              <span style={recordValueRow}>
+                <span style={recordValue}>{formatRecordValue(best.bestSet.value, best.exerciseType, locale)}</span>
+                {own ? <ShareButton input={{ kind: 'record', record: 'best_set', exerciseType: best.exerciseType, value: best.bestSet.value }} iconOnly /> : null}
+              </span>
               <span style={recordDate}>{formatDay(best.bestSet.day, locale)}</span>
             </div>
             <div style={recordCell}>
               <span style={recordLabel}>{text.bestDay}</span>
-              <span style={recordValue}>{formatRecordValue(best.bestDay.value, best.exerciseType, locale)}</span>
+              <span style={recordValueRow}>
+                <span style={recordValue}>{formatRecordValue(best.bestDay.value, best.exerciseType, locale)}</span>
+                {own ? <ShareButton input={{ kind: 'record', record: 'best_day', exerciseType: best.exerciseType, value: best.bestDay.value }} iconOnly /> : null}
+              </span>
               <span style={recordDate}>{formatDay(best.bestDay.day, locale)}</span>
             </div>
           </div>
@@ -140,5 +154,6 @@ const recordRow: CSSProperties = {
 const recordHead: CSSProperties = { gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center' };
 const recordCell: CSSProperties = { display: 'grid', justifyItems: 'start', gap: 1 };
 const recordLabel: CSSProperties = { fontSize: 10, fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.3 };
+const recordValueRow: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 };
 const recordValue: CSSProperties = { fontSize: 15, fontWeight: 900, color: '#0f172a', whiteSpace: 'nowrap' };
 const recordDate: CSSProperties = { fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' };

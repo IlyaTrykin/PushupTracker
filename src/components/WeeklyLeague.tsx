@@ -4,6 +4,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { fillLeagueText, leagueMessages, leaguePlaceToken, leaguePointsWord } from '@/i18n/messages/features/league';
 import { formatGoalPoints } from '@/lib/daily-goal';
+import { ShareButton } from './ShareCardSheet';
 
 type LeagueWeek = 'current' | 'previous';
 type LeagueRowDto = { userId: string; username: string; avatarPath: string | null; points: number; place: number; isMe: boolean };
@@ -49,6 +50,7 @@ export default function WeeklyLeague({ onAddFriend }: { onAddFriend?: () => void
   const formatDay = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString(numberLocale, { day: 'numeric', month: 'short', timeZone: 'UTC' });
   const alone = data !== null && data.rows.length < 2;
   const total = data?.rows.length ?? 0;
+  const myPoints = data?.rows.find((row) => row.isMe)?.points ?? 0;
 
   return (
     <section style={card} aria-label={text.title} data-testid="weekly-league">
@@ -100,18 +102,21 @@ export default function WeeklyLeague({ onAddFriend }: { onAddFriend?: () => void
             ))}
           </ol>
           {data.myPlace !== null ? (
-            <p style={summary}>
-              {fillLeagueText(text.yourPlace, { place: leaguePlaceToken(data.myPlace, locale), total })}
-              {data.gapToNext !== null && data.nextPlace !== null && week === 'current'
-                ? ` · ${fillLeagueText(text.gapToNext, {
-                    place: leaguePlaceToken(data.nextPlace, locale),
-                    gap: formatGoalPoints(data.gapToNext, locale),
-                    pointsWord: leaguePointsWord(data.gapToNext, locale),
-                  })}`
-                : data.myPlace === 1 && week === 'current'
-                  ? ` · ${text.leading}`
-                  : ''}
-            </p>
+            <div style={summaryRow}>
+              <p style={summary}>
+                {fillLeagueText(text.yourPlace, { place: leaguePlaceToken(data.myPlace, locale), total })}
+                {data.gapToNext !== null && data.nextPlace !== null && week === 'current'
+                  ? ` · ${fillLeagueText(text.gapToNext, {
+                      place: leaguePlaceToken(data.nextPlace, locale),
+                      gap: formatGoalPoints(data.gapToNext, locale),
+                      pointsWord: leaguePointsWord(data.gapToNext, locale),
+                    })}`
+                  : data.myPlace === 1 && week === 'current'
+                    ? ` · ${text.leading}`
+                    : ''}
+              </p>
+              <ShareButton input={{ kind: 'league', week: data.week, place: data.myPlace, total, points: myPoints }} />
+            </div>
           ) : null}
         </>
       ) : null}
@@ -143,4 +148,5 @@ const meRow: CSSProperties = { background: 'rgba(249, 115, 22, 0.14)', border: '
 const placeBadge: CSSProperties = { width: 26, height: 26, borderRadius: 9, display: 'grid', placeItems: 'center', background: '#0f172a', color: '#fff', fontWeight: 900, fontSize: 13, flex: '0 0 auto' };
 const name: CSSProperties = { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const pointsText: CSSProperties = { fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-const summary: CSSProperties = { margin: 0, fontWeight: 800 };
+const summary: CSSProperties = { margin: 0, fontWeight: 800, flex: '1 1 200px', minWidth: 0 };
+const summaryRow: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' };

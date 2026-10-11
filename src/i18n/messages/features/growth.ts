@@ -22,7 +22,7 @@ export const growthMessages = {
     source: 'Источник',
     unknown: 'неизвестно (до учёта)',
     noData: '—',
-    hint: 'Ссылки для каналов: добавляй ?utm_source=<канал> (например telegram, vk, habr) к адресу сайта — источник появится здесь.',
+    hint: 'Ссылки для каналов: добавляй ?utm_source=<канал> (например telegram, vk, habr) к адресу сайта — источник появится здесь. invite:card:<вид> — пришли по карточке «Поделиться» (record, badge, streak, league).',
   },
   en: {
     title: 'Growth',
@@ -47,6 +47,6 @@ export const growthMessages = {
     source: 'Source',
     unknown: 'unknown (before tracking)',
     noData: '—',
-    hint: 'Links for channels: add ?utm_source=<channel> (e.g. telegram, vk, habr) to the site URL and the source shows up here.',
+    hint: 'Links for channels: add ?utm_source=<channel> (e.g. telegram, vk, habr) to the site URL and the source shows up here. invite:card:<kind> — joined via a share card (record, badge, streak, league).',
   },
 } as const;

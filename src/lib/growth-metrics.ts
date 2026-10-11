@@ -1,6 +1,13 @@
 import { addDays, dayKeyInZone, diffDays, weekStart, type DayKey } from '@/lib/calendar-day';
 
-export type GrowthUser = { id: string; createdAt: Date; signupSource: string | null; referredById: string | null };
+export type GrowthUser = {
+  id: string;
+  createdAt: Date;
+  signupSource: string | null;
+  referredById: string | null;
+  /** `User.signupUtm` (JSON); tells «Поделиться» cards apart from plain invite links. */
+  signupUtm?: unknown;
+};
 export type GrowthWorkout = { userId: string; time: Date };
 
 export type Rate = { hit: number; of: number };
@@ -14,6 +21,16 @@ export type GrowthReport = {
 };
 
 const DAY_MS = 86_400_000;
+
+/** `invite:card:streak` for signups through a share card (`utm_source=share`), otherwise the stored source. */
+export function growthSourceLabel(u: Pick<GrowthUser, 'signupSource' | 'signupUtm'>): string {
+  const source = u.signupSource ?? 'unknown';
+  const utm = u.signupUtm && typeof u.signupUtm === 'object' ? (u.signupUtm as Record<string, unknown>) : null;
+  if (source === 'invite' && utm?.utm_source === 'share' && typeof utm.utm_campaign === 'string') {
+    return `invite:card:${utm.utm_campaign}`;
+  }
+  return source;
+}
 
 /**
  * Growth funnel over plain rows; "today" and weeks are calendar days in `timeZone`.
@@ -60,7 +77,7 @@ export function buildGrowthReport(
       signupsByWeek[idx].signups++;
       if (u.referredById) signupsByWeek[idx].referred++;
     }
-    const source = u.signupSource ?? 'unknown';
+    const source = growthSourceLabel(u);
     sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
 
     const times = byUser.get(u.id) ?? [];

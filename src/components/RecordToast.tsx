@@ -10,12 +10,16 @@ import {
   type RecordHit,
 } from '@/lib/achievements';
 import { exerciseLabel } from '@/lib/exercises';
+import { shareMessages } from '@/i18n/messages/features/share';
+import type { ShareCardInput } from '@/lib/share-card';
 
 type Locale = 'ru' | 'en';
 
 export type Celebration = { records: RecordHit[]; achievements: AchievementDto[] };
 
 const SHOW_MS = 5000;
+/** Longer when there is a «Поделиться» button to reach. */
+const SHOW_WITH_SHARE_MS = 8000;
 const ICON_BY_CODE = new Map(ACHIEVEMENT_DEFS.map((def) => [def.code, def.icon]));
 
 /** Reads `records`/`achievements` of a `POST /api/workouts` response; `null` when there is nothing to celebrate. */
@@ -30,13 +34,40 @@ export function readCelebration(data: unknown): Celebration | null {
 }
 
 /** «Новый рекорд подхода!» / «Рекорд дня!» / «Новый значок: …» after saving a set; closes itself. */
-export default function RecordToast({ celebration, locale, onClose }: { celebration: Celebration; locale: Locale; onClose: () => void }) {
+export default function RecordToast({
+  celebration,
+  locale,
+  onClose,
+  onShare,
+}: {
+  celebration: Celebration;
+  locale: Locale;
+  onClose: () => void;
+  /** Shows «Поделиться» on each line; the toast closes and the caller opens the share sheet. */
+  onShare?: (input: ShareCardInput) => void;
+}) {
   const text = achievementsMessages[locale];
+  const shareText = shareMessages[locale];
 
   useEffect(() => {
-    const timer = window.setTimeout(onClose, SHOW_MS);
+    const timer = window.setTimeout(onClose, onShare ? SHOW_WITH_SHARE_MS : SHOW_MS);
     return () => window.clearTimeout(timer);
-  }, [celebration, onClose]);
+  }, [celebration, onClose, onShare]);
+
+  const shareButton = (input: ShareCardInput) =>
+    onShare ? (
+      <button
+        type="button"
+        style={shareBtn}
+        onClick={(event) => {
+          event.stopPropagation();
+          onShare(input);
+          onClose();
+        }}
+      >
+        {shareText.button}
+      </button>
+    ) : null;
 
   return (
     <div role="status" aria-live="polite" style={wrap} onClick={onClose}>
@@ -52,6 +83,7 @@ export default function RecordToast({ celebration, locale, onClose }: { celebrat
                 : ''}
             </div>
           </div>
+          {shareButton({ kind: 'record', record: hit.kind, exerciseType: hit.exerciseType, value: hit.value })}
         </div>
       ))}
       {celebration.achievements.map((badge) => (
@@ -61,6 +93,7 @@ export default function RecordToast({ celebration, locale, onClose }: { celebrat
             <div style={titleStyle}>{fillAchievementText(text.toastBadge, { title: badgeTitle(badge.code, locale) })}</div>
             <div style={sub}>{text.badges[badge.code].description}</div>
           </div>
+          {shareButton({ kind: 'badge', code: badge.code })}
         </div>
       ))}
       <button type="button" aria-label={text.close} style={closeBtn} onClick={onClose}>
@@ -89,6 +122,18 @@ const wrap: CSSProperties = {
 };
 
 const row: CSSProperties = { display: 'flex', gap: 10, alignItems: 'center' };
+const shareBtn: CSSProperties = {
+  marginLeft: 'auto',
+  flex: '0 0 auto',
+  padding: '6px 10px',
+  borderRadius: 999,
+  border: '1px solid rgba(249, 115, 22, 0.45)',
+  background: '#fff',
+  color: '#c2410c',
+  fontSize: 12,
+  fontWeight: 800,
+  cursor: 'pointer',
+};
 const icon: CSSProperties = { fontSize: 28, lineHeight: 1, flex: '0 0 auto' };
 const titleStyle: CSSProperties = { fontSize: 16, fontWeight: 900, color: '#0f172a' };
 const sub: CSSProperties = { fontSize: 13, color: '#475569', overflowWrap: 'anywhere' };

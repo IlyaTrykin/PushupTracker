@@ -1,0 +1,163 @@
+/* Same placement as FeedbackSheet: below the fixed app header, not centred. */
+.overlay {
+  --sheet-top: calc(var(--app-header-h, 64px) + var(--safe-top, 0px) + 20px);
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--sheet-top) 16px calc(16px + var(--safe-bottom, 0px));
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(6px);
+}
+
+.sheet {
+  width: min(420px, 100%);
+  max-height: calc(100dvh - var(--sheet-top) - 16px - var(--safe-bottom, 0px));
+  overflow: auto;
+  padding: 16px;
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 28px 64px rgba(15, 23, 42, 0.22);
+  display: grid;
+  gap: 12px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.close {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  background: rgba(255, 255, 255, 0.8);
+  color: #475569;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.preview {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 20px;
+  background: #0f172a;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #cbd5e1;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.preview img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hint {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.primary {
+  width: 100%;
+  min-height: 50px;
+  border-radius: 16px;
+  border: 1px solid rgba(249, 115, 22, 0.28);
+  background: linear-gradient(180deg, #fb923c 0%, #f97316 100%);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 14px 30px rgba(249, 115, 22, 0.24);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.secondary {
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 14px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  text-decoration: none;
+}
+
+.primary:disabled,
+.secondary[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+  box-shadow: none;
+}
+
+.status {
+  min-height: 18px;
+  margin: 0;
+  color: #15803d;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.statusError {
+  color: #b91c1c;
+}
+
+/* Small «share» button next to a record, badge, streak or league result. */
+.shareButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  background: rgba(255, 247, 237, 0.92);
+  color: #c2410c;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.shareButton:hover {
+  background: #ffedd5;
+}
+
+.shareIconOnly {
+  padding: 4px 7px;
+}

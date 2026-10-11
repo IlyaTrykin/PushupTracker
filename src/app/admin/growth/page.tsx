@@ -25,7 +25,7 @@ export default async function AdminGrowthPage() {
   const [users, workouts] = await Promise.all([
     prisma.user.findMany({
       where: { deletedAt: null },
-      select: { id: true, createdAt: true, signupSource: true, referredById: true },
+      select: { id: true, createdAt: true, signupSource: true, referredById: true, signupUtm: true },
     }),
     prisma.workout.findMany({ select: { userId: true, time: true } }),
   ]);

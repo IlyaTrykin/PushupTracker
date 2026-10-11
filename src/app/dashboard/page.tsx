@@ -21,6 +21,8 @@ import { recommendToday } from '@/lib/recommendation';
 import DailyGoalRing from '@/components/DailyGoalRing';
 import TodayRecommendation from '@/components/TodayRecommendation';
 import RecordToast, { readCelebration, type Celebration } from '@/components/RecordToast';
+import ShareCardSheet, { ShareButton } from '@/components/ShareCardSheet';
+import { MIN_SHARE_STREAK, type ShareCardInput } from '@/lib/share-card';
 import styles from './dashboard.module.css';
 
 type Workout = {
@@ -309,6 +311,8 @@ export default function DashboardPage() {
   // F3: «Новый рекорд подхода!» / «Рекорд дня!» / new badges from the POST response.
   const [celebration, setCelebration] = useState<Celebration | null>(null);
   const closeCelebration = useCallback(() => setCelebration(null), []);
+  const [shareInput, setShareInput] = useState<ShareCardInput | null>(null);
+  const closeShare = useCallback(() => setShareInput(null), []);
   // B04: «Добавить» заблокирована, пока запрос в пути; повтор того же ввода после обрыва сети
   // уходит с тем же clientRequestId, и сервер вернёт уже созданную запись.
   const [adding, setAdding] = useState(false);
@@ -756,8 +760,9 @@ export default function DashboardPage() {
     <div className={`app-page ${styles.page}`}>
       {toastMessage ? <div className="app-toast">{toastMessage}</div> : null}
       {celebration && !toastMessage ? (
-        <RecordToast celebration={celebration} locale={locale === 'en' ? 'en' : 'ru'} onClose={closeCelebration} />
+        <RecordToast celebration={celebration} locale={locale === 'en' ? 'en' : 'ru'} onClose={closeCelebration} onShare={setShareInput} />
       ) : null}
+      <ShareCardSheet input={shareInput} onClose={closeShare} />
 
       <section className={styles.hero}>
         <div className={styles.entryCard}>
@@ -1040,6 +1045,11 @@ export default function DashboardPage() {
               ) : null}
             </div>
             {stats.streakFreezeUsed ? <div style={freezeCaption}>{freezeText.short}</div> : null}
+            {stats.streak >= MIN_SHARE_STREAK ? (
+              <div style={streakShare}>
+                <ShareButton input={{ kind: 'streak', days: stats.streak }} iconOnly />
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -1631,6 +1641,8 @@ const freezeBadge: React.CSSProperties = {
   fontSize: '0.8em',
   cursor: 'help',
 };
+
+const streakShare: React.CSSProperties = { justifySelf: 'center' };
 
 const freezeCaption: React.CSSProperties = {
   fontSize: 12,

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGrowthReport, ratePercent } from './growth-metrics';
+import { buildGrowthReport, growthSourceLabel, ratePercent } from './growth-metrics';
 
 const TZ = 'Europe/Moscow';
 const now = new Date('2026-10-11T12:00:00Z'); // Sunday in Moscow
@@ -51,4 +51,12 @@ test('signups by Monday-week and sources', () => {
     [['2026-09-21', 0, 0], ['2026-09-28', 1, 1], ['2026-10-05', 2, 0]],
   );
   assert.deepEqual(r.sources.map((s) => s.source).sort(), ['direct', 'invite', 'unknown', 'utm:telegram']);
+});
+
+test('signups through a share card are split out of plain invites', () => {
+  const card = { signupSource: 'invite', signupUtm: { utm_source: 'share', utm_medium: 'card', utm_campaign: 'streak' } };
+  assert.equal(growthSourceLabel(card), 'invite:card:streak');
+  assert.equal(growthSourceLabel({ signupSource: 'invite', signupUtm: null }), 'invite');
+  assert.equal(growthSourceLabel({ signupSource: 'utm:share', signupUtm: { utm_source: 'share', utm_campaign: 'badge' } }), 'utm:share');
+  assert.equal(growthSourceLabel({ signupSource: null }), 'unknown');
 });
