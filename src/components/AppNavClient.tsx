@@ -100,7 +100,8 @@ export default function AppNavClient() {
   const { locale, messages, setLocale } = useI18n();
   const { user: me, setUser, refreshUser } = useAuth();
   const pathname = usePathname();
-  const isAuthRoute = pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
+  // '/' is the public landing — signed-in users are redirected to /dashboard on the server.
+  const isAuthRoute = pathname === '/' || pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
   const [open, setOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [favoritesOpen, setFavoritesOpen] = useState(false);

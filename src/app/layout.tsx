@@ -10,8 +10,10 @@ import ScreenWakeLock from '@/components/ScreenWakeLock';
 import TapSound from '@/components/TapSound';
 import ThirdOfSeptemberEgg from '@/components/ThirdOfSeptemberEgg';
 import { LocaleProvider } from '@/i18n/provider';
+import { landingMessages } from '@/i18n/messages/features/landing';
 import { getRequestLocale } from '@/i18n/server';
 import { getAuthUserFromSessionToken } from '@/lib/auth';
+import { publicAppUrl } from '@/lib/public-url';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -75,28 +77,50 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export const metadata: Metadata = {
-  title: 'Pushup Tracker',
-  description: 'Workout and challenge tracker with friends',
-  manifest: '/manifest.webmanifest',
-  icons: {
-    icon: ['/icons/favicon-32.png', '/icons/favicon-16.png', '/icons/icon-192.png'],
-    apple: [
-      '/icons/apple-touch-icon.png',
-      '/icons/apple-touch-icon-167.png',
-      '/icons/apple-touch-icon-152.png',
-      '/icons/apple-touch-icon-120.png',
-    ],
-  },
-  appleWebApp: {
-    capable: true,
-    title: 'Tracker',
-    statusBarStyle: 'default',
-  },
-  other: {
-    'mobile-web-app-capable': 'yes',
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getRequestLocale();
+  const m = landingMessages[locale];
+  const base = publicAppUrl();
+  return {
+    ...(base ? { metadataBase: new URL(base) } : {}),
+    title: { default: m.appName, template: `%s · ${m.appName}` },
+    description: m.metaDescription,
+    applicationName: m.appName,
+    manifest: '/manifest.webmanifest',
+    icons: {
+      icon: ['/icons/favicon-32.png', '/icons/favicon-16.png', '/icons/icon-192.png'],
+      apple: [
+        '/icons/apple-touch-icon.png',
+        '/icons/apple-touch-icon-167.png',
+        '/icons/apple-touch-icon-152.png',
+        '/icons/apple-touch-icon-120.png',
+      ],
+    },
+    openGraph: {
+      type: 'website',
+      siteName: m.appName,
+      title: m.metaTitle,
+      description: m.metaDescription,
+      locale: locale === 'en' ? 'en_US' : 'ru_RU',
+      url: '/',
+      images: [{ url: `/og-image-${locale}.png`, width: 1200, height: 630, alt: m.metaTitle }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: m.metaTitle,
+      description: m.metaDescription,
+      images: [`/og-image-${locale}.png`],
+    },
+    appleWebApp: {
+      capable: true,
+      title: 'Pushup',
+      statusBarStyle: 'default',
+    },
+    other: {
+      'mobile-web-app-capable': 'yes',
+    },
+  };
+}
 
 export default async function RootLayout({
   children,

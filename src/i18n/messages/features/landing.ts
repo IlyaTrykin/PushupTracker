@@ -1,0 +1,70 @@
+export const landingMessages = {
+  ru: {
+    appName: 'Pushup Tracker',
+    metaTitle: 'Pushup Tracker — трекер отжиманий и тренировок с друзьями',
+    metaDescription:
+      'Записывай отжимания, подтягивания, приседания, планку, гири и бег — всё в одних баллах. Цель дня, серия, лига недели с друзьями, группы и программы тренировок. Бесплатно, в браузере и как приложение.',
+    heroTitle: 'Тренируйся каждый день — вместе с друзьями',
+    heroText:
+      'Отжимания, подтягивания, приседания, планка, гири, бег и велосипед — всё в одних баллах: 1 балл = 1 отжимание. Ставь цель дня, держи серию и соревнуйся с друзьями в лиге недели.',
+    start: 'Начать бесплатно',
+    login: 'Войти',
+    free: 'Бесплатно · без рекламы · работает в браузере и как приложение',
+    featuresTitle: 'Что внутри',
+    features: [
+      { icon: 'pushups', title: '18 упражнений, одна шкала', text: 'Баллы сравнимы между упражнениями: подход из 30 отжиманий и 2 км бега весят одинаково.' },
+      { icon: 'pullups', title: 'Лига недели', text: 'Ты и твои друзья в одной таблице с понедельника. В понедельник — итог: «ты 2-й из 5».' },
+      { icon: 'squats', title: 'Цель дня и серия', text: 'Кольцо прогресса, вечернее напоминание и серия дней. Один пропуск в неделю не обнуляет серию.' },
+      { icon: 'crunches', title: 'Рекорды и значки', text: '«Новый рекорд подхода!», значки за 7, 30 и 100 дней подряд и за тысячи баллов.' },
+      { icon: 'kettlebell_swing', title: 'Группы и общие цели', text: 'Соберите команду, поставьте «вместе 10 000 баллов за месяц» и следите за вкладом каждого.' },
+      { icon: 'plank', title: 'Программы и челленджи', text: 'Программа подготовки к цели с тестами и челленджи с друзьями: кто больше, норма в день, подходы.' },
+    ],
+    stepsTitle: 'Как начать',
+    steps: [
+      'Зарегистрируйся — нужны только ник и email.',
+      'Запиши первый подход: отжимания, планку или пробежку.',
+      'Позови друга — и соревнуйтесь в лиге недели.',
+    ],
+    installTitle: 'Поставь как приложение',
+    installIos: 'iPhone: в Safari нажми «Поделиться» → «На экран „Домой“».',
+    installAndroid: 'Android: в Chrome открой меню ⋮ → «Установить приложение».',
+    ctaTitle: 'Первый подход — прямо сейчас',
+    footerSupport: 'Поддержать проект',
+    footerSource: 'Исходный код',
+  },
+  en: {
+    appName: 'Pushup Tracker',
+    metaTitle: 'Pushup Tracker — push-ups and workouts with friends',
+    metaDescription:
+      'Log push-ups, pull-ups, squats, planks, kettlebells and runs — all in one points scale. Daily goal, streaks, a weekly league with friends, groups and training programs. Free, in the browser and as an app.',
+    heroTitle: 'Train every day — together with friends',
+    heroText:
+      'Push-ups, pull-ups, squats, planks, kettlebells, running and cycling — all in one points scale: 1 point = 1 push-up. Set a daily goal, keep your streak and compete with friends in a weekly league.',
+    start: 'Start for free',
+    login: 'Log in',
+    free: 'Free · no ads · works in the browser and as an app',
+    featuresTitle: 'What’s inside',
+    features: [
+      { icon: 'pushups', title: '18 exercises, one scale', text: 'Points are comparable: a set of 30 push-ups and a 2 km run weigh the same.' },
+      { icon: 'pullups', title: 'Weekly league', text: 'You and your friends in one table from Monday. On Monday — the result: “you’re 2nd of 5”.' },
+      { icon: 'squats', title: 'Daily goal and streak', text: 'A progress ring, an evening reminder and a streak. One missed day a week does not break it.' },
+      { icon: 'crunches', title: 'Records and badges', text: '“New best set!”, badges for 7, 30 and 100 days in a row and for thousands of points.' },
+      { icon: 'kettlebell_swing', title: 'Groups and shared goals', text: 'Build a team, set “10,000 points together this month” and see everyone’s contribution.' },
+      { icon: 'plank', title: 'Programs and challenges', text: 'A training program towards your goal with tests, and challenges with friends.' },
+    ],
+    stepsTitle: 'How to start',
+    steps: [
+      'Sign up — just a username and an email.',
+      'Log your first set: push-ups, a plank or a run.',
+      'Invite a friend — and compete in the weekly league.',
+    ],
+    installTitle: 'Install it as an app',
+    installIos: 'iPhone: in Safari tap Share → Add to Home Screen.',
+    installAndroid: 'Android: in Chrome open the ⋮ menu → Install app.',
+    ctaTitle: 'Your first set — right now',
+    footerSupport: 'Support the project',
+    footerSource: 'Source code',
+  },
+} as const;
+
+export type LandingMessages = (typeof landingMessages)['ru'];

@@ -2,9 +2,12 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Tracker',
-    short_name: 'Tracker',
-    description: 'Трекер тренировок и соревнований',
+    name: 'Pushup Tracker',
+    short_name: 'Pushup',
+    description: 'Трекер отжиманий и тренировок с друзьями: баллы, цель дня, серия, лига недели',
+    lang: 'ru',
+    categories: ['health', 'fitness', 'sports'],
+    orientation: 'portrait',
     start_url: '/dashboard',
     scope: '/',
     display: 'standalone',
