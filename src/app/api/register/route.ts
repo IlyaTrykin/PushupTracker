@@ -10,6 +10,9 @@ import { normalizeEmail, validateNewPassword, validateNewUsername } from '@/lib/
 import { authRateLimitRules, authText, checkRateLimits, requestLocale, validationErrorText } from '@/lib/auth';
 import { clientIp, tooManyRequests } from '@/lib/rate-limit';
 import { registerAccount } from './register-account';
+import { inviteJoinedMessage, notifyUsers } from '@/lib/notify';
+import { parseSignupAttribution } from '@/lib/referral';
+import { applySignupAttribution } from '@/lib/signup-attribution';
 
 async function notifyAdminsOfRegistration(
   user: { id: string; username: string; email: string },
@@ -113,6 +116,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: text.accountTaken, code: outcome.code }, { status: outcome.status });
     }
     const user = outcome.user;
+
+    // Source of the signup and the invite link (if any): best effort, never blocks the signup.
+    let inviterId: string | null = null;
+    try {
+      ({ inviterId } = await applySignupAttribution(user.id, parseSignupAttribution(body.attribution)));
+    } catch (attributionError) {
+      console.error('REGISTER ATTRIBUTION ERROR:', attributionError);
+    }
+    if (inviterId) {
+      const inviter = inviterId;
+      after(() =>
+        notifyUsers([inviter], 'friend_request', (loc) => inviteJoinedMessage(loc, { username: user.username }), {
+          type: 'friend_request_accepted',
+        }).catch((notifyError) => console.error('REGISTER INVITE NOTIFY ERROR:', notifyError)),
+      );
+    }
 
     // Админам — in-app/push/email о новой регистрации; после ответа, ошибки только в лог.
     after(() =>

@@ -4,6 +4,7 @@ import type { Locale } from '@/i18n/locale';
 import { landingMessages } from '@/i18n/messages/features/landing';
 import { exerciseIcon } from '@/lib/exercises';
 import { SUPPORT_URL } from '@/lib/support';
+import AttributionCapture from '@/components/AttributionCapture';
 import styles from './Landing.module.css';
 
 const SOURCE_URL = 'https://github.com/IlyaTrykin/PushupTracker';
@@ -23,11 +24,24 @@ function structuredData(locale: Locale, appUrl: string | null) {
   };
 }
 
-export default function Landing({ locale, appUrl }: { locale: Locale; appUrl: string | null }) {
+export type LandingInvite = { code: string; inviterName: string };
+
+export default function Landing({
+  locale,
+  appUrl,
+  invite,
+}: {
+  locale: Locale;
+  appUrl: string | null;
+  invite?: LandingInvite;
+}) {
   const m = landingMessages[locale];
+  const registerHref = invite ? `/register?invite=${encodeURIComponent(invite.code)}` : '/register';
+  const startLabel = invite ? m.inviteStart : m.start;
 
   return (
     <main className={styles.page}>
+      <AttributionCapture inviteCode={invite?.code} />
       <script
         type="application/ld+json"
         // JSON only, built from static strings — nothing user-supplied.
@@ -37,10 +51,11 @@ export default function Landing({ locale, appUrl }: { locale: Locale; appUrl: st
       <section className={styles.hero}>
         <Image className={styles.logo} src="/icons/icon-192.png" alt="" width={72} height={72} priority />
         <p className={styles.brand}>{m.appName}</p>
+        {invite ? <p className={styles.invite}>{m.inviteBanner.replace('{name}', invite.inviterName)}</p> : null}
         <h1 className={styles.title}>{m.heroTitle}</h1>
         <p className={styles.lead}>{m.heroText}</p>
         <div className={styles.actions}>
-          <Link className={styles.primary} href="/register">{m.start}</Link>
+          <Link className={styles.primary} href={registerHref}>{startLabel}</Link>
           <Link className={styles.secondary} href="/login">{m.login}</Link>
         </div>
         <p className={styles.note}>{m.free}</p>
@@ -81,7 +96,7 @@ export default function Landing({ locale, appUrl }: { locale: Locale; appUrl: st
 
       <section className={styles.cta}>
         <h2 className={styles.h2}>{m.ctaTitle}</h2>
-        <Link className={styles.primary} href="/register">{m.start}</Link>
+        <Link className={styles.primary} href={registerHref}>{startLabel}</Link>
       </section>
 
       <footer className={styles.footer}>

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
+import InviteFriendCard from '@/components/InviteFriendCard';
 import WeeklyLeague from '@/components/WeeklyLeague';
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
@@ -861,6 +862,8 @@ export default function FriendsPage() {
           {tt('Группы')}
         </Link>
       </section>
+
+      <InviteFriendCard />
 
       <WeeklyLeague
         onAddFriend={() => {

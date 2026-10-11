@@ -47,6 +47,17 @@
   color: #ea580c;
 }
 
+.invite {
+  display: inline-block;
+  margin: 0 0 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  font-weight: 700;
+}
+
 .title {
   margin: 0 auto 14px;
   max-width: 720px;

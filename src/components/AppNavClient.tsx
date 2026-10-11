@@ -12,6 +12,7 @@ import FeedbackSheet from '@/components/FeedbackSheet';
 import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
+import { growthMessages } from '@/i18n/messages/features/growth';
 import styles from './AppNavClient.module.css';
 
 type PageTitleOverrideDetail = string | { title?: string | null } | null;
@@ -54,6 +55,7 @@ function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof use
   if (pathname.startsWith('/notifications')) return titles.notifications;
   if (pathname.startsWith('/profile')) return titles.profile;
   if (pathname.startsWith('/admin/users')) return titles.adminUsers;
+  if (pathname.startsWith('/admin/growth')) return titles.adminUsers;
   if (pathname.startsWith('/login')) return titles.login;
   if (pathname.startsWith('/register')) return titles.register;
   if (pathname.startsWith('/forgot-password')) return titles.forgotPassword;
@@ -101,7 +103,7 @@ export default function AppNavClient() {
   const { user: me, setUser, refreshUser } = useAuth();
   const pathname = usePathname();
   // '/' is the public landing — signed-in users are redirected to /dashboard on the server.
-  const isAuthRoute = pathname === '/' || pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
+  const isAuthRoute = pathname === '/' || Boolean(pathname?.startsWith('/invite/')) || pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
   const [open, setOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [favoritesOpen, setFavoritesOpen] = useState(false);
@@ -336,6 +338,12 @@ export default function AppNavClient() {
               {me?.isAdmin ? (
                 <Link className={linkClass('/admin/users')} href="/admin/users" onClick={() => setOpen(false)}>
                   {messages.nav.drawer.admin}
+                </Link>
+              ) : null}
+
+              {me?.isAdmin ? (
+                <Link className={linkClass('/admin/growth')} href="/admin/growth" onClick={() => setOpen(false)}>
+                  {growthMessages[locale === 'en' ? 'en' : 'ru'].navLabel}
                 </Link>
               ) : null}
 

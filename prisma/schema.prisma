@@ -70,7 +70,20 @@ model User {
   achievements      UserAchievement[]
   telegramLinkCodes TelegramLinkCode[]
 
+  // Personal invite link code (/invite/<code>); created on first request.
+  inviteCode   String? @unique
+  // Who invited this user (via an invite link); null for organic signups.
+  referredById String?
+  referredBy   User?   @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals    User[]  @relation("UserReferrals")
+  // Where the signup came from: "invite", "utm:<source>", "ref:<value>" or "direct".
+  signupSource String?
+  // utm_* parameters seen before signup, as { utm_source: "...", ... }.
+  signupUtm    Json?
+
   @@index([deletedAt])
+  @@index([createdAt])
+  @@index([referredById])
 }
 
 model Group {

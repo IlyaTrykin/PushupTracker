@@ -233,6 +233,12 @@ export function friendRequestAcceptedMessage(locale: NotifyLocale, args: { usern
     : { title: 'Запрос в друзья принят', body: `${args.username} принял ваш запрос в друзья`, link: '/friends' };
 }
 
+export function inviteJoinedMessage(locale: NotifyLocale, args: { username: string }): LocalizedMessage {
+  return locale === 'en'
+    ? { title: 'Your friend joined', body: `${args.username} signed up with your invite link — you are now friends`, link: '/friends' }
+    : { title: 'Друг присоединился', body: `${args.username} зарегистрировался по вашей ссылке — теперь вы друзья`, link: '/friends' };
+}
+
 export type ReactedWorkout = {
   exerciseType: string;
   reps: number;

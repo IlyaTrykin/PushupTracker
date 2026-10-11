@@ -8,6 +8,7 @@ import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
 import { accountMessages } from '@/i18n/messages/features/account';
+import { captureAttribution, clearAttribution, readAttribution } from '@/lib/attribution-client';
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, validateNewPassword, validateNewUsername } from '@/lib/account-validation';
 import styles from '../login/login.module.css';
 
@@ -23,6 +24,11 @@ export default function RegisterPage() {
   const [language, setLanguage] = useState<Locale>(locale);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  // /register?invite=<code>&utm_source=… — remember the source until the account is created.
+  useEffect(() => {
+    captureAttribution();
+  }, []);
 
   useEffect(() => {
     setLanguage(locale);
@@ -47,7 +53,7 @@ export default function RegisterPage() {
       const res = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, username, password, language }),
+        body: JSON.stringify({ email, username, password, language, attribution: readAttribution() }),
       });
 
       let data: JsonObject = {};
@@ -61,6 +67,7 @@ export default function RegisterPage() {
       if (!res.ok) {
         setError(typeof data.error === 'string' ? data.error : `${messages.auth.register.defaultError} (${res.status})`);
       } else {
+        clearAttribution();
         setLocale(language);
         setSuccess(true);
         setTimeout(() => router.push('/login'), 1000);

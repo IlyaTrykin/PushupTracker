@@ -31,6 +31,9 @@ export const landingMessages = {
     ctaTitle: 'Первый подход — прямо сейчас',
     footerSupport: 'Поддержать проект',
     footerSource: 'Исходный код',
+    inviteBanner: '{name} зовёт тебя тренироваться вместе',
+    inviteMetaTitle: '{name} зовёт тебя в Pushup Tracker',
+    inviteStart: 'Принять приглашение',
   },
   en: {
     appName: 'Pushup Tracker',
@@ -64,6 +67,9 @@ export const landingMessages = {
     ctaTitle: 'Your first set — right now',
     footerSupport: 'Support the project',
     footerSource: 'Source code',
+    inviteBanner: '{name} invites you to train together',
+    inviteMetaTitle: '{name} invites you to Pushup Tracker',
+    inviteStart: 'Accept the invite',
   },
 } as const;
 
