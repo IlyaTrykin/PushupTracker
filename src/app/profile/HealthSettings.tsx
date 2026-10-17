@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
@@ -119,6 +120,10 @@ export default function HealthSettings() {
           {notice.text}
         </div>
       ) : null}
+      <div style={{ display: 'grid', gap: 4 }}>
+        <Link href="/health-import" style={importLinkStyle} data-testid="health-import-link">{text.importLink}</Link>
+        <div style={fieldHint}>{platform === 'apple_health' ? text.importLinkHintAppleHealth : text.importLinkHintHealthConnect}</div>
+      </div>
       {notice?.action ? (
         <div>
           <button type="button" style={buttonSecondary} onClick={() => void openHealthSettings()}>
@@ -141,6 +146,8 @@ const panelCard: CSSProperties = {
 };
 
 const sectionTitle: CSSProperties = { fontSize: 18, fontWeight: 900, color: '#0f172a' };
+
+const importLinkStyle: CSSProperties = { fontWeight: 900, color: '#ea580c', textDecoration: 'none', minHeight: 44, display: 'inline-flex', alignItems: 'center' };
 
 const fieldHint: CSSProperties = { fontSize: 13, color: '#64748b', lineHeight: 1.5 };
 

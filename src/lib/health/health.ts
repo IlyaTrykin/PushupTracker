@@ -8,13 +8,24 @@
  *   on the site or in Telegram, deleted, changed): the whole history the first time after switching
  *   on (batches of 100, `healthReconcileProgress {done,total}`), afterwards the last 30 days.
  *   `installHealthSync` runs it at start, on resume and after the outbox went out (`outboxFlushed`).
+ * - `listImportableCardio` / `importHealthSessions` — the «Импорт из Health» screen: runs, rides and
+ *   rows of the last 30 days that are not in the tracker yet, and sending the chosen ones.
  */
 
 import { registerPlugin } from '@capacitor/core';
 import { nativePlatform } from '@/lib/platform';
 import { outboxStore } from '@/lib/offline/outbox-store';
 import { OUTBOX_FLUSHED_EVENT } from '@/lib/offline/sync';
-import { toHealthWorkout, type HealthPlatform, type HealthWorkoutInput, type HealthWorkoutSource } from './mapping';
+import {
+  healthClientRequestId,
+  toHealthWorkout,
+  toImportCandidate,
+  type HealthPlatform,
+  type HealthSession,
+  type HealthWorkoutInput,
+  type HealthWorkoutSource,
+  type ImportCandidate,
+} from './mapping';
 import {
   healthExternalId,
   isImportedFromHealth,
@@ -35,6 +46,7 @@ type HealthBridgePlugin = {
   saveWorkout(input: HealthWorkoutInput): Promise<{ saved: boolean; skipped?: 'exists' }>;
   deleteWorkout(options: { externalId: string }): Promise<{ deleted: boolean }>;
   listOwn(options: { since: string }): Promise<{ records: OwnHealthRecord[] }>;
+  querySessions(options: { since: string }): Promise<{ sessions: HealthSession[] }>;
   openSettings(): Promise<void>;
 };
 
@@ -292,4 +304,68 @@ export function installHealthSync(userId: string): void {
   void import('@capacitor/app')
     .then(({ App }) => App.addListener('resume', kick))
     .catch(() => undefined);
+}
+
+// --- Import of run / bike / row ---
+
+/** How far back the import screen looks. */
+export const HEALTH_IMPORT_DAYS = 30;
+const IMPORTED_QUERY_CHUNK = 500;
+const IMPORT_CHUNK = 50;
+
+/** The user has not allowed reading workouts in Health (or Health Connect). */
+export class HealthNotAuthorizedError extends Error {
+  constructor() {
+    super('No permission to read workouts from Health');
+    this.name = 'HealthNotAuthorizedError';
+  }
+}
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error(`POST ${path} → ${response.status}`);
+  return (await response.json()) as T;
+}
+
+/**
+ * Sessions of the last 30 days from Health that are worth showing: not written by this app, not
+ * imported before; newest first. Not-importable ones (too short, too long) stay with a `reason`.
+ * Asks for the Health permissions first (a dialog only while the system still asks).
+ * Throws `HealthNotAuthorizedError` when reading is not allowed.
+ */
+export async function listImportableCardio(timeZone: string, now: Date = new Date()): Promise<ImportCandidate[]> {
+  if (!healthPlatform()) return [];
+  await requestHealthPermissions().catch(() => false);
+  const since = new Date(now.getTime() - HEALTH_IMPORT_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  let sessions: HealthSession[];
+  try {
+    sessions = (await bridge().querySessions({ since })).sessions;
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code === 'not_authorized') throw new HealthNotAuthorizedError();
+    throw error;
+  }
+  const own = sessions.filter((s) => !s.fromThisApp);
+  const keys = own.map((s) => healthClientRequestId(s));
+  const known = new Set<string>();
+  for (let start = 0; start < keys.length; start += IMPORTED_QUERY_CHUNK) {
+    const { imported } = await postJson<{ imported: string[] }>('/api/health/imported', { clientRequestIds: keys.slice(start, start + IMPORTED_QUERY_CHUNK) });
+    for (const id of imported) known.add(id);
+  }
+  return own
+    .filter((_, i) => !known.has(keys[i]))
+    .map((s) => toImportCandidate(s, timeZone))
+    .sort((a, b) => b.session.end.localeCompare(a.session.end));
+}
+
+export type HealthImportOutcome = { clientRequestId: string; status: 'created' | 'duplicate' | 'rejected'; workoutId?: string; error?: string };
+
+/** Sends the chosen candidates (≤ 50 per request) and returns the server's verdict per session. */
+export async function importHealthSessions(candidates: ImportCandidate[]): Promise<HealthImportOutcome[]> {
+  const items = candidates.flatMap((c) => (c.workout ? [c.workout] : []));
+  const outcomes: HealthImportOutcome[] = [];
+  for (let start = 0; start < items.length; start += IMPORT_CHUNK) {
+    const { results } = await postJson<{ results: HealthImportOutcome[] }>('/api/health/import', { items: items.slice(start, start + IMPORT_CHUNK) });
+    outcomes.push(...results);
+  }
+  return outcomes;
 }

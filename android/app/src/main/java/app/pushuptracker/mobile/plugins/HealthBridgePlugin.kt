@@ -15,6 +15,7 @@ import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
+import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.health.connect.client.units.Length
@@ -40,7 +41,7 @@ import kotlin.reflect.KClass
  * JS (`src/lib/health/health.ts`): `isAvailable() → {available, reason?}`,
  * `requestPermissions() → {granted}`, `saveWorkout(HealthWorkoutInput) → {saved, skipped?}`,
  * `deleteWorkout({externalId}) → {deleted}`, `listOwn({since}) → {records: [{externalId, fingerprint}]}`,
- * `openSettings()`.
+ * `querySessions({since}) → {sessions: [HealthSession]}` (run / bike / row of any app), `openSettings()`.
  */
 @CapacitorPlugin(name = "HealthBridge")
 class HealthBridgePlugin : Plugin() {
@@ -60,6 +61,19 @@ class HealthBridgePlugin : Plugin() {
 
         private val WRITE_SESSION = HealthPermission.getWritePermission(ExerciseSessionRecord::class)
         private val WRITE_DISTANCE = HealthPermission.getWritePermission(DistanceRecord::class)
+        private val READ_SESSION = HealthPermission.getReadPermission(ExerciseSessionRecord::class)
+        private val READ_DISTANCE = HealthPermission.getReadPermission(DistanceRecord::class)
+
+        /** Health Connect exercise type → the tracker's cardio exercise (treadmill / stationary count too). */
+        private val IMPORT_ACTIVITIES = mapOf(
+            ExerciseSessionRecord.EXERCISE_TYPE_RUNNING to "run",
+            ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL to "run",
+            ExerciseSessionRecord.EXERCISE_TYPE_BIKING to "bike",
+            ExerciseSessionRecord.EXERCISE_TYPE_BIKING_STATIONARY to "bike",
+            ExerciseSessionRecord.EXERCISE_TYPE_ROWING to "row",
+            ExerciseSessionRecord.EXERCISE_TYPE_ROWING_MACHINE to "row",
+        )
+
         private val PERMISSIONS = setOf(
             WRITE_SESSION,
             WRITE_DISTANCE,
@@ -261,6 +275,79 @@ class HealthBridgePlugin : Plugin() {
             call.resolve(JSObject().put("records", records))
         }
     }
+
+    /**
+     * Runs, rides and rows since `since` from every app (newest first), distance in metres summed
+     * over the session from the same app (null without a distance or without read permission).
+     */
+    @PluginMethod
+    fun querySessions(call: PluginCall) {
+        val since = parseInstant(call.getString("since"))
+        if (since == null) {
+            call.reject("since is required", "invalid_request")
+            return
+        }
+        launch(call, {
+            val client = client()
+            val granted = client.permissionController.getGrantedPermissions()
+            if (!granted.contains(READ_SESSION)) throw SecurityException("No permission to read workouts")
+            val canReadDistance = granted.contains(READ_DISTANCE)
+            val found = mutableListOf<ExerciseSessionRecord>()
+            var pageToken: String? = null
+            do {
+                val response = client.readRecords(
+                    ReadRecordsRequest(
+                        recordType = ExerciseSessionRecord::class,
+                        timeRangeFilter = TimeRangeFilter.after(since),
+                        pageSize = PAGE_SIZE,
+                        pageToken = pageToken,
+                    ),
+                )
+                found.addAll(response.records.filter { IMPORT_ACTIVITIES.containsKey(it.exerciseType) })
+                pageToken = response.pageToken
+            } while (!pageToken.isNullOrEmpty())
+
+            val sessions = JSArray()
+            for (record in found.sortedByDescending { it.endTime }) {
+                val origin = record.metadata.dataOrigin.packageName
+                val session = JSObject()
+                    .put("id", record.metadata.id)
+                    .put("platform", "health_connect")
+                    .put("activity", IMPORT_ACTIVITIES[record.exerciseType])
+                    .put("start", record.startTime.toString())
+                    .put("end", record.endTime.toString())
+                    .put("sourceName", sourceName(origin))
+                    .put("fromThisApp", origin == context.packageName)
+                if (canReadDistance) {
+                    val meters = try {
+                        client.aggregate(
+                            AggregateRequest(
+                                metrics = setOf(DistanceRecord.DISTANCE_TOTAL),
+                                timeRangeFilter = TimeRangeFilter.between(record.startTime, record.endTime),
+                                dataOriginFilter = setOf(record.metadata.dataOrigin),
+                            ),
+                        )[DistanceRecord.DISTANCE_TOTAL]?.inMeters
+                    } catch (_: SecurityException) {
+                        null
+                    }
+                    if (meters != null && meters > 0) session.put("distanceMeters", meters)
+                }
+                sessions.put(session)
+            }
+            sessions
+        }) { sessions ->
+            call.resolve(JSObject().put("sessions", sessions))
+        }
+    }
+
+    /** The app's label when the system lets us see it, else its package name. */
+    private fun sourceName(packageName: String): String =
+        try {
+            val info = context.packageManager.getApplicationInfo(packageName, 0)
+            context.packageManager.getApplicationLabel(info).toString()
+        } catch (_: Exception) {
+            packageName
+        }
 
     @PluginMethod
     fun openSettings(call: PluginCall) {

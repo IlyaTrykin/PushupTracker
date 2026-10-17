@@ -41,7 +41,7 @@ export const WORKOUT_SELECT = {
   trainingSessionId: true,
 } as const;
 
-export type WorkoutSource = 'web' | 'telegram' | 'program';
+export type WorkoutSource = 'web' | 'telegram' | 'program' | 'health';
 
 /** The owner of the new workout. */
 export type WorkoutCreateUser = { id: string; username: string; timeZone?: string | null };

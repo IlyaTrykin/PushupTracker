@@ -9,7 +9,7 @@ import UIKit
 /// JS (`src/lib/health/health.ts`): `isAvailable() → {available, reason?}`,
 /// `requestPermissions() → {granted}`, `saveWorkout(HealthWorkoutInput) → {saved, skipped?}`,
 /// `deleteWorkout({externalId}) → {deleted}`, `listOwn({since}) → {records: [{externalId, fingerprint}]}`,
-/// `openSettings()`.
+/// `querySessions({since}) → {sessions: [HealthSession]}` (run / bike / row only), `openSettings()`.
 @objc(HealthBridgePlugin)
 public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "HealthBridgePlugin"
@@ -20,6 +20,7 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "saveWorkout", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteWorkout", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "listOwn", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "querySessions", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise)
     ]
 
@@ -196,6 +197,63 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             call.resolve(["records": records])
         }
         store.execute(query)
+    }
+
+    /// Runs, rides and rows since `since` (any app and device), newest first, for the import screen.
+    /// `fromThisApp` marks the records PushupTracker wrote itself. Distance in metres, null when the
+    /// record has none. HealthKit never says whether *reading* was denied (it just returns nothing);
+    /// an explicit refusal of writing workouts is taken as «no permission».
+    @objc func querySessions(_ call: CAPPluginCall) {
+        guard let since = HealthBridgePlugin.parseDate(call.getString("since")) else {
+            call.reject("since is required", "invalid_request")
+            return
+        }
+        if store.authorizationStatus(for: HKObjectType.workoutType()) == .sharingDenied {
+            call.reject("No permission to read workouts", "not_authorized")
+            return
+        }
+        let activities: [(HKWorkoutActivityType, String)] = [(.running, "run"), (.cycling, "bike"), (.rowing, "row")]
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            HKQuery.predicateForSamples(withStart: since, end: nil, options: []),
+            NSCompoundPredicate(orPredicateWithSubpredicates: activities.map { HKQuery.predicateForWorkouts(with: $0.0) })
+        ])
+        let newestFirst = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        let query = HKSampleQuery(sampleType: HKObjectType.workoutType(), predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [newestFirst]) { _, samples, error in
+            if let error = error {
+                call.reject("Could not read Health: \(error.localizedDescription)", "read_failed")
+                return
+            }
+            let ownBundle = Bundle.main.bundleIdentifier
+            let formatter = HealthBridgePlugin.isoFormatter
+            let sessions: [[String: Any]] = ((samples as? [HKWorkout]) ?? []).compactMap { workout in
+                guard let activity = activities.first(where: { $0.0 == workout.workoutActivityType })?.1 else { return nil }
+                let source = workout.sourceRevision.source
+                let own = source.bundleIdentifier == ownBundle || workout.metadata?[HealthBridgePlugin.externalIdKey] != nil
+                var session: [String: Any] = [
+                    "id": workout.uuid.uuidString,
+                    "platform": "apple_health",
+                    "activity": activity,
+                    "start": formatter.string(from: workout.startDate),
+                    "end": formatter.string(from: workout.endDate),
+                    "sourceName": source.name,
+                    "fromThisApp": own
+                ]
+                if let meters = HealthBridgePlugin.distanceMeters(of: workout) { session["distanceMeters"] = meters }
+                return session
+            }
+            call.resolve(["sessions": sessions])
+        }
+        store.execute(query)
+    }
+
+    /// Total distance of a workout in metres: the distance statistics (iOS 16+), else the workout's own total.
+    private static func distanceMeters(of workout: HKWorkout) -> Double? {
+        if #available(iOS 16.0, *) {
+            for type in distanceTypes() {
+                if let meters = workout.statistics(for: type)?.sumQuantity()?.doubleValue(for: .meter()), meters > 0 { return meters }
+            }
+        }
+        return workout.totalDistance?.doubleValue(for: .meter())
     }
 
     @objc func openSettings(_ call: CAPPluginCall) {

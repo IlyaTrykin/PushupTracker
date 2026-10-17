@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EXERCISE_IDS } from '@/lib/exercises';
-import { estimateDurationSeconds, toHealthWorkout } from './mapping';
+import { createHash } from 'node:crypto';
+import { estimateDurationSeconds, healthClientRequestId, toHealthWorkout, toImportCandidate, type HealthSession } from './mapping';
 import { workoutFingerprint } from './reconcile';
 
 const END = '2026-10-17T10:00:00.000Z';
@@ -96,4 +97,70 @@ test('a time without milliseconds gives the same record as the server form of it
   const a = toHealthWorkout({ clientRequestId: 'r', exerciseType: 'pushups', reps: 30, time: '2026-10-17T10:00:00Z' }, 'apple_health', 'ru');
   const b = toHealthWorkout({ clientRequestId: 'r', exerciseType: 'pushups', reps: 30, time: END }, 'apple_health', 'ru');
   assert.deepEqual(a, b);
+});
+
+// --- Import from Health (interfaces.md §6) ---
+
+const session = (patch: Partial<HealthSession> = {}): HealthSession => ({
+  id: '8F2C1A34-0B7E-4C11-9D3A-5E6F7A8B9C0D',
+  platform: 'apple_health',
+  activity: 'run',
+  start: '2026-10-17T06:00:00.000Z',
+  end: '2026-10-17T06:30:00.000Z',
+  distanceMeters: 5200.4,
+  sourceName: 'Watch',
+  fromThisApp: false,
+  ...patch,
+});
+
+test('import key: hk: for Apple Health, hc: for Health Connect, the id as is when it fits in 64', () => {
+  assert.equal(healthClientRequestId(session()), 'hk:8F2C1A34-0B7E-4C11-9D3A-5E6F7A8B9C0D');
+  assert.equal(healthClientRequestId(session({ platform: 'health_connect', id: 'abc123' })), 'hc:abc123');
+});
+
+test('import key: an id too long for the 64-char key becomes a sha-256 prefix, still 64 chars', () => {
+  const id = 'x'.repeat(80);
+  const key = healthClientRequestId(session({ platform: 'health_connect', id }));
+  assert.equal(key.length, 64);
+  assert.equal(key, `hc:${createHash('sha256').update(id).digest('hex').slice(0, 61)}`);
+  assert.equal(healthClientRequestId(session({ platform: 'health_connect', id })), key);
+});
+
+test('import key: an id with characters the server key forbids is hashed too', () => {
+  const key = healthClientRequestId(session({ platform: 'health_connect', id: 'a b/c' }));
+  assert.match(key, /^hc:[0-9a-f]{61}$/);
+});
+
+test('a run becomes a candidate: metres rounded, duration from start/end, day of the end in the user zone', () => {
+  const c = toImportCandidate(session({ end: '2026-10-17T21:30:00.000Z', start: '2026-10-17T21:00:00.000Z' }), 'Asia/Vladivostok');
+  assert.equal(c.reason, null);
+  assert.deepEqual(c.workout, {
+    exerciseType: 'run',
+    reps: 5200,
+    durationSeconds: 1800,
+    date: '2026-10-18',
+    time: '2026-10-17T21:30:00.000Z',
+    clientRequestId: 'hk:8F2C1A34-0B7E-4C11-9D3A-5E6F7A8B9C0D',
+  });
+});
+
+test('bike and row map to their exercises', () => {
+  assert.equal(toImportCandidate(session({ activity: 'bike' }), 'UTC').workout?.exerciseType, 'bike');
+  assert.equal(toImportCandidate(session({ activity: 'row' }), 'UTC').workout?.exerciseType, 'row');
+});
+
+test('under 10 m, over 300 km, no distance or an unknown activity: no workout and a reason', () => {
+  assert.equal(toImportCandidate(session({ distanceMeters: 9 }), 'UTC').workout, null);
+  assert.equal(toImportCandidate(session({ distanceMeters: 9 }), 'UTC').reason, 'too_short');
+  assert.equal(toImportCandidate(session({ distanceMeters: 300_001 }), 'UTC').reason, 'too_long');
+  assert.equal(toImportCandidate(session({ distanceMeters: null }), 'UTC').reason, 'no_distance');
+  assert.equal(toImportCandidate(session({ activity: 'swim' }), 'UTC').reason, 'unsupported');
+  assert.equal(toImportCandidate(session({ distanceMeters: 10 }), 'UTC').reason, null);
+  assert.equal(toImportCandidate(session({ distanceMeters: 300_000 }), 'UTC').reason, null);
+});
+
+test('a session of zero length is not importable (the server needs a duration of at least a second)', () => {
+  const c = toImportCandidate(session({ end: '2026-10-17T06:00:00.000Z' }), 'UTC');
+  assert.equal(c.workout, null);
+  assert.equal(c.reason, 'no_duration');
 });
