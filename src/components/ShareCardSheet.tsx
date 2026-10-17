@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '@/i18n/provider';
-import { publicLink } from '@/lib/platform';
+import { nativePlatform, publicLink } from '@/lib/platform';
 import { shareMessages } from '@/i18n/messages/features/share';
+import { nativeAppMessages } from '@/i18n/messages/features/native-app';
 import {
   buildShareCard,
   displayLink,
@@ -33,6 +34,30 @@ function loadInviteUrl(): Promise<string | null> {
 }
 
 type Prepared = { blob: Blob; previewUrl: string; link: string };
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** The user closed the system share sheet (Capacitor rejects with «Share canceled»). */
+function isShareCancel(error: unknown): boolean {
+  return /cancel/i.test(error instanceof Error ? error.message : String(error));
+}
+
+/**
+ * App: the picture goes to the cache folder (Filesystem) and the system «Поделиться» sheet
+ * gets the file and the text with the link (@capacitor/share).
+ */
+async function shareNatively(blob: Blob, fileName: string, text: string, dialogTitle: string): Promise<void> {
+  const [{ Share }, { Filesystem, Directory }] = await Promise.all([import('@capacitor/share'), import('@capacitor/filesystem')]);
+  const { uri } = await Filesystem.writeFile({ path: fileName, data: await blobToBase64(blob), directory: Directory.Cache });
+  await Share.share({ title: 'Pushup Tracker', text, files: [uri], dialogTitle });
+}
 type Status = 'idle' | 'copied' | 'error';
 
 /** Preview of a share card with «Отправить» / «Сохранить картинку» / «Скопировать ссылку». */
@@ -54,7 +79,8 @@ function ShareDialog({ input, onClose }: { input: ShareCardInput; onClose: () =>
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [failed, setFailed] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
-  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const isApp = nativePlatform() !== null;
+  const canShare = isApp || (typeof navigator !== 'undefined' && typeof navigator.share === 'function');
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -98,6 +124,14 @@ function ShareDialog({ input, onClose }: { input: ShareCardInput; onClose: () =>
   // Called straight from the click: the picture is ready, so the share sheet keeps the user gesture.
   const send = useCallback(async () => {
     if (!prepared) return;
+    if (isApp) {
+      try {
+        await shareNatively(prepared.blob, shareCardFileName(card.kind), `${card.text}\n${prepared.link}`, nativeAppMessages[locale].shareDialogTitle);
+      } catch (e) {
+        if (!isShareCancel(e)) await copyLink();
+      }
+      return;
+    }
     const file = new File([prepared.blob], shareCardFileName(card.kind), { type: 'image/png' });
     try {
       if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
@@ -110,7 +144,7 @@ function ShareDialog({ input, onClose }: { input: ShareCardInput; onClose: () =>
       if (e instanceof DOMException && e.name === 'AbortError') return; // the user closed the sheet
       await copyLink();
     }
-  }, [prepared, card, copyLink]);
+  }, [prepared, card, copyLink, isApp, locale]);
 
   const stop = (event: MouseEvent) => event.stopPropagation();
   const what = card.label;

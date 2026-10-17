@@ -6,7 +6,9 @@ import { PASSWORD_MIN_LENGTH } from '@/lib/account-validation';
 import NotificationSettings from './NotificationSettings';
 import TelegramConnect from '@/components/TelegramConnect';
 import { useI18n } from '@/i18n/provider';
-import { mediaUrl } from '@/lib/platform';
+import { useRouter } from 'next/navigation';
+import { clearToken } from '@/lib/native-auth';
+import { hardNavigate, isNativeApp, mediaUrl } from '@/lib/platform';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { DAILY_GOAL_MAX_POINTS, DAILY_GOAL_MIN_POINTS, DEFAULT_REMINDER_TIME } from '@/lib/daily-goal';
 import { dailyGoalMessages } from '@/i18n/messages/features/daily-goal';
@@ -92,6 +94,7 @@ async function resizeToWebp256(file: File): Promise<Blob> {
 
 export default function ProfilePage() {
   const { user, setUser } = useAuth();
+  const router = useRouter();
   const { locale, messages } = useI18n();
   const goalText = dailyGoalMessages[locale];
   const cacheKey = useMemo(() => getUserScopedCacheKey('profile', user?.id, user?.username), [user?.id, user?.username]);
@@ -282,7 +285,11 @@ export default function ProfilePage() {
       if (!res.ok) {
         setError(data.error || messages.profile.errors.delete);
       } else {
-        window.location.href = '/login';
+        if (isNativeApp()) {
+          await clearToken();
+          setUser(null);
+        }
+        hardNavigate('/login', router);
       }
     } catch {
       setError(messages.profile.errors.network);

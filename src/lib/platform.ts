@@ -4,18 +4,7 @@
  * `isNativeApp()` — константа сборки и годится для выбора ветки на уровне модуля.
  */
 
-type CapacitorGlobal = {
-  getPlatform?: () => string;
-  isNativePlatform?: () => boolean;
-  Plugins?: Record<string, unknown>;
-};
-
-type BrowserPlugin = { open?: (options: { url: string }) => Promise<void> };
-
-function capacitor(): CapacitorGlobal | null {
-  if (typeof window === 'undefined') return null;
-  return ((window as unknown as { Capacitor?: CapacitorGlobal }).Capacitor) ?? null;
-}
+import { Capacitor } from '@capacitor/core';
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
@@ -28,7 +17,7 @@ export function isNativeApp(): boolean {
 /** Платформа устройства в приложении; на сайте и без Capacitor — `null`. */
 export function nativePlatform(): 'ios' | 'android' | null {
   if (!isNativeApp()) return null;
-  const platform = capacitor()?.getPlatform?.();
+  const platform = Capacitor.getPlatform();
   return platform === 'ios' || platform === 'android' ? platform : null;
 }
 
@@ -69,14 +58,14 @@ export function publicLink(path: string): string {
 /** Внешняя ссылка: в приложении — системный браузер, на сайте — новая вкладка. */
 export function openExternal(url: string): void {
   if (typeof window === 'undefined') return;
-  if (isNativeApp()) {
-    const browser = capacitor()?.Plugins?.Browser as BrowserPlugin | undefined;
-    if (browser?.open) {
-      void browser.open({ url }).catch(() => {
+  if (nativePlatform()) {
+    // Системный браузер (Safari View Controller / Custom Tabs); модуль грузится только в приложении.
+    void import('@capacitor/browser')
+      .then(({ Browser }) => Browser.open({ url }))
+      .catch(() => {
         window.open(url, '_blank', 'noopener,noreferrer');
       });
-      return;
-    }
+    return;
   }
   window.open(url, '_blank', 'noopener,noreferrer');
 }

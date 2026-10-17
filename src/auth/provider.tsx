@@ -12,6 +12,8 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react';
+import { readCachedUser, writeCachedUser } from '@/lib/native-auth';
+import { isNativeApp } from '@/lib/platform';
 
 export type AuthUserState = {
   id?: string;
@@ -68,7 +70,9 @@ export function AuthProvider({
   children: ReactNode;
   initialUser?: AuthUserState;
 }) {
-  const [user, setUser] = useState<AuthUserState>(initialUser);
+  // В приложении сервер не рендерит пользователя: стартуем с сохранённого на устройстве
+  // (без связи приложение открывается на нём), затем сверяемся с `/api/me`.
+  const [user, setUser] = useState<AuthUserState>(() => initialUser ?? (isNativeApp() ? readCachedUser() : null));
   const refreshInFlight = useRef<Promise<void> | null>(null);
 
   // Parallel callers (provider + a page on mount) share one request.
@@ -97,6 +101,17 @@ export function AuthProvider({
 
   const userId = user?.id;
   const savedTimeZone = user?.timeZone;
+
+  // Приложение: кэш пользователя повторяет состояние (вход, правки профиля, выход, 401).
+  useEffect(() => {
+    if (isNativeApp()) writeCachedUser(user);
+  }, [user]);
+
+  // Приложение: сохранённый пользователь мог устареть или сессию отозвали — сверка при старте.
+  // 401 разбирает сетевой мост (вход), без связи пользователь остаётся.
+  useEffect(() => {
+    if (isNativeApp()) void refreshUser();
+  }, [refreshUser]);
 
   // The server-rendered user has no zone/goal fields: load them once after sign-in.
   useEffect(() => {

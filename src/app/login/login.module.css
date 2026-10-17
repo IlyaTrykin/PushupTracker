@@ -6,6 +6,9 @@
   margin-bottom: calc(-1 * (var(--page-pad) + var(--safe-bottom, 0px) + var(--bottom-nav-h, 64px)));
   margin-left: calc(-1 * var(--page-pad));
   padding: clamp(28px, 5vw, 52px) clamp(18px, 5vw, 42px);
+  /* Под вырезом / строкой состояния (приложение, PWA): отступ безопасной зоны сверху и снизу. */
+  padding-top: calc(clamp(28px, 5vw, 52px) + var(--safe-top, 0px));
+  padding-bottom: calc(clamp(28px, 5vw, 52px) + var(--safe-bottom, 0px));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -255,6 +258,8 @@
 @media (max-width: 640px) {
   .page {
     padding: 20px 14px;
+    padding-top: calc(20px + var(--safe-top, 0px));
+    padding-bottom: calc(20px + var(--safe-bottom, 0px));
     align-items: stretch;
   }
 

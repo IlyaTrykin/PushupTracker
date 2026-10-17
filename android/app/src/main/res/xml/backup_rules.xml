@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android ≤ 11: токен сессии не уходит в резервную копию (ключ Keystore на другом устройстве не восстановится). -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="pushup_secure_token.xml" />
+</full-backup-content>

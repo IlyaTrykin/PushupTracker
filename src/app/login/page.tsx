@@ -8,6 +8,9 @@ import Link from 'next/link';
 import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
+import { nativeAppMessages } from '@/i18n/messages/features/native-app';
+import { saveToken } from '@/lib/native-auth';
+import { isNativeApp } from '@/lib/platform';
 import styles from './login.module.css';
 
 type LoginResponse = {
@@ -18,6 +21,8 @@ type LoginResponse = {
     avatarPath?: string | null;
     language?: string;
   };
+  /** Only for the native app (`X-Client: native`): the session token for the Bearer header. */
+  token?: string;
   error?: string;
 };
 
@@ -51,6 +56,16 @@ export default function LoginPage() {
       if (!res.ok) {
         setError(data.error || messages.auth.login.defaultError);
       } else {
+        // Приложение: сессия — токеном в Keychain / EncryptedSharedPreferences, не cookie.
+        if (isNativeApp()) {
+          try {
+            if (!data.token) throw new Error('no token');
+            await saveToken(data.token);
+          } catch {
+            setError(nativeAppMessages[locale === 'en' ? 'en' : 'ru'].tokenSaveError);
+            return;
+          }
+        }
         const nextLocale = normalizeLocale(data.user?.language || language);
         setLocale(nextLocale);
         setUser(data.user ? { ...data.user, language: nextLocale } : null);

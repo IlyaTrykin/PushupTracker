@@ -2,11 +2,12 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { clearClientDataCaches } from '@/lib/client-cache';
-import { isNativeApp, mediaUrl, openExternal, publicLink } from '@/lib/platform';
+import { clearToken } from '@/lib/native-auth';
+import { hardNavigate, isNativeApp, mediaUrl, openExternal, publicLink } from '@/lib/platform';
 import { SUPPORT_URL } from '@/lib/support';
 import ExerciseFavoritesSheet from '@/components/ExerciseFavoritesSheet';
 import FeedbackSheet from '@/components/FeedbackSheet';
@@ -19,6 +20,12 @@ import styles from './AppNavClient.module.css';
 type PageTitleOverrideDetail = string | { title?: string | null } | null;
 type PageHeaderActionDetail = string | { label?: string | null } | null;
 const APP_SHELL_PREWARM_VERSION = '20260327-1';
+// Приложение рисуется под строкой состояния и вырезом (viewport-fit=cover): шапка отступает на safe-area.
+const NATIVE_HEADER_STYLE: React.CSSProperties = { paddingTop: 'calc(10px + var(--safe-top, 0px))' };
+const NATIVE_DRAWER_STYLE: React.CSSProperties = {
+  top: 'calc(12px + var(--safe-top, 0px))',
+  maxHeight: 'calc(100vh - 24px - var(--safe-top, 0px) - var(--safe-bottom, 0px))',
+};
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
   return Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms))]);
@@ -103,6 +110,7 @@ export default function AppNavClient() {
   const { locale, messages, setLocale } = useI18n();
   const { user: me, setUser, refreshUser } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
   // '/' is the public landing — signed-in users are redirected to /dashboard on the server.
   const isAuthRoute = pathname === '/' || Boolean(pathname?.startsWith('/invite/')) || pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
   const [open, setOpen] = useState(false);
@@ -174,17 +182,21 @@ export default function AppNavClient() {
   const logout = async () => {
     // Отписать это устройство от push до выхода (B19): иначе на общем устройстве
     // продолжат приходить уведомления вышедшего пользователя.
-    await unsubscribeThisDeviceFromPush();
+    if (!isNativeApp()) await unsubscribeThisDeviceFromPush();
     try {
-      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      // В приложении запрос идёт с Bearer и закрывает только эту сессию; без связи не ждём.
+      const request = fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      await (isNativeApp() ? withTimeout(request, 5000) : request);
     } catch {}
+    // Приложение: токен стирается с устройства даже без связи.
+    await clearToken();
     try {
-      navigator.serviceWorker.controller?.postMessage({ type: 'CLEAR_RUNTIME_CACHES' });
+      navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_RUNTIME_CACHES' });
     } catch {}
     clearClientDataCaches();
     setUser(null);
     window.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
-    window.location.href = '/login';
+    hardNavigate('/login', router);
   };
 
   const handleLanguageChange = async (nextLocale: Locale) => {
@@ -239,7 +251,7 @@ export default function AppNavClient() {
 
   return (
     <>
-      <header className="app-header">
+      <header className="app-header" style={isNativeApp() ? NATIVE_HEADER_STYLE : undefined}>
         <div className={`app-header-row ${styles.headerRow}`}>
           <div className={styles.titleBlock}>
             <div className={styles.eyebrow}>{messages.common.appName}</div>
@@ -313,7 +325,7 @@ export default function AppNavClient() {
 
       {open ? (
         <div className="app-drawer-overlay" onClick={() => setOpen(false)}>
-          <div className="app-drawer" onClick={(e) => e.stopPropagation()}>
+          <div className="app-drawer" style={isNativeApp() ? NATIVE_DRAWER_STYLE : undefined} onClick={(e) => e.stopPropagation()}>
             <div className="app-drawer__top">
               <div className={styles.drawerIdentity}>
                 <div className={styles.drawerName}>{me?.username || messages.nav.unauthorized}</div>

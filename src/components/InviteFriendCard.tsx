@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { inviteMessages } from '@/i18n/messages/features/invite';
+import { nativeAppMessages } from '@/i18n/messages/features/native-app';
+import { nativePlatform } from '@/lib/platform';
 
 type InviteInfo = { url: string; joined: number };
 
@@ -39,7 +41,16 @@ export default function InviteFriendCard() {
 
   const share = async () => {
     if (!info) return;
-    if (typeof navigator.share === 'function') {
+    // App: the system «Поделиться» sheet (@capacitor/share), not copying.
+    if (nativePlatform()) {
+      try {
+        const { Share } = await import('@capacitor/share');
+        await Share.share({ title: m.shareTitle, text: m.shareText, url: info.url, dialogTitle: nativeAppMessages[locale === 'en' ? 'en' : 'ru'].shareDialogTitle });
+        return;
+      } catch (e) {
+        if (/cancel/i.test(e instanceof Error ? e.message : String(e))) return; // user closed the sheet
+      }
+    } else if (typeof navigator.share === 'function') {
       try {
         await navigator.share({ title: m.shareTitle, text: m.shareText, url: info.url });
         return;

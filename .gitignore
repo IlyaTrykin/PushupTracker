@@ -38,3 +38,18 @@ backups/
 # local import data
 import/*.xlsx
 .autopilot/serve.*
+
+# native apps (Capacitor): build output, copied web bundle, generated config, signing
+ios/App/Pods/
+ios/App/App/public/
+ios/App/build/
+ios/DerivedData/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/app/src/main/assets/public/
+google-services.json
+GoogleService-Info.plist
+*.keystore
+*.jks
