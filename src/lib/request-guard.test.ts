@@ -212,3 +212,96 @@ test('the Telegram webhook and avatar multipart may stream without Content-Lengt
   const multipart = { ...base, origin: 'https://tracker.example.com', 'content-type': 'multipart/form-data; boundary=x' };
   assert.deepEqual(checkApiRequest(meta('POST', '/api/profile/avatar', multipart)), { ok: true });
 });
+
+// --- Native app: `Authorization: Bearer` instead of the session cookie ---
+
+const TOKEN = 'a'.repeat(64);
+const bearerJson = {
+  host: 'tracker.example.com',
+  authorization: `Bearer ${TOKEN}`,
+  'content-type': 'application/json',
+  'content-length': '42',
+};
+
+test('a Bearer request without the session cookie skips the Origin check', () => {
+  // App WebView origins, no Origin at all, and anything else: CSRF needs a cookie the browser adds by itself.
+  for (const origin of ['capacitor://localhost', 'https://localhost', 'https://evil.example.net', null]) {
+    const headers: Record<string, string> = { ...bearerJson };
+    if (origin) headers.origin = origin;
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      assert.deepEqual(checkApiRequest(meta(method, '/api/workouts', headers)), { ok: true }, `${method} ${origin}`);
+    }
+  }
+});
+
+test('a Bearer request that also carries the session cookie is checked for Origin as before', () => {
+  const verdict = checkApiRequest(
+    meta('POST', '/api/workouts', {
+      ...bearerJson,
+      origin: 'https://evil.example.net',
+      cookie: `preferred_locale=ru; session=${'b'.repeat(64)}`,
+    }),
+  );
+  assert.deepEqual(verdict, { ok: false, status: 403, code: 'FORBIDDEN_ORIGIN' });
+});
+
+test('other cookies do not count as the session cookie', () => {
+  const verdict = checkApiRequest(
+    meta('POST', '/api/workouts', { ...bearerJson, origin: 'capacitor://localhost', cookie: 'preferred_locale=en' }),
+  );
+  assert.deepEqual(verdict, { ok: true });
+});
+
+test('a malformed Authorization header does not lift the Origin check', () => {
+  for (const authorization of ['Bearer ', 'Bearer xyz', `Basic ${TOKEN}`, `Bearer ${'A'.repeat(64)}`, `Bearer ${TOKEN}0`]) {
+    const verdict = checkApiRequest(
+      meta('POST', '/api/workouts', { ...bearerJson, authorization, origin: 'capacitor://localhost' }),
+    );
+    assert.deepEqual(verdict, { ok: false, status: 403, code: 'FORBIDDEN_ORIGIN' }, authorization);
+  }
+});
+
+test('Bearer requests still get the Content-Type and size checks', () => {
+  const app = { ...bearerJson, origin: 'capacitor://localhost' };
+  assert.deepEqual(checkApiRequest(meta('POST', '/api/workouts', { ...app, 'content-type': 'text/plain' })), {
+    ok: false,
+    status: 415,
+    code: 'UNSUPPORTED_CONTENT_TYPE',
+  });
+  assert.deepEqual(checkApiRequest(meta('POST', '/api/workouts', { ...app, 'content-length': String(65 * KB) })), {
+    ok: false,
+    status: 413,
+    code: 'PAYLOAD_TOO_LARGE',
+  });
+  const { 'content-length': _dropped, ...chunked } = app;
+  void _dropped;
+  assert.deepEqual(
+    checkApiRequest(meta('POST', '/api/workouts', { ...chunked, 'transfer-encoding': 'chunked' })),
+    { ok: false, status: 411, code: 'LENGTH_REQUIRED' },
+  );
+  assert.deepEqual(
+    checkApiRequest(meta('POST', '/api/profile/avatar', { ...app, 'content-type': 'multipart/form-data; boundary=x', 'content-length': String(4 * MB) })),
+    { ok: true },
+  );
+});
+
+test('an app request marked X-Client: native without the session cookie skips the Origin check (login, register)', () => {
+  // Before sign-in the app has no token yet; the custom header forces a CORS preflight that only app origins pass.
+  const app = { host: 'tracker.example.com', 'x-client': 'native', 'content-type': 'application/json', 'content-length': '42' };
+  for (const origin of ['capacitor://localhost', 'https://localhost']) {
+    assert.deepEqual(checkApiRequest(meta('POST', '/api/login', { ...app, origin })), { ok: true }, origin);
+  }
+  assert.deepEqual(checkApiRequest(meta('POST', '/api/register', { ...app, origin: 'https://localhost', 'content-type': 'text/plain' })), {
+    ok: false,
+    status: 415,
+    code: 'UNSUPPORTED_CONTENT_TYPE',
+  });
+  assert.deepEqual(
+    checkApiRequest(meta('POST', '/api/login', { ...app, origin: 'https://evil.example.net', cookie: `session=${TOKEN}` })),
+    { ok: false, status: 403, code: 'FORBIDDEN_ORIGIN' },
+  );
+  assert.deepEqual(
+    checkApiRequest(meta('POST', '/api/login', { ...app, 'x-client': 'web', origin: 'capacitor://localhost' })),
+    { ok: false, status: 403, code: 'FORBIDDEN_ORIGIN' },
+  );
+});

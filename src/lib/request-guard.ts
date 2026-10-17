@@ -1,6 +1,9 @@
 /**
  * Pure checks applied by `src/proxy.ts` to every `/api/*` request before a route runs:
- * - CSRF: unsafe methods must come from our own origin (`Origin`, else `Referer`);
+ * - CSRF: unsafe methods must come from our own origin (`Origin`, else `Referer`) — unless the
+ *   request carries no `session` cookie and is the native app's (`Authorization: Bearer` or
+ *   `X-Client: native` — sign-in, registration before there is a token): CSRF rides on a cookie the
+ *   browser attaches by itself, and both headers force a CORS preflight only app origins pass;
  * - Content-Type: only JSON (plus multipart on the avatar uploads), so a same-site page
  *   cannot post a CORS-free `text/plain` or form body with the session cookie;
  * - body size by `Content-Length`, before anything reads the body; a JSON body streamed
@@ -70,6 +73,30 @@ function isOwnOrigin(source: URL, meta: ApiRequestMeta): boolean {
   return hosts.includes(source.host.toLowerCase());
 }
 
+const BEARER_PATTERN = /^Bearer ([0-9a-f]{64})$/;
+
+/** Session token from `Authorization: Bearer <64 lowercase hex>`; anything else → null. */
+export function parseBearerToken(header: string | null | undefined): string | null {
+  const match = header?.trim().match(BEARER_PATTERN);
+  return match ? match[1] : null;
+}
+
+/** `X-Client: native` — the marker the native app puts on every API request. */
+export function isNativeClientHeader(value: string | null | undefined): boolean {
+  return value?.trim().toLowerCase() === 'native';
+}
+
+function hasSessionCookie(cookieHeader: string | null): boolean {
+  return /(?:^|;\s*)session=[^;\s]/.test(cookieHeader ?? '');
+}
+
+/** Native-app request with no session cookie to ride on: a well-formed Bearer token or `X-Client: native`. */
+function isCookielessAppRequest(headers: ApiRequestMeta['headers']): boolean {
+  if (hasSessionCookie(headers.get('cookie'))) return false;
+  if (parseBearerToken(headers.get('authorization')) !== null) return true;
+  return isNativeClientHeader(headers.get('x-client'));
+}
+
 function mediaType(raw: string | null): string | null {
   const value = raw?.split(';')[0]?.trim().toLowerCase();
   return value || null;
@@ -93,7 +120,7 @@ export function checkApiRequest(meta: ApiRequestMeta): GuardVerdict {
   const { headers, pathname } = meta;
   const originExempt = ORIGIN_EXEMPT_API_PATHS.includes(pathname);
 
-  if (!originExempt) {
+  if (!originExempt && !isCookielessAppRequest(headers)) {
     const source = requestSourceOrigin(headers);
     if (!source || !isOwnOrigin(source, meta)) return FORBIDDEN_ORIGIN;
   }

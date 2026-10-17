@@ -7,6 +7,8 @@ import {
   authText,
   checkRateLimits,
   createSession,
+  isNativeClient,
+  NATIVE_SESSION_MAX_AGE_SECONDS,
   requestLocale,
   resolveLoginOutcome,
   setSessionCookie,
@@ -55,20 +57,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: text.accountDeleted, code: 'ACCOUNT_DELETED' }, { status: 403 });
     }
 
-    const { token } = await createSession(user.id);
+    const native = isNativeClient(request);
+    const { token, expiresAt } = await createSession(
+      user.id,
+      undefined,
+      native ? { maxAgeSeconds: NATIVE_SESSION_MAX_AGE_SECONDS } : undefined,
+    );
 
-    const res = NextResponse.json({
-      ok: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        isAdmin: user.isAdmin,
-        avatarPath: user.avatarPath ?? null,
-        language: user.language,
-        favoriteExercises: user.favoriteExercises,
-      },
-    });
+    const publicUser = {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      isAdmin: user.isAdmin,
+      avatarPath: user.avatarPath ?? null,
+      language: user.language,
+      favoriteExercises: user.favoriteExercises,
+    };
+
+    // Native app: the token goes back in the body (stored in Keychain / EncryptedSharedPreferences
+    // and sent as `Authorization: Bearer`); no cookies — the WebView is cross-site to the API.
+    if (native) {
+      return NextResponse.json({ ok: true, user: publicUser, token, expiresAt: expiresAt.toISOString() });
+    }
+
+    const res = NextResponse.json({ ok: true, user: publicUser });
 
     // Не задаём Domain — cookie привязана к текущему хосту
     setSessionCookie(res, token, request);

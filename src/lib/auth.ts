@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { LOCALE_COOKIE_NAME, type Locale, getLocaleFromAcceptLanguage, normalizeLocale } from '@/i18n/locale';
 import { hitRateLimit } from '@/lib/rate-limit';
 import { normalizeTimeZone } from '@/lib/calendar-day';
+import { isNativeClientHeader, parseBearerToken } from '@/lib/request-guard';
 
 /** Unified auth helpers for API routes. */
 
@@ -175,6 +176,13 @@ const authUserSelect = {
 } as const;
 
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+/** Session of the native app (token in Keychain / EncryptedSharedPreferences, sent as Bearer). */
+export const NATIVE_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
+
+/** The native app marks its requests with `X-Client: native`. */
+export function isNativeClient(request: Request): boolean {
+  return isNativeClientHeader(request.headers.get('x-client'));
+}
 
 /** Sessions are looked up by SHA-256 (hex) of the cookie token (`Session.tokenHash`). */
 export function hashSessionToken(token: string): string {
@@ -195,10 +203,11 @@ type SessionStore = {
 export async function createSession(
   userId: string,
   db: SessionStore = prisma,
+  opts: { maxAgeSeconds?: number } = {},
 ): Promise<{ token: string; expiresAt: Date }> {
   const token = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
-  const expiresAt = new Date(now + SESSION_MAX_AGE_SECONDS * 1000);
+  const expiresAt = new Date(now + (opts.maxAgeSeconds ?? SESSION_MAX_AGE_SECONDS) * 1000);
   await db.session.create({ data: { tokenHash: hashSessionToken(token), userId, expiresAt } });
   await Promise.resolve(db.session.deleteMany({ where: { expiresAt: { lt: new Date(now) } } })).catch(() => {});
   return { token, expiresAt };
@@ -250,7 +259,14 @@ function parseCookieHeader(cookieHeader: string, name: string): string | null {
   return m?.[1] ?? null;
 }
 
+/**
+ * Raw session token of the request: `Authorization: Bearer <64 hex>` (native app) first,
+ * then the `session` cookie (site). A malformed Authorization header is ignored.
+ */
 export function getSessionToken(request: Request): string | null {
+  const bearer = parseBearerToken(request.headers.get('authorization'));
+  if (bearer) return bearer;
+
   const requestWithCookies = request as RequestWithOptionalCookies;
   try {
     const v = requestWithCookies.cookies?.get?.('session')?.value;

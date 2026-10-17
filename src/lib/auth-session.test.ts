@@ -2,7 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { createSession, hashSessionToken, setSessionCookie } from './auth';
+import {
+  NATIVE_SESSION_MAX_AGE_SECONDS,
+  createSession,
+  getSessionToken,
+  hashSessionToken,
+  isNativeClient,
+  setSessionCookie,
+} from './auth';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -80,4 +87,46 @@ test('outside production the cookie is secure only over https', () => {
     );
     assert.equal(proxied.cookies.get('session')?.secure, true);
   });
+});
+
+// --- Native app: Bearer token, long sessions ---
+
+const BEARER = '0123456789abcdef'.repeat(4);
+const COOKIE = 'f'.repeat(64);
+
+function req(headers: Record<string, string>): Request {
+  return new Request('http://localhost:3100/api/me', { headers });
+}
+
+test('the session token comes from Authorization: Bearer before the cookie', () => {
+  assert.equal(getSessionToken(req({ authorization: `Bearer ${BEARER}` })), BEARER);
+  assert.equal(getSessionToken(req({ authorization: `Bearer ${BEARER}`, cookie: `session=${COOKIE}` })), BEARER);
+});
+
+test('a garbage Authorization header is ignored in favour of the cookie', () => {
+  for (const authorization of ['Bearer', 'Bearer ', 'Bearer abc', `Basic ${BEARER}`, `Bearer ${BEARER} x`, `Bearer ${BEARER.toUpperCase()}`]) {
+    assert.equal(getSessionToken(req({ authorization, cookie: `session=${COOKIE}` })), COOKIE, authorization);
+    assert.equal(getSessionToken(req({ authorization })), null, authorization);
+  }
+});
+
+test('without Authorization the cookie works as before', () => {
+  assert.equal(getSessionToken(req({ cookie: `preferred_locale=ru; session=${COOKIE}` })), COOKIE);
+  assert.equal(getSessionToken(req({})), null);
+});
+
+test('a native session lives 180 days', async () => {
+  assert.equal(NATIVE_SESSION_MAX_AGE_SECONDS, 180 * 24 * 60 * 60);
+  const db = { session: { create: async () => ({}), deleteMany: async () => ({ count: 0 }) } };
+  const before = Date.now();
+  const { expiresAt } = await createSession('u', db, { maxAgeSeconds: NATIVE_SESSION_MAX_AGE_SECONDS });
+  const ttl = expiresAt.getTime() - before;
+  assert.ok(ttl > 180 * DAY_MS - 60_000 && ttl <= 180 * DAY_MS + 60_000, String(ttl));
+});
+
+test('X-Client: native marks the app client', () => {
+  assert.equal(isNativeClient(req({ 'x-client': 'native' })), true);
+  assert.equal(isNativeClient(req({ 'x-client': 'Native' })), true);
+  assert.equal(isNativeClient(req({ 'x-client': 'web' })), false);
+  assert.equal(isNativeClient(req({})), false);
 });
