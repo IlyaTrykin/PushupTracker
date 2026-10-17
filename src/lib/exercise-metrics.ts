@@ -12,6 +12,21 @@ export function formatDistance(meters: number, locale: string = 'ru'): string {
   return `${decimal(Number(meters) / 1000, 2, locale)} ${locale === 'en' ? 'km' : 'км'}`;
 }
 
+/**
+ * A day's total in a calendar cell: the number only, no unit (the exercise icon says what it is),
+ * so it fits a narrow day cell. Distance is in km with at most one decimal («5,2»), from 100 km whole;
+ * from 1000 the rest is shortened to thousands («1,3k», «12k»).
+ */
+export function formatCalendarDayValue(value: number, exerciseType?: string | null, locale: string = 'ru'): string {
+  const n = Number(value) || 0;
+  if (isDistanceExercise(exerciseType)) {
+    const km = n / 1000;
+    return decimal(km, km >= 100 ? 0 : 1, locale);
+  }
+  if (n >= 1000) return `${decimal(n / 1000, n >= 10000 ? 0 : 1, locale)}k`;
+  return decimal(n, 1, locale);
+}
+
 /** Seconds → «26:30», or «1:02:05» from an hour. */
 export function formatDuration(totalSeconds: number): string {
   const total = Math.max(0, Math.round(Number(totalSeconds)));

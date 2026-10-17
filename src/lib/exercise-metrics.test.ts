@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatDistance, formatDuration, formatExerciseValue, formatPace, formatSpeed, formatWorkoutValue, formatWorkoutValueParts } from './exercise-metrics';
+import { formatCalendarDayValue, formatDistance, formatDuration, formatExerciseValue, formatPace, formatSpeed, formatWorkoutValue, formatWorkoutValueParts } from './exercise-metrics';
 
 test('distance is shown in kilometres with the locale decimal separator', () => {
   assert.equal(formatDistance(5200, 'ru'), '5,2 км');
@@ -50,4 +50,18 @@ test('feed rows: cardio shows the distance as the main line, time and pace below
   assert.deepEqual(formatWorkoutValueParts({ reps: 5200, exerciseType: 'run' }, 'ru'), { main: '5,2 км', detail: '' });
   assert.deepEqual(formatWorkoutValueParts({ reps: 12, exerciseType: 'kettlebell_press', loadKg: 16, repsLeft: 5, repsRight: 7 }, 'en'), { main: '12 × 16 kg', detail: 'L 5 / R 7' });
   assert.deepEqual(formatWorkoutValueParts({ reps: 60, exerciseType: 'plank' }, 'en'), { main: '60 sec', detail: '' });
+});
+
+test('formatCalendarDayValue is a bare number that fits a day cell', () => {
+  assert.equal(formatCalendarDayValue(5250, 'run', 'ru'), '5,3');
+  assert.equal(formatCalendarDayValue(5000, 'run', 'en'), '5');
+  assert.equal(formatCalendarDayValue(42195, 'run', 'ru'), '42,2');
+  assert.equal(formatCalendarDayValue(123456, 'bike', 'ru'), '123');
+  assert.equal(formatCalendarDayValue(90, 'plank', 'ru'), '90');
+  assert.equal(formatCalendarDayValue(150, 'pushups', 'en'), '150');
+  assert.equal(formatCalendarDayValue(12.5, 'kettlebell_swing', 'ru'), '12,5');
+  assert.equal(formatCalendarDayValue(999, 'pushups', 'ru'), '999');
+  assert.equal(formatCalendarDayValue(1250, 'plank', 'ru'), '1,3k');
+  assert.equal(formatCalendarDayValue(1000, 'pushups', 'en'), '1k');
+  assert.equal(formatCalendarDayValue(12400, 'plank', 'en'), '12k');
 });

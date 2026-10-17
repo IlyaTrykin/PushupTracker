@@ -9,9 +9,10 @@ import InviteFriendCard from '@/components/InviteFriendCard';
 import WeeklyLeague from '@/components/WeeklyLeague';
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
+import { friendsCompareMessages } from '@/i18n/messages/features/friends-compare';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
-import { formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts, isDistanceExercise } from '@/lib/exercise-metrics';
+import { formatCalendarDayValue, formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts, isDistanceExercise } from '@/lib/exercise-metrics';
 import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
 import { EXERCISES, EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
@@ -23,6 +24,8 @@ interface Friend {
   avatarPath?: string | null;
   since: string;
   isFollowing?: boolean;
+  /** Hidden from my comparison table (still a friend). */
+  hiddenInComparison?: boolean;
 }
 
 interface PendingRequest {
@@ -295,6 +298,7 @@ export default function FriendsPage() {
   const metricText = (type: ExerciseType, value: number) => (isDistanceExercise(type) ? formatExerciseValue(value, type, true, locale) : value);
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
+  const compareText = friendsCompareMessages[locale === 'en' ? 'en' : 'ru'];
   const cacheKey = useMemo(() => getUserScopedCacheKey('friends', user?.id, user?.username), [user?.id, user?.username]);
   const [friends, setFriends] = useState<Friend[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<PendingRequest[]>([]);
@@ -503,6 +507,23 @@ export default function FriendsPage() {
     }
   };
 
+  const handleToggleCompare = async (friendshipId: string, hidden: boolean) => {
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await fetch('/api/friends', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ action: 'compare', friendshipId, hidden }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      setFriends((prev) => prev.map((f) => (f.friendshipId === friendshipId ? { ...f, hiddenInComparison: hidden } : f)));
+    } catch {
+      setError(compareText.error);
+    }
+  };
+
   const handleRemoveFriend = async (friendshipId: string, username: string) => {
     const ok = window.confirm(tt(`Удалить пользователя ${username} из друзей?`));
     if (!ok) return;
@@ -600,9 +621,19 @@ export default function FriendsPage() {
     };
   }, [myStatsAll, myStatsByExercise, me?.avatarPath]);
 
+  // Таблица сравнения — без друзей, которых я из неё скрыл (дружба остаётся).
+  const tableFriendRows = useMemo(() => friendRows.filter((row) => !row.friend.hiddenInComparison), [friendRows]);
+  const hiddenFriends = useMemo(
+    () =>
+      friends
+        .filter((f) => f.hiddenInComparison)
+        .sort((a, b) => (a.username || '').localeCompare(b.username || '', 'ru', { sensitivity: 'base' })),
+    [friends],
+  );
+
   // Режим по умолчанию: Ты сверху + друзья по алфавиту
   const defaultSorted = useMemo<TableRow[]>(() => {
-    const sortedFriends = [...friendRows].sort((a, b) =>
+    const sortedFriends = [...tableFriendRows].sort((a, b) =>
       (a.friend.username || '').localeCompare(b.friend.username || '', 'ru', { sensitivity: 'base' })
     );
 
@@ -610,7 +641,7 @@ export default function FriendsPage() {
       meRow,
       ...sortedFriends.map((x) => ({ ...x, isMe: false })),
     ];
-  }, [friendRows, meRow]);
+  }, [tableFriendRows, meRow]);
 
   // Сортировка по колонке: сортируются ВСЕ строки, включая "Ты"
   const sortedAll = useMemo<TableRow[]>(() => {
@@ -618,7 +649,7 @@ export default function FriendsPage() {
 
     const all: TableRow[] = [
       meRow,
-      ...friendRows.map((x) => ({ ...x, isMe: false })),
+      ...tableFriendRows.map((x) => ({ ...x, isMe: false })),
     ];
 
     const getVal = (row: TableRow, key: SortKey): string | number => {
@@ -652,7 +683,7 @@ export default function FriendsPage() {
     });
 
     return all;
-  }, [defaultSorted, sortKey, sortDir, friendRows, meRow]);
+  }, [defaultSorted, sortKey, sortDir, tableFriendRows, meRow]);
 
   const sortIndicator = (key: SortKey) => (sortKey === key ? (sortDir === 'asc' ? '▲' : '▼') : '');
 
@@ -902,7 +933,7 @@ export default function FriendsPage() {
           </form>
         ) : null}
 
-        {sortedAll.length <= 1 ? (
+        {friends.length === 0 ? (
           <p style={{ marginTop: 12 }}>{tt('Пока друзей нет.')}</p>
         ) : (
           <div className="table-scroll" style={{ marginTop: 12 }}>
@@ -1029,13 +1060,24 @@ export default function FriendsPage() {
                         {isMe ? (
                           '—'
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveFriend(row.friend.friendshipId, row.friend.username)}
-                            style={btnDanger}
-                          >
-                            {tt('Удалить')}
-                          </button>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              type="button"
+                              onClick={() => void handleToggleCompare(row.friend.friendshipId, true)}
+                              style={btnSecondary}
+                              aria-label={compareText.hideAria.replace('{name}', row.friend.username)}
+                              title={compareText.hideAria.replace('{name}', row.friend.username)}
+                            >
+                              {compareText.hide}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFriend(row.friend.friendshipId, row.friend.username)}
+                              style={btnDanger}
+                            >
+                              {tt('Удалить')}
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -1045,6 +1087,29 @@ export default function FriendsPage() {
             </table>
           </div>
         )}
+
+        {hiddenFriends.length ? (
+          <details style={hiddenBox} data-testid="comparison-hidden">
+            <summary style={hiddenSummary}>{compareText.hiddenSummary.replace('{n}', String(hiddenFriends.length))}</summary>
+            <p style={hiddenHint}>{compareText.hint}</p>
+            <ul style={hiddenList}>
+              {hiddenFriends.map((f) => (
+                <li key={f.friendshipId} style={hiddenItem}>
+                  <AvatarCircle src={f.avatarPath} size={20} />
+                  <span style={hiddenName}>{f.username}</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleCompare(f.friendshipId, false)}
+                    style={btnSecondary}
+                    aria-label={compareText.showAria.replace('{name}', f.username)}
+                  >
+                    {compareText.show}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
       </section>
 
       {hasPendingRequests ? (
@@ -1336,7 +1401,7 @@ export default function FriendsPage() {
                             {exerciseTotals.map(({ type, sum }) => (
                               <span key={type} style={friendTotalValue}>
                                 <Image src={exerciseFeedIcon(type)} alt={tt(exerciseLabel(type))} width={22} height={22} style={friendTotalIcon} unoptimized />
-                                <span>{metricText(type, sum)}</span>
+                                <span style={friendTotalNumber}>{formatCalendarDayValue(sum, type, locale)}</span>
                               </span>
                             ))}
                           </div>
@@ -1554,25 +1619,34 @@ const calendarDayCell: React.CSSProperties = {
   cursor: 'pointer',
   textAlign: 'left',
   boxShadow: '0 12px 24px rgba(15, 23, 42, 0.04)',
+  overflow: 'hidden',
+  minWidth: 0,
 };
 
+// Numbers and icons scale with the day cell (container query units), so they fit a phone-width cell.
 const friendTotalValue: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 0,
-  fontSize: 'clamp(12px, 0.95vw, 17px)',
+  fontSize: 'clamp(8px, 26cqi, 14px)',
   lineHeight: 1,
   fontWeight: 900,
   color: '#000',
   whiteSpace: 'nowrap',
+  maxWidth: '100%',
+  minWidth: 0,
 };
+
+const friendTotalNumber: React.CSSProperties = { overflow: 'hidden', textOverflow: 'clip', fontVariantNumeric: 'tabular-nums' };
 
 const friendDayValues: React.CSSProperties = {
   display: 'grid',
   gap: 1,
   alignContent: 'start',
   justifyItems: 'start',
-  marginLeft: -1,
+  marginLeft: 0,
+  containerType: 'inline-size',
+  minWidth: 0,
 };
 
 const legendWrap: React.CSSProperties = {
@@ -1600,12 +1674,12 @@ const legendIcon: React.CSSProperties = {
 };
 
 const friendTotalIcon: React.CSSProperties = {
-  width: 'clamp(14px, 1.2vw, 22px)',
-  height: 'clamp(14px, 1.2vw, 22px)',
+  width: 'clamp(9px, 28cqi, 16px)',
+  height: 'clamp(9px, 28cqi, 16px)',
   objectFit: 'contain',
   flex: '0 0 auto',
-  marginLeft: -3,
-  marginRight: 2,
+  marginLeft: 0,
+  marginRight: 1,
 };
 
 const friendWorkoutTypeIcon: React.CSSProperties = {
@@ -1950,6 +2024,19 @@ const btnSecondary: React.CSSProperties = {
   fontWeight: 800,
   color: '#0f172a',
 };
+
+const hiddenBox: React.CSSProperties = {
+  marginTop: 12,
+  padding: '10px 12px',
+  borderRadius: 16,
+  border: '1px solid rgba(148, 163, 184, 0.24)',
+  background: 'rgba(255, 255, 255, 0.7)',
+};
+const hiddenSummary: React.CSSProperties = { cursor: 'pointer', fontWeight: 800, color: '#475569', fontSize: 14 };
+const hiddenHint: React.CSSProperties = { margin: '8px 0', fontSize: 13, color: '#64748b', lineHeight: 1.4 };
+const hiddenList: React.CSSProperties = { listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 6 };
+const hiddenItem: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 };
+const hiddenName: React.CSSProperties = { flex: 1, minWidth: 0, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
 const btnDanger: React.CSSProperties = {
   padding: '10px 14px',

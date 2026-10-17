@@ -6,8 +6,8 @@ import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
 import { getIntlLocale, t } from '@/i18n/translate';
-import { exerciseValueLabel, formatDistance, formatDuration, formatExerciseValue, isTimedExercise, formatWorkoutValue } from '@/lib/exercise-metrics';
-import { parseDistanceKm, parseDurationInput } from '@/lib/workout-input';
+import { exerciseValueLabel, formatCalendarDayValue, formatDistance, formatDuration, formatExerciseValue, isTimedExercise, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { formatDurationTyping, parseDistanceKm, parseDurationInput } from '@/lib/workout-input';
 import { cardioMessages } from '@/i18n/messages/features/cardio';
 import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
 import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, getExercise, toExerciseType } from '@/lib/exercises';
@@ -920,7 +920,7 @@ export default function DashboardPage() {
                   <input
                     inputMode="numeric"
                     value={durationText}
-                    onChange={(e) => setDurationText(e.target.value.replace(/[^\d:]/g, '').slice(0, 8))}
+                    onChange={(e) => setDurationText(formatDurationTyping(e.target.value))}
                     placeholder={cardio.durationPlaceholder}
                     style={cardioDurationInput}
                     aria-label={cardio.durationLabel}
@@ -1173,7 +1173,7 @@ export default function DashboardPage() {
                       {exerciseTotals.map(({ type, sum }) => (
                         <span key={type} style={exerciseNumberItem}>
                           <Image src={exerciseFeedIcon(type)} alt={catalogExerciseLabel(type, locale)} width={22} height={22} style={exerciseNumberIcon} unoptimized />
-                          <span style={exerciseNumber}>{type === 'run' || type === 'bike' || type === 'row' ? formatDistance(sum, locale).replace(/ (км|km)$/, '') : sum}</span>
+                          <span style={exerciseNumber}>{formatCalendarDayValue(sum, type, locale)}</span>
                         </span>
                       ))}
                     </div>
@@ -1270,7 +1270,7 @@ export default function DashboardPage() {
                                 </div>
                                 <div style={{ display: 'grid', gap: 4 }}>
                                   <label>{cardio.durationLabel}</label>
-                                  <input inputMode="numeric" value={editDurationText} onChange={(e) => setEditDurationText(e.target.value.replace(/[^\d:]/g, ''))} placeholder={cardio.durationPlaceholder} style={editInput} />
+                                  <input inputMode="numeric" value={editDurationText} onChange={(e) => setEditDurationText(formatDurationTyping(e.target.value))} placeholder={cardio.durationPlaceholder} style={editInput} />
                                 </div>
                               </>
                             ) : (
@@ -1714,19 +1714,22 @@ const calendarDayCell: React.CSSProperties = {
   overflow: 'hidden',
 };
 
+// Numbers and icons scale with the day cell (container query units), so they fit a phone-width cell.
 const exerciseNumbersRow: React.CSSProperties = {
   display: 'grid',
   gap: 1,
   alignContent: 'start',
   justifyItems: 'start',
   marginLeft: 0,
+  containerType: 'inline-size',
+  minWidth: 0,
 };
 
 const exerciseNumber: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 0,
-  fontSize: 'clamp(10px, 0.78vw, 14px)',
+  fontSize: 'clamp(8px, 26cqi, 14px)',
   lineHeight: 1,
   fontWeight: 900,
   color: '#000',
@@ -1743,8 +1746,8 @@ const exerciseNumberItem: React.CSSProperties = {
 };
 
 const exerciseNumberIcon: React.CSSProperties = {
-  width: 'clamp(12px, 0.95vw, 16px)',
-  height: 'clamp(12px, 0.95vw, 16px)',
+  width: 'clamp(9px, 28cqi, 16px)',
+  height: 'clamp(9px, 28cqi, 16px)',
   objectFit: 'contain',
   flex: '0 0 auto',
   marginLeft: 0,

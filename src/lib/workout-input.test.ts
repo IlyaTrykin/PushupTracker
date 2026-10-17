@@ -7,6 +7,7 @@ import {
   maxWorkoutValue,
   parseClientRequestId,
   parseDistanceKm,
+  formatDurationTyping,
   parseDurationInput,
   parseWorkoutDuration,
   parseWorkoutDay,
@@ -137,4 +138,25 @@ test('duration is kept only for cardio and falls back to the stored value on edi
   assert.deepEqual(parseWorkoutDuration('pushups', { durationSeconds: 60 }), { ok: true, value: null });
   assert.equal(parseWorkoutDuration('run', { durationSeconds: 0 }).ok, false);
   assert.equal(parseWorkoutDuration('run', { durationSeconds: 999999 }).ok, false);
+});
+
+test('formatDurationTyping puts the colons in from the right, digits only', () => {
+  const cases: [string, string][] = [
+    ['', ''],
+    ['5', '5'],
+    ['26', '26'],
+    ['500', '5:00'],
+    ['2630', '26:30'],
+    ['26:30', '26:30'],
+    ['10205', '1:02:05'],
+    ['1:02:05', '1:02:05'],
+    ['120000', '12:00:00'],
+    ['1234567', '12:34:56'],
+    ['2:630', '26:30'],
+    ['0530', '5:30'],
+    ['00530', '5:30'],
+    ['26:3', '2:63'],
+  ];
+  for (const [input, expected] of cases) assert.equal(formatDurationTyping(input), expected, input);
+  for (const typed of ['2630', '10205', '500']) assert.equal(parseDurationInput(formatDurationTyping(typed)).ok, true, typed);
 });

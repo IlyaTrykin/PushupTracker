@@ -20,6 +20,8 @@ type FriendListItem = {
   avatarPath: string | null;
   since: Date;
   isFollowing: boolean;
+  /** Hidden by the caller from the comparison table on /friends; still a friend everywhere else. */
+  hiddenInComparison: boolean;
 };
 
 const publicUserSelect = { id: true, username: true, avatarPath: true, deletedAt: true } as const;
@@ -98,19 +100,29 @@ export async function GET(request: NextRequest) {
         avatarPath: other.avatarPath ?? null,
         since: f.createdAt,
         isFollowing: false,
+        hiddenInComparison: false,
       });
       return acc;
     }, []);
 
     if (!base.length) return NextResponse.json([]);
 
-    const follows = await prisma.friendFollow.findMany({
-      where: { followerId: userId, friendId: { in: friendIds } },
-      select: { friendId: true },
-    });
+    const [follows, hides] = await Promise.all([
+      prisma.friendFollow.findMany({
+        where: { followerId: userId, friendId: { in: friendIds } },
+        select: { friendId: true },
+      }),
+      prisma.friendComparisonHide.findMany({
+        where: { userId, friendId: { in: friendIds } },
+        select: { friendId: true },
+      }),
+    ]);
     const following = new Set(follows.map((x) => x.friendId));
+    const hidden = new Set(hides.map((x) => x.friendId));
 
-    return NextResponse.json(base.map((r) => ({ ...r, isFollowing: following.has(r.userId) })));
+    return NextResponse.json(
+      base.map((r) => ({ ...r, isFollowing: following.has(r.userId), hiddenInComparison: hidden.has(r.userId) })),
+    );
   } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
     if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
@@ -233,7 +245,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH actions: accept|decline incoming request, follow/unfollow accepted friend
+// PATCH actions: accept|decline incoming request, follow/unfollow accepted friend,
+// compare — hide/show an accepted friend in the caller's comparison table
 export async function PATCH(request: NextRequest) {
   try {
     const userId = await getCurrentUserId(request);
@@ -305,6 +318,22 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ ok: true, isFollowing: follow });
     }
 
+    if (action === 'compare') {
+      if (friendship.status !== 'accepted') return jsonError('Скрыть можно только подтверждённого друга', 400);
+      if (friendship.userId !== userId && friendship.friendId !== userId) return jsonError('Нет доступа', 403);
+
+      const hidden = Boolean(body.hidden);
+      const friendId = friendship.userId === userId ? friendship.friendId : friendship.userId;
+
+      if (hidden) {
+        await prisma.friendComparisonHide.createMany({ data: [{ userId, friendId }], skipDuplicates: true });
+      } else {
+        await prisma.friendComparisonHide.deleteMany({ where: { userId, friendId } });
+      }
+
+      return NextResponse.json({ ok: true, hiddenInComparison: hidden });
+    }
+
     return jsonError('Неизвестное действие', 400);
   } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
@@ -340,6 +369,15 @@ export async function DELETE(request: NextRequest) {
           OR: [
             { followerId: friendship.userId, friendId: friendship.friendId },
             { followerId: friendship.friendId, friendId: friendship.userId },
+          ],
+        },
+      });
+      // A later re-friending starts with the friend visible in the table again.
+      await tx.friendComparisonHide.deleteMany({
+        where: {
+          OR: [
+            { userId: friendship.userId, friendId: friendship.friendId },
+            { userId: friendship.friendId, friendId: friendship.userId },
           ],
         },
       });

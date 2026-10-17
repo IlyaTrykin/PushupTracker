@@ -95,6 +95,19 @@ export function parseDistanceKm(raw: unknown): Parsed<number> {
   return { ok: true, value: meters };
 }
 
+/**
+ * Typing mask for the cardio time field: phones open a digit pad without «:», so only digits count
+ * and the colons are put in from the right — «2630» → «26:30», «10205» → «1:02:05» (at most hh:mm:ss).
+ */
+export function formatDurationTyping(raw: string): string {
+  const digits = raw.replace(/\D/g, '').replace(/^0+(?=\d{3})/, '').slice(0, 6);
+  if (digits.length <= 2) return digits;
+  const ss = digits.slice(-2);
+  const rest = digits.slice(0, -2);
+  if (rest.length <= 2) return `${rest}:${ss}`;
+  return `${rest.slice(0, -2)}:${rest.slice(-2)}:${ss}`;
+}
+
 /** «мм:сс» or «ч:мм:сс» → seconds; empty → null (time is optional). */
 export function parseDurationInput(raw: unknown): Parsed<number | null> {
   const text = typeof raw === 'string' ? raw.trim() : '';

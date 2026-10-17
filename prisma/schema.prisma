@@ -41,6 +41,8 @@ model User {
   passwordResetTokens      PasswordResetToken[]
   friendFollows            FriendFollow[]           @relation("FriendFollowFollower")
   followedBy               FriendFollow[]           @relation("FriendFollowFriend")
+  comparisonHides          FriendComparisonHide[]   @relation("ComparisonHideOwner")
+  comparisonHiddenBy       FriendComparisonHide[]   @relation("ComparisonHideFriend")
   workoutReactions         WorkoutReaction[]
   pushSubscriptions        PushSubscription[]
   ownedGroups              Group[]                  @relation("GroupOwner")
@@ -251,6 +253,19 @@ model FriendFollow {
   friend   User @relation("FriendFollowFriend", fields: [friendId], references: [id], onDelete: Cascade)
 
   @@unique([followerId, friendId])
+  @@index([friendId])
+}
+
+/// A friend the user hid from their comparison table on /friends; the friendship stays.
+model FriendComparisonHide {
+  userId    String
+  friendId  String
+  createdAt DateTime @default(now())
+
+  user   User @relation("ComparisonHideOwner", fields: [userId], references: [id], onDelete: Cascade)
+  friend User @relation("ComparisonHideFriend", fields: [friendId], references: [id], onDelete: Cascade)
+
+  @@id([userId, friendId])
   @@index([friendId])
 }
 

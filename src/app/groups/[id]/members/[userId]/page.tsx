@@ -7,7 +7,7 @@ import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, use
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
-import { formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts } from '@/lib/exercise-metrics';
+import { formatCalendarDayValue, formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts } from '@/lib/exercise-metrics';
 import { dayPointsTotal, workoutDayKey } from '@/lib/day-stats';
 import { clientRequestFor, pendingAfterFailure, type PendingClientRequest } from '@/lib/client-request-id';
 import { useI18n } from '@/i18n/provider';
@@ -983,7 +983,7 @@ export default function GroupMemberDetailPage() {
                     {exerciseTotals.map(({ type, sum }) => (
                       <span key={`${cell.key}-${type}`} style={exerciseNumberItem}>
                         <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={22} height={22} style={exerciseNumberIcon} unoptimized />
-                        <span style={exerciseNumber}>{formatExerciseValue(sum, type, true, locale)}</span>
+                        <span style={exerciseNumber}>{formatCalendarDayValue(sum, type, locale)}</span>
                       </span>
                     ))}
                   </div>
@@ -1648,19 +1648,22 @@ const calendarDayCell: CSSProperties = {
   overflow: 'hidden',
 };
 
+// Numbers and icons scale with the day cell (container query units), so they fit a phone-width cell.
 const exerciseNumbersRow: CSSProperties = {
   display: 'grid',
   gap: 1,
   alignContent: 'start',
   justifyItems: 'start',
   marginLeft: 0,
+  containerType: 'inline-size',
+  minWidth: 0,
 };
 
 const exerciseNumber: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 0,
-  fontSize: 'clamp(10px, 0.78vw, 14px)',
+  fontSize: 'clamp(8px, 26cqi, 14px)',
   lineHeight: 1,
   fontWeight: 900,
   color: '#000',
@@ -1677,8 +1680,8 @@ const exerciseNumberItem: CSSProperties = {
 };
 
 const exerciseNumberIcon: CSSProperties = {
-  width: 'clamp(12px, 0.95vw, 16px)',
-  height: 'clamp(12px, 0.95vw, 16px)',
+  width: 'clamp(9px, 28cqi, 16px)',
+  height: 'clamp(9px, 28cqi, 16px)',
   objectFit: 'contain',
   flex: '0 0 auto',
   marginLeft: 0,
