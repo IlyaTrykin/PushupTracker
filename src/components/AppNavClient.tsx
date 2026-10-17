@@ -7,6 +7,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { clearClientDataCaches } from '@/lib/client-cache';
 import { clearToken } from '@/lib/native-auth';
+import { cancelAllBackground } from '@/lib/offline/background-upload';
+import { useOutboxLogoutGuard } from '@/lib/offline/logout-guard';
+import { useOutboxSync } from '@/lib/offline/use-outbox';
 import { hardNavigate, isNativeApp, mediaUrl, openExternal, publicLink } from '@/lib/platform';
 import { SUPPORT_URL } from '@/lib/support';
 import ExerciseFavoritesSheet from '@/components/ExerciseFavoritesSheet';
@@ -120,6 +123,9 @@ export default function AppNavClient() {
   const [pageTitleOverride, setPageTitleOverride] = useState<string | null>(null);
   const [pageHeaderActionLabel, setPageHeaderActionLabel] = useState<string | null>(null);
   const navIconVersion = '20260225';
+  // The workout queue goes out from any screen (the navigation is on all of them).
+  useOutboxSync();
+  const { checkBeforeLogout } = useOutboxLogoutGuard();
   const pageTitle = useMemo(
     () => pageTitleOverride || resolvePageTitle(pathname, messages.nav.pageTitles),
     [messages.nav.pageTitles, pageTitleOverride, pathname],
@@ -180,6 +186,10 @@ export default function AppNavClient() {
   }, [me?.id, me?.isAdmin, me?.username]);
 
   const logout = async () => {
+    // Unsent workouts on this device: try to send, then «sign out and delete» / «stay».
+    if ((await checkBeforeLogout()) === 'stay') return;
+    // Their native background copies must not go out after the user chose to delete them.
+    await cancelAllBackground();
     // Отписать это устройство от push до выхода (B19): иначе на общем устройстве
     // продолжат приходить уведомления вышедшего пользователя.
     if (!isNativeApp()) await unsubscribeThisDeviceFromPush();

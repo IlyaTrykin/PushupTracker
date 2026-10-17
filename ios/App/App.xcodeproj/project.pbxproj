@@ -17,6 +17,8 @@
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		7A1C0E022F00000100A1B201 /* SecureTokenPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E012F00000100A1B201 /* SecureTokenPlugin.swift */; };
+		7A1C0E122F00000100A1B205 /* BackgroundUploadPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E112F00000100A1B205 /* BackgroundUploadPlugin.swift */; };
+		7A1C0E142F00000100A1B205 /* BackgroundUploadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E132F00000100A1B205 /* BackgroundUploadManager.swift */; };
 		7A1C0E042F00000100A1B201 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E032F00000100A1B201 /* MainViewController.swift */; };
 /* End PBXBuildFile section */
 
@@ -33,6 +35,8 @@
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		7A1C0E012F00000100A1B201 /* SecureTokenPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureTokenPlugin.swift; sourceTree = "<group>"; };
+		7A1C0E112F00000100A1B205 /* BackgroundUploadPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundUploadPlugin.swift; sourceTree = "<group>"; };
+		7A1C0E132F00000100A1B205 /* BackgroundUploadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundUploadManager.swift; sourceTree = "<group>"; };
 		7A1C0E032F00000100A1B201 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -87,6 +91,8 @@
 			isa = PBXGroup;
 			children = (
 				7A1C0E012F00000100A1B201 /* SecureTokenPlugin.swift */,
+				7A1C0E112F00000100A1B205 /* BackgroundUploadPlugin.swift */,
+				7A1C0E132F00000100A1B205 /* BackgroundUploadManager.swift */,
 			);
 			path = Plugins;
 			sourceTree = "<group>";
@@ -195,6 +201,8 @@
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 				7A1C0E042F00000100A1B201 /* MainViewController.swift in Sources */,
 				7A1C0E022F00000100A1B201 /* SecureTokenPlugin.swift in Sources */,
+				7A1C0E122F00000100A1B205 /* BackgroundUploadPlugin.swift in Sources */,
+				7A1C0E142F00000100A1B205 /* BackgroundUploadManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

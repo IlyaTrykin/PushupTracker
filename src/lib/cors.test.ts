@@ -24,6 +24,7 @@ test('an allowed origin gets the CORS headers echoed back, without credentials',
       'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Client, X-App-Version, Accept-Language',
       'Access-Control-Max-Age': '600',
+      'Access-Control-Expose-Headers': 'Retry-After',
     });
   }
 });
@@ -47,4 +48,9 @@ test('a foreign, missing or look-alike origin gets no CORS headers', () => {
 
 test('a wildcard in the allow list never opens CORS to everyone', () => {
   assert.equal(corsHeaders('https://evil.example.net', parseAllowedOrigins('*')), null);
+});
+
+test('the app can read Retry-After of a 429 (exposed to the WebView)', () => {
+  const headers = corsHeaders('capacitor://localhost', ['capacitor://localhost']);
+  assert.equal(headers?.['Access-Control-Expose-Headers'], 'Retry-After');
 });

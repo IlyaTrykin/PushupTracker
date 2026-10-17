@@ -43,6 +43,8 @@ dependencies {
     implementation project(':capacitor-android')
     // SecureToken: токен сессии в EncryptedSharedPreferences (ключ — в Android Keystore).
     implementation "androidx.security:security-crypto:$androidxSecurityCryptoVersion"
+    // BackgroundUpload: отправка очереди тренировок при появлении сети, даже если приложение закрыто.
+    implementation "androidx.work:work-runtime:2.10.2"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

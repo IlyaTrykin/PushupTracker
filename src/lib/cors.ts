@@ -10,6 +10,8 @@ export const DEFAULT_NATIVE_APP_ORIGINS: readonly string[] = ['capacitor://local
 const ALLOW_METHODS = 'GET,POST,PUT,PATCH,DELETE,OPTIONS';
 const ALLOW_HEADERS = 'Authorization, Content-Type, X-Client, X-App-Version, Accept-Language';
 const MAX_AGE_SECONDS = '600';
+/** Response headers the app's JS may read: the pause of a 429 (the outbox waits until then). */
+const EXPOSE_HEADERS = 'Retry-After';
 
 /** `NATIVE_APP_ORIGINS` — comma-separated origins; empty → the app defaults. `*` is never honoured. */
 export function parseAllowedOrigins(env: string | undefined): string[] {
@@ -29,5 +31,6 @@ export function corsHeaders(origin: string | null, allowed: string[]): Record<st
     'Access-Control-Allow-Methods': ALLOW_METHODS,
     'Access-Control-Allow-Headers': ALLOW_HEADERS,
     'Access-Control-Max-Age': MAX_AGE_SECONDS,
+    'Access-Control-Expose-Headers': EXPOSE_HEADERS,
   };
 }

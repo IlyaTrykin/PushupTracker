@@ -7,8 +7,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Фоновая отправка тренировок: переподключиться к своей фоновой URLSession при любом запуске.
+        BackgroundUploadManager.shared.activate()
         return true
+    }
+
+    func application(_ application: UIApplication,
+                     handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        // Система разбудила приложение: фоновая отправка завершилась (или требует повтора).
+        guard identifier == BackgroundUploadManager.sessionIdentifier else {
+            completionHandler()
+            return
+        }
+        BackgroundUploadManager.shared.handleEvents(completionHandler: completionHandler)
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
