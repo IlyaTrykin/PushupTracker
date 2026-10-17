@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
+import { useRouteParam } from '@/lib/use-route-param';
 import { getLocaleTimerAudio } from '@/i18n/locale';
 import { t } from '@/i18n/translate';
 import { programSessionMessages } from '@/i18n/messages/features/program-session';
@@ -106,9 +107,8 @@ function formatText(template: string, values: Record<string, string | number>) {
 
 export default function ProgramSessionPage() {
   const { locale, messages } = useI18n();
-  const params = useParams<{ id: string }>();
   const router = useRouter();
-  const sessionId = String(params?.id || '');
+  const sessionId = useRouteParam('id') || '';
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

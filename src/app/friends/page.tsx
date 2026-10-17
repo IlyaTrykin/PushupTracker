@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { mediaUrl } from '@/lib/platform';
 import Link from 'next/link';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
@@ -57,7 +58,7 @@ function AvatarCircle({ src, size = 28 }: { src?: string | null; size?: number }
   // src может содержать ?t=... для bust cache — оставляем как есть
   return (
     <span style={base}>
-      <Image src={src} alt="" width={size} height={size} unoptimized style={{ width: size, height: size, objectFit: 'cover', display: 'block' }} />
+      <Image src={mediaUrl(src) ?? src} alt="" width={size} height={size} unoptimized style={{ width: size, height: size, objectFit: 'cover', display: 'block' }} />
     </span>
   );
 }
@@ -266,7 +267,7 @@ function AvatarMini({ src }: { src?: string | null }) {
   if (!src) return <span style={miniAvatarPlaceholder} aria-hidden="true" />;
   return (
     <span style={miniAvatarWrap} aria-hidden="true">
-      <Image src={src} alt="" width={14} height={14} unoptimized style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
+      <Image src={mediaUrl(src) ?? src} alt="" width={14} height={14} unoptimized style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
     </span>
   );
 }

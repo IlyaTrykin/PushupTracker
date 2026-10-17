@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
+import { programHref, programSessionHref } from '@/lib/app-routes';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import {
@@ -677,7 +678,7 @@ export default function ProgramPage() {
                     {formatSessionDate(nextSession.scheduledAt, localeTag)}
                   </div>
                 </div>
-                <Link href={`/program/session/${nextSession.id}`} style={{ ...btnPrimaryLink, padding: '8px 10px' }}>
+                <Link href={programSessionHref(nextSession.id)} style={{ ...btnPrimaryLink, padding: '8px 10px' }}>
                   {tt('Приступить')}
                 </Link>
               </div>
@@ -823,7 +824,7 @@ export default function ProgramPage() {
                       ) : null}
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <Link href={`/program/${program.id}`} style={btnLink}>
+                      <Link href={programHref(program.id)} style={btnLink}>
                         {tt('Открыть программу')}
                       </Link>
                       <button
@@ -919,7 +920,7 @@ export default function ProgramPage() {
                       {session.completed ? (
                         <span style={doneBadge}>{tt('Выполнено')}</span>
                       ) : (
-                        <Link href={`/program/session/${session.id}`} style={btnPrimaryLink}>
+                        <Link href={programSessionHref(session.id)} style={btnPrimaryLink}>
                           {tt('Приступить')}
                         </Link>
                       )}

@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:native": "node scripts/build-native.mjs",
+    "cap:sync": "npm run build:native && npx cap sync",
     "start": "next start",
     "lint": "eslint .",
-    "test": "tsx --test src/lib/*.test.ts src/lib/analytics/*.test.ts src/i18n/*.test.ts",
+    "test": "tsx --test src/lib/*.test.ts src/lib/analytics/*.test.ts src/lib/offline/*.test.ts src/lib/health/*.test.ts src/i18n/*.test.ts",
     "prisma:generate": "prisma generate"
   },
   "dependencies": {

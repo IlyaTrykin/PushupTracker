@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { fillTelegramText, telegramMessages } from '@/i18n/messages/features/telegram';
+import { isNativeApp, openExternal } from '@/lib/platform';
 
 type LinkState = { linked: boolean; linkedAt: string | null };
 type PendingLink = { url: string; expiresAt: number };
@@ -133,7 +134,17 @@ export default function TelegramConnect() {
           {pending ? (
             <div style={{ display: 'grid', gap: 10 }}>
               <div>
-                <a href={pending.url} target="_blank" rel="noopener noreferrer" style={buttonPrimaryLink}>
+                <a
+                  href={pending.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={buttonPrimaryLink}
+                  onClick={(event) => {
+                    if (!isNativeApp()) return;
+                    event.preventDefault();
+                    openExternal(pending.url);
+                  }}
+                >
                   {text.openBot}
                 </a>
               </div>

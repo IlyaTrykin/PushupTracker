@@ -14,6 +14,10 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // Native app: static export and Capacitor projects.
+      ".next-native/**",
+      "ios/**",
+      "android/**",
     ],
   },
   // Project currently has many legacy `any` usages and state-sync effects.

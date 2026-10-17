@@ -41,7 +41,7 @@ const baseSecurityHeaders = [
 /** Пользовательские файлы (аватары) — ничего не исполняют и не грузят (S17). */
 const AVATAR_PATH = '/uploads/avatars';
 
-const nextConfig: NextConfig = {
+const webConfig: NextConfig = {
   // без React Compiler, нам он не нужен
   poweredByHeader: false,
   // Оптимизатор картинок выключен: /_next/image не прогоняет загрузки через sharp (S02).
@@ -75,5 +75,36 @@ const nextConfig: NextConfig = {
     ];
   },
 };
+
+/**
+ * Нативная сборка (`BUILD_TARGET=native`, `npm run build:native`): статический экспорт
+ * только файлов `page.native.tsx` / `layout.native.tsx` — API, proxy, серверные страницы
+ * и headers() в неё не попадают. Адрес сервера — из локального env `NATIVE_API_BASE`
+ * (репозиторий публичный — хост не коммитится).
+ */
+function nativeConfig(): NextConfig {
+  const apiBase = (process.env.NATIVE_API_BASE || '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\/[^/]+/.test(apiBase)) {
+    throw new Error('BUILD_TARGET=native needs NATIVE_API_BASE (e.g. http://localhost:3100) in the environment');
+  }
+  return {
+    output: 'export',
+    pageExtensions: ['native.tsx'],
+    distDir: '.next-native',
+    poweredByHeader: false,
+    images: { unoptimized: true },
+    // Типы проверяет `npx tsc --noEmit` по всему проекту; проверка внутри этой сборки
+    // подхватывает типы маршрутов сайта из .next/ и падает на них.
+    typescript: { ignoreBuildErrors: true },
+    env: {
+      NEXT_PUBLIC_BUILD_VERSION: buildVersion,
+      NEXT_PUBLIC_BUILD_TARGET: 'native',
+      NEXT_PUBLIC_API_BASE: apiBase,
+      NEXT_PUBLIC_PUBLIC_APP_URL: apiBase,
+    },
+  };
+}
+
+const nextConfig: NextConfig = process.env.BUILD_TARGET === 'native' ? nativeConfig() : webConfig;
 
 export default nextConfig;

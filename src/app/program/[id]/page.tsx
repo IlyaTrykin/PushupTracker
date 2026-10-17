@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
+import { programSessionHref } from '@/lib/app-routes';
+import { useRouteParam } from '@/lib/use-route-param';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
 import { exerciseLabel as catalogExerciseLabel } from '@/lib/exercises';
@@ -90,11 +91,10 @@ function renderSetPlan(session: TrainingSession, exerciseType: string | undefine
 }
 
 export default function ProgramDetailPage() {
-  const params = useParams<{ id: string }>();
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
-  const programId = String(params?.id || '');
+  const programId = useRouteParam('id') || '';
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -185,7 +185,7 @@ export default function ProgramDetailPage() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {!session.completed ? (
-                      <Link href={`/program/session/${session.id}`} style={btnPrimaryLink}>
+                      <Link href={programSessionHref(session.id)} style={btnPrimaryLink}>
                         {tt('Приступить')}
                       </Link>
                     ) : (

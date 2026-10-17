@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
@@ -13,6 +13,9 @@ import { clientRequestFor, pendingAfterFailure, type PendingClientRequest } from
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { appendQuery, groupHref, groupMemberHref } from '@/lib/app-routes';
+import { hardNavigate } from '@/lib/platform';
+import { useRouteParam } from '@/lib/use-route-param';
 import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, isLoadedExercise, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 type MemberItem = {
@@ -340,10 +343,10 @@ export default function GroupMemberDetailPage() {
   const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
-  const params = useParams<{ id: string; userId: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const groupId = String(params?.id || '');
-  const memberId = String(params?.userId || '');
+  const groupId = useRouteParam('id') || '';
+  const memberId = useRouteParam('userId') || '';
   const searchExercise = searchParams.get('exercise');
   const searchPeriod = searchParams.get('period');
   const searchMemberQuery = searchParams.get('memberQuery') || '';
@@ -468,7 +471,7 @@ export default function GroupMemberDetailPage() {
         setInfo(null);
         try {
           await fetchJsonSafe(`/api/groups/${groupId}/leave`, { method: 'POST' });
-          window.location.href = '/groups';
+          hardNavigate('/groups', router);
         } catch (e) {
           setError(getErrorMessage(e));
         }
@@ -480,7 +483,7 @@ export default function GroupMemberDetailPage() {
       window.removeEventListener('appPageHeaderActionClick', onHeaderActionClick);
       window.dispatchEvent(new CustomEvent('appPageHeaderAction', { detail: { label: null } }));
     };
-  }, [group, groupId, locale]);
+  }, [group, groupId, locale, router]);
 
   const analytics = useMemo(
     () =>
@@ -568,7 +571,7 @@ export default function GroupMemberDetailPage() {
     query.set('period', period);
     query.set('spotlight', memberId);
     if (searchMemberQuery.trim()) query.set('memberQuery', searchMemberQuery.trim());
-    return `/groups/${groupId}?${query.toString()}`;
+    return appendQuery(groupHref(groupId), query);
   }, [exerciseFilter, groupId, memberId, period, searchMemberQuery]);
 
   const weekdays = useMemo(() => ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(tt), [tt]);
@@ -723,7 +726,7 @@ export default function GroupMemberDetailPage() {
         body: JSON.stringify({ nextOwnerId: ownershipUserId }),
       });
       await fetchJsonSafe(`/api/groups/${groupId}/leave`, { method: 'POST' });
-      window.location.href = '/groups';
+      hardNavigate('/groups', router);
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -735,7 +738,7 @@ export default function GroupMemberDetailPage() {
     setInfo(null);
     try {
       await fetchJsonSafe(`/api/groups/${groupId}`, { method: 'DELETE' });
-      window.location.href = '/groups';
+      hardNavigate('/groups', router);
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -766,12 +769,12 @@ export default function GroupMemberDetailPage() {
         </div>
         <div style={heroActions}>
           {previousMember ? (
-            <Link href={`/groups/${group.id}/members/${previousMember.userId}?${memberRouteQuery}`} style={linkButton}>
+            <Link href={appendQuery(groupMemberHref(group.id, previousMember.userId), memberRouteQuery)} style={linkButton}>
               ← {previousMember.user.username}
             </Link>
           ) : null}
           {nextMember ? (
-            <Link href={`/groups/${group.id}/members/${nextMember.userId}?${memberRouteQuery}`} style={linkButton}>
+            <Link href={appendQuery(groupMemberHref(group.id, nextMember.userId), memberRouteQuery)} style={linkButton}>
               {nextMember.user.username} →
             </Link>
           ) : null}
@@ -780,7 +783,7 @@ export default function GroupMemberDetailPage() {
           {group.members.map((candidate) => (
             <Link
               key={candidate.userId}
-              href={`/groups/${group.id}/members/${candidate.userId}?${memberRouteQuery}`}
+              href={appendQuery(groupMemberHref(group.id, candidate.userId), memberRouteQuery)}
               style={{
                 ...memberChip,
                 borderColor: candidate.userId === member.userId ? '#0f766e' : 'rgba(148, 163, 184, 0.32)',

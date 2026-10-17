@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useI18n } from '@/i18n/provider';
+import { publicLink } from '@/lib/platform';
 import { shareMessages } from '@/i18n/messages/features/share';
 import {
   buildShareCard,
@@ -69,7 +70,7 @@ function ShareDialog({ input, onClose }: { input: ShareCardInput; onClose: () =>
     void (async () => {
       try {
         const invite = await loadInviteUrl();
-        const link = invite ? shareCardUrl(invite, card.kind) : window.location.origin;
+        const link = invite ? shareCardUrl(invite, card.kind) : publicLink('/').replace(/\/$/, '');
         const blob = await renderShareCard(card, displayLink(invite ?? link), text.cta);
         if (cancelled) return;
         previewUrl = URL.createObjectURL(blob);

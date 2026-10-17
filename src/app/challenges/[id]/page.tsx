@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/i18n/provider';
+import { useRouteParam } from '@/lib/use-route-param';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { challengesMessages } from '@/i18n/messages/features/challenges';
 import {
@@ -68,11 +69,11 @@ function pct(total: number, target: number) {
   return Math.min(100, Math.round((total / target) * 100));
 }
 
-export default function ChallengeDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+export default function ChallengeDetailsPage() {
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = (input: string) => t(locale, input);
-  const [id, setId] = useState<string>('');
+  const id = useRouteParam('id') || '';
   const [me, setMe] = useState<{ id: string; username: string } | null>(null);
 
   const [challenge, setChallenge] = useState<Challenge | null>(null);
@@ -86,12 +87,6 @@ export default function ChallengeDetailsPage({ params }: { params: Promise<{ id:
   }, [progress]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-    params.then((p) => mounted && setId(p.id));
-    return () => { mounted = false; };
-  }, [params]);
 
   const load = useCallback(async (challengeId: string) => {
     setLoading(true);

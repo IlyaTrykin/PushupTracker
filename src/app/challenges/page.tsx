@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
+import { challengeHref } from '@/lib/app-routes';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { challengesMessages } from '@/i18n/messages/features/challenges';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
@@ -531,7 +532,7 @@ export default function ChallengesPage() {
                     </div>
 
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <Link href={`/challenges/${c.id}`} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
+                      <Link href={challengeHref(c.id)} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
                         {tt('Открыть')}
                       </Link>
                       <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>{tt('Удалить')}</button>
@@ -566,7 +567,7 @@ export default function ChallengesPage() {
                     </div>
 
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <Link href={`/challenges/${c.id}`} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
+                      <Link href={challengeHref(c.id)} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
                         {tt('Открыть')}
                       </Link>
                       {canLeave(c) ? (
@@ -634,7 +635,7 @@ export default function ChallengesPage() {
                     </div>
 
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <Link href={`/challenges/${c.id}`} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
+                      <Link href={challengeHref(c.id)} style={{ ...btnSecondary, textDecoration: 'none', display: 'inline-block' }}>
                         {tt('Открыть')}
                       </Link>
                       <button type="button" style={btnDanger} onClick={() => deleteChallenge(c.id)}>{tt('Удалить')}</button>

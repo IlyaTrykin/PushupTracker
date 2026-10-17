@@ -6,6 +6,7 @@ import { PASSWORD_MIN_LENGTH } from '@/lib/account-validation';
 import NotificationSettings from './NotificationSettings';
 import TelegramConnect from '@/components/TelegramConnect';
 import { useI18n } from '@/i18n/provider';
+import { mediaUrl } from '@/lib/platform';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { DAILY_GOAL_MAX_POINTS, DAILY_GOAL_MIN_POINTS, DEFAULT_REMINDER_TIME } from '@/lib/daily-goal';
 import { dailyGoalMessages } from '@/i18n/messages/features/daily-goal';
@@ -116,8 +117,7 @@ export default function ProfilePage() {
   const timeZones = useMemo(() => supportedTimeZones(timeZone), [timeZone]);
 
   const avatarUrl = useMemo(() => {
-    const p = profile?.avatarPath || '';
-    return p ? p : '';
+    return mediaUrl(profile?.avatarPath) ?? '';
   }, [profile?.avatarPath]);
 
   const applyProfile = useCallback((nextProfile: Profile) => {

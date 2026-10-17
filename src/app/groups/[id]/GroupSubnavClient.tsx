@@ -1,21 +1,36 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useEffect, type CSSProperties } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { t } from '@/i18n/translate';
+import { groupHref, type GroupTab } from '@/lib/app-routes';
+
+export type GroupSubnavView = 'overview' | GroupTab;
+
+function viewFromPathname(pathname: string | null, groupId: string): GroupSubnavView {
+  if (!pathname) return 'overview';
+  const base = groupHref(groupId, undefined, 'web');
+  if (pathname === `${base}/members` || pathname.startsWith(`${base}/members/`)) return 'members';
+  if (pathname === `${base}/challenges`) return 'challenges';
+  if (pathname === `${base}/manage`) return 'manage';
+  return 'overview';
+}
 
 export default function GroupSubnavClient({
   groupId,
   groupName,
   canManage,
   memberCount,
+  activeView,
 }: {
   groupId: string;
   groupName: string;
   canManage: boolean;
   memberCount: number;
+  /** In the app the tab comes from `?tab=`; on the site it is read from the path. */
+  activeView?: GroupSubnavView;
 }) {
   const pathname = usePathname();
   const { locale } = useI18n();
@@ -29,20 +44,14 @@ export default function GroupSubnavClient({
     };
   }, [groupName, locale, memberCount, pathname]);
 
-  const tabs = [
-    { href: `/groups/${groupId}`, label: tt('Обзор') },
-    { href: `/groups/${groupId}/members`, label: tt('Участники') },
-    { href: `/groups/${groupId}/challenges`, label: tt('Соревнования') },
-    ...(canManage ? [{ href: `/groups/${groupId}/manage`, label: tt('Управление') }] : []),
+  const tabs: Array<{ view: GroupSubnavView; href: string; label: string }> = [
+    { view: 'overview', href: groupHref(groupId), label: tt('Обзор') },
+    { view: 'members', href: groupHref(groupId, 'members'), label: tt('Участники') },
+    { view: 'challenges', href: groupHref(groupId, 'challenges'), label: tt('Соревнования') },
+    ...(canManage ? [{ view: 'manage' as const, href: groupHref(groupId, 'manage'), label: tt('Управление') }] : []),
   ];
 
-  const activeHref = (() => {
-    if (!pathname) return `/groups/${groupId}`;
-    if (pathname.startsWith(`/groups/${groupId}/members/`) || pathname === `/groups/${groupId}/members`) return `/groups/${groupId}/members`;
-    if (pathname === `/groups/${groupId}/challenges`) return `/groups/${groupId}/challenges`;
-    if (pathname === `/groups/${groupId}/manage`) return `/groups/${groupId}/manage`;
-    return `/groups/${groupId}`;
-  })();
+  const currentView = activeView ?? viewFromPathname(pathname, groupId);
 
   return (
     <>
@@ -55,7 +64,7 @@ export default function GroupSubnavClient({
           }}
         >
           {tabs.map((tab) => {
-            const active = tab.href === activeHref;
+            const active = tab.view === currentView;
             return (
               <Link
                 key={tab.href}
@@ -72,6 +81,48 @@ export default function GroupSubnavClient({
         </div>
       </div>
     </>
+  );
+}
+
+type GroupSummary = { name: string; canManage: boolean; members: unknown[] };
+
+/**
+ * Подменю группы в приложении: на сайте его рендерит серверный layout `groups/[id]`,
+ * в статической сборке данных нет — они загружаются через API.
+ */
+export function GroupSubnavLoader({ groupId, activeView }: { groupId: string; activeView: GroupSubnavView }) {
+  const router = useRouter();
+  const [group, setGroup] = useState<{ id: string; summary: GroupSummary } | null>(null);
+
+  useEffect(() => {
+    if (!groupId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/groups/${encodeURIComponent(groupId)}`, { cache: 'no-store', credentials: 'include' });
+        if (res.status === 401) {
+          if (!cancelled) router.replace('/login');
+          return;
+        }
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as { group?: GroupSummary } | null;
+        if (!cancelled && data?.group) setGroup({ id: groupId, summary: data.group });
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [groupId, router]);
+
+  if (!group || group.id !== groupId) return null;
+  return (
+    <GroupSubnavClient
+      groupId={groupId}
+      groupName={group.summary.name}
+      canManage={group.summary.canManage}
+      memberCount={group.summary.members.length}
+      activeView={activeView}
+    />
   );
 }
 

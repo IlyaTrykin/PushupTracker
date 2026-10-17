@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { type CSSProperties, FormEvent, useEffect, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
+import { groupHref } from '@/lib/app-routes';
+import { hardNavigate } from '@/lib/platform';
 import { t } from '@/i18n/translate';
 
 type GroupListItem = {
@@ -43,6 +45,7 @@ export default function GroupsPage() {
   const { locale } = useI18n();
   const tt = (input: string) => t(locale, input);
   const searchParams = useSearchParams();
+  const router = useRouter();
   const inviteParam = searchParams.get('invite') || '';
 
   const [groups, setGroups] = useState<GroupListItem[]>([]);
@@ -98,7 +101,7 @@ export default function GroupsPage() {
       setInfo(tt('Группа создана'));
       await load();
       if (data.group?.id) {
-        window.location.href = `/groups/${data.group.id}`;
+        hardNavigate(groupHref(data.group.id), router);
       }
     } catch (e) {
       setError(getErrorMessage(e));
@@ -222,7 +225,7 @@ export default function GroupsPage() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <Link href={`/groups/${group.id}`} style={linkButton}>{tt('Открыть')}</Link>
+              <Link href={groupHref(group.id)} style={linkButton}>{tt('Открыть')}</Link>
             </div>
           </article>
         ))}

@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { startTransition, useDeferredValue, type CSSProperties, FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
@@ -17,6 +17,9 @@ import { groupGoalMessages } from '@/i18n/messages/features/group-goal';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { t } from '@/i18n/translate';
+import { appendQuery, groupMemberHref } from '@/lib/app-routes';
+import { hardNavigate, publicLink } from '@/lib/platform';
+import { useRouteParam } from '@/lib/use-route-param';
 import { EXERCISE_ORDER, createByExercise, exerciseIcon, isExerciseType, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 type MemberItem = {
@@ -437,9 +440,9 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
   const tt = (input: string) => t(locale, input);
   const challengeModeLabel = (mode: string) =>
     (groupGoalMessages[locale].challengeModes as Record<string, string>)[mode] || mode;
-  const params = useParams<{ id: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const groupId = String(params?.id || '');
+  const groupId = useRouteParam('id') || '';
   const searchExercise = searchParams.get('exercise');
   const searchPeriod = searchParams.get('period');
   const searchSpotlight = searchParams.get('spotlight') || '';
@@ -709,7 +712,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
         setInfo(null);
         try {
           await fetchJsonSafe(`/api/groups/${groupId}/leave`, { method: 'POST' });
-          window.location.href = '/groups';
+          hardNavigate('/groups', router);
         } catch (e) {
           setError(getErrorMessage(e));
         }
@@ -721,7 +724,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
       window.removeEventListener('appPageHeaderActionClick', onHeaderActionClick);
       window.dispatchEvent(new CustomEvent('appPageHeaderAction', { detail: { label: null } }));
     };
-  }, [group, groupId, locale]);
+  }, [group, groupId, locale, router]);
 
   useEffect(() => {
     if (!spotlightCandidates.length) {
@@ -828,7 +831,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
     setInfo(null);
     try {
       await fetchJsonSafe(`/api/groups/${groupId}`, { method: 'DELETE' });
-      window.location.href = '/groups';
+      hardNavigate('/groups', router);
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -848,7 +851,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
 
   async function copyInviteLink() {
     if (!group?.inviteToken) return;
-    const link = `${window.location.origin}/groups?invite=${group.inviteToken}`;
+    const link = publicLink(`/groups?invite=${encodeURIComponent(group.inviteToken)}`);
     await navigator.clipboard.writeText(link);
     setInfo(tt('Ссылка приглашения скопирована'));
   }
@@ -867,7 +870,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
         body: JSON.stringify({ nextOwnerId: ownershipUserId }),
       });
       await fetchJsonSafe(`/api/groups/${groupId}/leave`, { method: 'POST' });
-      window.location.href = '/groups';
+      hardNavigate('/groups', router);
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -1187,7 +1190,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                     </td>
                     <td style={memberTd}>
                       <div style={memberActionsCell}>
-                        <Link href={`/groups/${groupId}/members/${member.userId}?${memberPageQuery}`} style={btnSecondary}>
+                        <Link href={appendQuery(groupMemberHref(groupId, member.userId), memberPageQuery)} style={btnSecondary}>
                           {tt('Открыть')}
                         </Link>
                       </div>
@@ -1389,7 +1392,7 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                     </td>
                     <td style={memberTd}>
                       <div style={memberActionsCell}>
-                        <Link href={`/groups/${groupId}/members/${member.userId}?${memberPageQuery}`} style={btnSecondary}>
+                        <Link href={appendQuery(groupMemberHref(groupId, member.userId), memberPageQuery)} style={btnSecondary}>
                           {tt('Открыть')}
                         </Link>
                         {group.canManage && !member.isOwner ? (

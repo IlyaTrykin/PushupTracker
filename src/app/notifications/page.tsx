@@ -5,6 +5,7 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'r
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
+import { linkHref } from '@/lib/app-routes';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 
 type NotificationItem = {
@@ -167,7 +168,7 @@ export default function NotificationsPage() {
                   {n.body ? <div style={notificationBody}>{tt(n.body)}</div> : null}
                   {n.link ? (
                     <div>
-                      <Link href={n.link} style={linkInline}>{tt('Открыть')}</Link>
+                      <Link href={linkHref(n.link)} style={linkInline}>{tt('Открыть')}</Link>
                     </div>
                   ) : null}
                 </div>

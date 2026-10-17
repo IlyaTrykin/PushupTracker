@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { clearClientDataCaches } from '@/lib/client-cache';
+import { isNativeApp, mediaUrl, openExternal, publicLink } from '@/lib/platform';
 import { SUPPORT_URL } from '@/lib/support';
 import ExerciseFavoritesSheet from '@/components/ExerciseFavoritesSheet';
 import FeedbackSheet from '@/components/FeedbackSheet';
@@ -45,7 +46,7 @@ async function unsubscribeThisDeviceFromPush(): Promise<void> {
 function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles']) {
   if (!pathname || pathname === '/') return titles.home;
   if (pathname.startsWith('/dashboard')) return titles.dashboard;
-  if (pathname.startsWith('/program/session/')) return titles.programSession;
+  if (pathname.startsWith('/program/session')) return titles.programSession;
   if (pathname.startsWith('/program')) return titles.program;
   if (pathname.startsWith('/friends')) return titles.friends;
   if (pathname.startsWith('/groups')) return titles.groups;
@@ -81,7 +82,7 @@ function AvatarCircle({ src, size = 24 }: { src?: string | null; size?: number }
 
   return (
     <span style={base}>
-      <Image src={src} alt="" width={size} height={size} unoptimized style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      <Image src={mediaUrl(src) ?? src} alt="" width={size} height={size} unoptimized style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
     </span>
   );
 }
@@ -151,7 +152,7 @@ export default function AppNavClient() {
   }, []);
 
   useEffect(() => {
-    if (!me?.username || !('serviceWorker' in navigator)) return;
+    if (isNativeApp() || !me?.username || !('serviceWorker' in navigator)) return;
 
     const identity = me.id || me.username;
     const prewarmKey = `app-shell-prewarmed:${APP_SHELL_PREWARM_VERSION}:${identity}`;
@@ -219,6 +220,14 @@ export default function AppNavClient() {
     } finally {
       setUpdatingLanguage(false);
     }
+  };
+
+  // Админка и внешние сайты в приложении открываются в системном браузере.
+  const openOutside = (url: string) => (event: React.MouseEvent<HTMLAnchorElement>) => {
+    setOpen(false);
+    if (!isNativeApp()) return;
+    event.preventDefault();
+    openExternal(url);
   };
 
   const linkClass = (href: string) => {
@@ -336,15 +345,27 @@ export default function AppNavClient() {
               ) : null}
 
               {me?.isAdmin ? (
-                <Link className={linkClass('/admin/users')} href="/admin/users" onClick={() => setOpen(false)}>
-                  {messages.nav.drawer.admin}
-                </Link>
+                isNativeApp() ? (
+                  <a className="app-drawer__btn" href={publicLink('/admin/users')} onClick={openOutside(publicLink('/admin/users'))}>
+                    {messages.nav.drawer.admin}
+                  </a>
+                ) : (
+                  <Link className={linkClass('/admin/users')} href="/admin/users" onClick={() => setOpen(false)}>
+                    {messages.nav.drawer.admin}
+                  </Link>
+                )
               ) : null}
 
               {me?.isAdmin ? (
-                <Link className={linkClass('/admin/growth')} href="/admin/growth" onClick={() => setOpen(false)}>
-                  {growthMessages[locale === 'en' ? 'en' : 'ru'].navLabel}
-                </Link>
+                isNativeApp() ? (
+                  <a className="app-drawer__btn" href={publicLink('/admin/growth')} onClick={openOutside(publicLink('/admin/growth'))}>
+                    {growthMessages[locale === 'en' ? 'en' : 'ru'].navLabel}
+                  </a>
+                ) : (
+                  <Link className={linkClass('/admin/growth')} href="/admin/growth" onClick={() => setOpen(false)}>
+                    {growthMessages[locale === 'en' ? 'en' : 'ru'].navLabel}
+                  </Link>
+                )
               ) : null}
 
               {me?.username ? (
@@ -365,7 +386,7 @@ export default function AppNavClient() {
                 href={SUPPORT_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={() => setOpen(false)}
+                onClick={openOutside(SUPPORT_URL)}
               >
                 {messages.nav.drawer.support}
               </a>

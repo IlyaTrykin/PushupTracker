@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { mediaUrl } from '@/lib/platform';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
@@ -264,7 +265,7 @@ function AvatarMini({ src }: { src?: string | null }) {
   if (!src) return <span style={miniAvatarPlaceholder} aria-hidden="true" />;
   return (
     <span style={miniAvatarWrap} aria-hidden="true">
-      <Image src={src} alt="" width={14} height={14} unoptimized style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
+      <Image src={mediaUrl(src) ?? src} alt="" width={14} height={14} unoptimized style={{ width: 14, height: 14, objectFit: 'cover', display: 'block' }} />
     </span>
   );
 }
