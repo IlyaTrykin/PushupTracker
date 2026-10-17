@@ -17,7 +17,10 @@ import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
 import SideLoadEntry, { WeightPicker } from './SideLoadEntry';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
-import { clientRequestFor, pendingAfterFailure, type PendingClientRequest } from '@/lib/client-request-id';
+import { resolveEntryMoment, type OutboxItem, type OutboxPayloadPatch, type OutboxStatus } from '@/lib/offline/outbox-core';
+import { OUTBOX_FLUSHED_EVENT, OUTBOX_ITEM_SENT_EVENT, outboxPausedUntil, type FlushResult, type OutboxFlushedDetail, type OutboxItemSentDetail } from '@/lib/offline/sync';
+import { OutboxBusyError, useOutbox } from '@/lib/offline/use-outbox';
+import { offlineOutboxMessages } from '@/i18n/messages/features/offline-outbox';
 import { recommendToday } from '@/lib/recommendation';
 import DailyGoalRing from '@/components/DailyGoalRing';
 import TodayRecommendation from '@/components/TodayRecommendation';
@@ -36,6 +39,10 @@ type Workout = {
   date: string;
   time?: string;
   exerciseType?: string;
+  clientRequestId?: string | null;
+  /** Set for an entry of the offline outbox that is not on the server yet. */
+  queueStatus?: OutboxStatus;
+  queueError?: string | null;
 };
 
 type WorkoutReward = {
@@ -88,6 +95,47 @@ const WORKOUTS_CACHE_VERSION = '20260327-1';
 
 function toIsoTime(date: string, time: string) {
   return new Date(`${date}T${time}:00`).toISOString();
+}
+
+function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+/** The user's saved zone (as the server counts days), the browser's while it is unknown. */
+function entryTimeZone(saved: string | null | undefined): string {
+  if (saved) {
+    try {
+      return new Intl.DateTimeFormat('en-US', { timeZone: saved }).resolvedOptions().timeZone;
+    } catch {}
+  }
+  return browserTimeZone();
+}
+
+/** An outbox entry shown in the lists and counted in the day like a server record. */
+function queuedWorkout(item: OutboxItem): Workout {
+  const p = item.payload;
+  return {
+    id: item.id,
+    reps: p.reps,
+    loadKg: p.loadKg ?? null,
+    repsLeft: p.repsLeft ?? null,
+    repsRight: p.repsRight ?? null,
+    durationSeconds: p.durationSeconds ?? null,
+    date: p.date,
+    time: p.time,
+    exerciseType: p.exerciseType,
+    clientRequestId: p.clientRequestId,
+    queueStatus: item.status,
+    queueError: item.lastError,
+  };
+}
+
+function isOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
 
 function readWorkoutReward(data: unknown): WorkoutReward | null {
@@ -279,6 +327,8 @@ export default function DashboardPage() {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
 
   const [date, setDate] = useState<string>(normalizeDate(new Date()));
+  // An untouched day is «today» at the moment of saving (in the user's zone), not when the page opened.
+  const [dateTouched, setDateTouched] = useState(false);
   const [time, setTime] = useState<string>(normalizeTime(new Date()));
   const [timeTouched, setTimeTouched] = useState(false);
   const [reps, setReps] = useState<number>(0);
@@ -314,11 +364,16 @@ export default function DashboardPage() {
   const closeCelebration = useCallback(() => setCelebration(null), []);
   const [shareInput, setShareInput] = useState<ShareCardInput | null>(null);
   const closeShare = useCallback(() => setShareInput(null), []);
-  // B04: «Добавить» заблокирована, пока запрос в пути; повтор того же ввода после обрыва сети
-  // уходит с тем же clientRequestId, и сервер вернёт уже созданную запись.
+  // «Добавить» заблокирована, пока запись кладётся в очередь. Сама отправка — из офлайн-очереди
+  // с постоянным clientRequestId: повтор после обрыва сети не создаёт дубль (B04, R11.1).
   const [adding, setAdding] = useState(false);
   const addingRef = useRef(false);
-  const pendingRequestRef = useRef<PendingClientRequest | null>(null);
+  const outbox = useOutbox();
+  const queueText = offlineOutboxMessages[locale];
+  // The entry just saved from the form: its answer from the server shows the reward and records.
+  const awaitingSendRef = useRef<string | null>(null);
+  // Older queued entries sent along with it: one «Workouts sent: N» after the flush.
+  const backlogSentRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
@@ -415,7 +470,20 @@ export default function DashboardPage() {
 
   // «Сегодня» — по сохранённому поясу пользователя, как на сервере; браузерный — пока он не загружен.
   const todayKey = localTodayKey(user?.timeZone);
-  const stats = useMemo(() => computePeriodStats(workouts, todayKey), [workouts, todayKey]);
+  const entryZone = entryTimeZone(user?.timeZone);
+
+  // Server records + entries still on the device (story 17). An entry that already reached the
+  // server but is still in the queue (answer lost) is shown once, by its clientRequestId.
+  const allWorkouts = useMemo(() => {
+    const onServer = new Set(workouts.map((w) => w.clientRequestId).filter(Boolean));
+    const queued = outbox.items.filter((item) => !onServer.has(item.id)).map(queuedWorkout);
+    return queued.length ? [...workouts, ...queued] : workouts;
+  }, [outbox.items, workouts]);
+  // Rejected entries are listed for fixing but are not part of the day's numbers.
+  const countedWorkouts = useMemo(() => allWorkouts.filter((w) => w.queueStatus !== 'rejected'), [allWorkouts]);
+  const firstRejected = useMemo(() => outbox.items.find((item) => item.status === 'rejected') ?? null, [outbox.items]);
+
+  const stats = useMemo(() => computePeriodStats(countedWorkouts, todayKey), [countedWorkouts, todayKey]);
 
   // Daily goal (F1) and «Рекомендация на сегодня» (F12): the user's day by the saved zone.
   useEffect(() => {
@@ -423,18 +491,18 @@ export default function DashboardPage() {
   }, [refreshUser]);
   const userDayKey = todayKey;
   const userDayPoints = useMemo(
-    () => dayPointsTotal(workouts.filter((w) => workoutDayKey(w) === userDayKey)),
-    [userDayKey, workouts],
+    () => dayPointsTotal(countedWorkouts.filter((w) => workoutDayKey(w) === userDayKey)),
+    [countedWorkouts, userDayKey],
   );
   const activeProgramExercises = user?.activeProgramExercises;
   const showRecommendation = Array.isArray(activeProgramExercises) && !activeProgramExercises.includes(exerciseType);
   const todayRecommendation = useMemo(
-    () => (showRecommendation ? recommendToday(workouts, exerciseType, userDayKey) : null),
-    [exerciseType, showRecommendation, userDayKey, workouts],
+    () => (showRecommendation ? recommendToday(countedWorkouts, exerciseType, userDayKey) : null),
+    [countedWorkouts, exerciseType, showRecommendation, userDayKey],
   );
   const statsByExercise = useMemo<Record<ExerciseType, Stats>>(
-    () => createByExercise((type) => computePeriodStats(workouts.filter((w) => normalizeExerciseType(w.exerciseType) === type), todayKey)),
-    [workouts, todayKey],
+    () => createByExercise((type) => computePeriodStats(countedWorkouts.filter((w) => normalizeExerciseType(w.exerciseType) === type), todayKey)),
+    [countedWorkouts, todayKey],
   );
   const freezeText = streakFreezeMessages[locale];
   const streakBreakdown: StatBreakdown = createByExercise((type) => {
@@ -448,22 +516,24 @@ export default function DashboardPage() {
 
   const dayMap = useMemo(() => {
     const map = new Map<string, DayAggregate>();
-    workouts.forEach((w) => {
+    allWorkouts.forEach((w) => {
       const key = workoutDayKey(w);
       const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalPoints: 0 };
       row.items.push(w);
-      const t = normalizeExerciseType(w.exerciseType);
-      row.byExercise.set(t, (row.byExercise.get(t) ?? 0) + (w.reps || 0));
+      if (w.queueStatus !== 'rejected') {
+        const t = normalizeExerciseType(w.exerciseType);
+        row.byExercise.set(t, (row.byExercise.get(t) ?? 0) + (w.reps || 0));
+      }
       map.set(key, row);
     });
 
     for (const row of map.values()) {
-      row.totalPoints = dayPointsTotal(row.items);
+      row.totalPoints = dayPointsTotal(row.items.filter((w) => w.queueStatus !== 'rejected'));
       row.items.sort((a, b) => new Date(b.time || b.date).getTime() - new Date(a.time || a.date).getTime());
     }
 
     return map;
-  }, [workouts]);
+  }, [allWorkouts]);
 
   const calendarCells = useMemo(() => {
     const year = calendarMonth.getFullYear();
@@ -511,37 +581,33 @@ export default function DashboardPage() {
   const resetEntryDateTimeToNow = useCallback(() => {
     const now = new Date();
     setDate(normalizeDate(now));
+    setDateTouched(false);
     setTime(normalizeTime(now));
     setTimeTouched(false);
   }, []);
 
+  const rateLimitedText = useCallback(() => {
+    const until = user?.id ? outboxPausedUntil(user.id) : null;
+    return queueText.rateLimited.replace('{time}', until ? until.toLocaleTimeString(localeTag, { hour: '2-digit', minute: '2-digit' }) : '—');
+  }, [localeTag, queueText, user?.id]);
+
+  // What the form says when its entry did not get an answer in this flush.
+  const reportUnsent = useCallback((result: FlushResult) => {
+    if (result.stopped === 'rate-limited') setInfo(rateLimitedText());
+    else if (result.stopped === 'unauthorized') setError(queueText.unauthorized);
+    else setInfo(queueText.savedOffline);
+  }, [queueText, rateLimitedText]);
+
+  // Новая тренировка всегда сначала ложится в очередь на устройстве (с днём и временем записи)
+  // и сразу пытается уйти; ответ сервера (награда, рекорды) приходит событием из очереди.
   const submitWorkout = useCallback(async (
     value: number,
     selectedType: ExerciseType,
     extra: { loadKg?: number | null; repsLeft?: number; repsRight?: number; durationSeconds?: number } = {},
   ) => {
-    const timeToSend = timeTouched ? time : normalizeTime(new Date());
-    const payload = { reps: value, ...extra, date, time: toIsoTime(date, timeToSend), exerciseType: selectedType };
-    const signature = JSON.stringify({ ...payload, time: undefined, timeToSend: timeTouched ? time : null });
-    const pending = clientRequestFor(pendingRequestRef.current, signature);
-    pendingRequestRef.current = pending;
-    let data: unknown;
-    try {
-      data = await fetchJsonSafe('/api/workouts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, clientRequestId: pending.id }),
-      });
-    } catch (error: unknown) {
-      // Ответ сервера (4xx/5xx) — запись не создана, следующий ввод получит новый id.
-      // Обрыв сети (TypeError) — id остаётся: повтор не создаст дубль, если запись всё же дошла.
-      pendingRequestRef.current = pendingAfterFailure(pending, error);
-      throw error;
-    }
-    pendingRequestRef.current = null;
-    setInfo(tt('Добавлено'));
-    setToastMessage(readWorkoutReward(data)?.message ?? null);
-    setCelebration(readCelebration(data));
+    const moment = resolveEntryMoment({ date, time, dateTouched, timeTouched }, new Date(), entryZone);
+    const item = await outbox.enqueue({ reps: value, ...extra, date: moment.date, time: moment.time, exerciseType: selectedType });
+    awaitingSendRef.current = item.id;
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);
@@ -549,8 +615,63 @@ export default function DashboardPage() {
     setDurationText('');
     setRepsLeft(0);
     setRepsRight(0);
-    await loadWorkouts();
-  }, [date, loadWorkouts, time, timeTouched, tt]);
+    void outbox.flush().then((result) => {
+      if (awaitingSendRef.current !== item.id) return; // answered: handled by the sent event
+      awaitingSendRef.current = null;
+      reportUnsent(result);
+    });
+  }, [date, dateTouched, entryZone, outbox, reportUnsent, time, timeTouched]);
+
+  // Answers from the server for queued entries (this tab's flushes and the background timer).
+  useEffect(() => {
+    const userId = user?.id;
+    if (!userId) return;
+    const onSent = (event: Event) => {
+      const detail = (event as CustomEvent<OutboxItemSentDetail>).detail;
+      if (!detail || detail.userId !== userId) return;
+      const { outcome } = detail;
+      const created = outcome.kind === 'created' || outcome.kind === 'replayed';
+      if (created) {
+        // Show the record at once instead of a gap until the list reloads.
+        const data = 'response' in outcome ? outcome.response : null;
+        const record = isJsonObject(data) && isJsonObject(data.workout) ? (data.workout as Workout) : null;
+        if (record?.id) setWorkouts((prev) => (prev.some((w) => w.id === record.id) ? prev : [record, ...prev]));
+      }
+      if (detail.id !== awaitingSendRef.current) {
+        if (created) backlogSentRef.current += 1;
+        return;
+      }
+      awaitingSendRef.current = null;
+      if (created) {
+        const data = 'response' in outcome ? outcome.response : null;
+        setInfo(tt('Добавлено'));
+        setToastMessage(readWorkoutReward(data)?.message ?? null);
+        setCelebration(readCelebration(data));
+      } else if (outcome.kind === 'rejected') {
+        setError(`${queueText.rejectedBadge}: ${outcome.message}`);
+      } else if (outcome.kind === 'rate-limited') {
+        setInfo(rateLimitedText());
+      } else if (outcome.kind === 'unauthorized') {
+        setError(queueText.unauthorized);
+      } else {
+        setInfo(queueText.savedOffline);
+      }
+    };
+    const onFlushed = (event: Event) => {
+      const detail = (event as CustomEvent<OutboxFlushedDetail>).detail;
+      if (!detail || detail.userId !== userId) return;
+      // Lists and totals after the queue went out (story 25); one line for entries made earlier.
+      if (backlogSentRef.current > 0) setInfo(queueText.sentCount.replace('{count}', String(detail.sent)));
+      backlogSentRef.current = 0;
+      void loadWorkouts();
+    };
+    window.addEventListener(OUTBOX_ITEM_SENT_EVENT, onSent);
+    window.addEventListener(OUTBOX_FLUSHED_EVENT, onFlushed);
+    return () => {
+      window.removeEventListener(OUTBOX_ITEM_SENT_EVENT, onSent);
+      window.removeEventListener(OUTBOX_FLUSHED_EVENT, onFlushed);
+    };
+  }, [loadWorkouts, queueText, rateLimitedText, tt, user?.id]);
 
   // Один запрос за раз: повторное нажатие, пока запрос в пути, игнорируется.
   const runAdd = async (task: () => Promise<void>) => {
@@ -681,6 +802,35 @@ export default function DashboardPage() {
       distancePatch = { reps: distance.value, durationSeconds: duration.value };
     }
 
+    // An entry still on the device: the change goes into the queue (story 19).
+    if (allWorkouts.some((w) => w.id === editingId && w.queueStatus)) {
+      const exercise = getExercise(editExerciseType);
+      const patch: OutboxPayloadPatch = {
+        exerciseType: editExerciseType,
+        date: editDate,
+        time: toIsoTime(editDate, editTime),
+        reps: distancePatch ? distancePatch.reps : exercise.unilateral ? editRepsLeft + editRepsRight : editReps,
+        repsLeft: exercise.unilateral ? editRepsLeft : null,
+        repsRight: exercise.unilateral ? editRepsRight : null,
+        durationSeconds: distancePatch ? distancePatch.durationSeconds : null,
+        loadKg: exercise.load ? editLoadKg ?? exercise.load.referenceKg : null,
+      };
+      try {
+        await outbox.update(editingId, patch);
+        setEditingId(null);
+        setInfo(queueText.queueUpdated);
+        void outbox.flush();
+      } catch (error: unknown) {
+        setError(error instanceof OutboxBusyError ? queueText.inFlight : getErrorMessage(error));
+      }
+      return;
+    }
+    // A record on the server is changed only online.
+    if (isOffline()) {
+      setError(queueText.needConnection);
+      return;
+    }
+
     try {
       await fetchJsonSafe('/api/workouts', {
         method: 'PUT',
@@ -702,7 +852,7 @@ export default function DashboardPage() {
       setInfo(tt('Изменения сохранены'));
       await loadWorkouts();
     } catch (error: unknown) {
-      setError(getErrorMessage(error));
+      setError(error instanceof TypeError ? queueText.needConnection : getErrorMessage(error));
     }
   };
 
@@ -710,6 +860,20 @@ export default function DashboardPage() {
     setError(null);
     setInfo(null);
     if (!window.confirm(tt('Удалить эту запись?'))) return;
+
+    if (allWorkouts.some((w) => w.id === id && w.queueStatus)) {
+      try {
+        await outbox.remove(id);
+        setInfo(queueText.queueRemoved);
+      } catch (error: unknown) {
+        setError(error instanceof OutboxBusyError ? queueText.inFlight : getErrorMessage(error));
+      }
+      return;
+    }
+    if (isOffline()) {
+      setError(queueText.needConnection);
+      return;
+    }
 
     try {
       await fetchJsonSafe('/api/workouts', {
@@ -720,7 +884,7 @@ export default function DashboardPage() {
       setInfo(tt('Запись удалена'));
       await loadWorkouts();
     } catch (error: unknown) {
-      setError(getErrorMessage(error));
+      setError(error instanceof TypeError ? queueText.needConnection : getErrorMessage(error));
     }
   };
 
@@ -739,7 +903,7 @@ export default function DashboardPage() {
     let cancelled = false;
 
     const loadReactions = async () => {
-      const ids = Array.from(new Set(selectedDayData.items.map((w) => w.id).filter(Boolean)));
+      const ids = Array.from(new Set(selectedDayData.items.filter((w) => !w.queueStatus).map((w) => w.id).filter(Boolean)));
       if (!ids.length) return;
       try {
         const data = await fetchJsonSafe(`/api/workout-reactions?ids=${encodeURIComponent(ids.join(','))}`);
@@ -767,6 +931,26 @@ export default function DashboardPage() {
 
       <section className={styles.hero}>
         <div className={styles.entryCard}>
+          {outbox.pendingCount > 0 || firstRejected ? (
+            <div style={queueRow} role="status">
+              {outbox.pendingCount > 0 ? (
+                <span style={queuePill}>⏳ {queueText.pendingCounter.replace('{count}', String(outbox.pendingCount))}</span>
+              ) : null}
+              {firstRejected ? (
+                <button
+                  type="button"
+                  style={queuePillRejected}
+                  onClick={() => {
+                    setDetailDay(firstRejected.payload.date);
+                    setDetailsOpen(true);
+                    setEditingId(null);
+                  }}
+                >
+                  ⚠ {queueText.rejectedCounter.replace('{count}', String(outbox.rejectedCount))}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div className={styles.entryBody}>
             <div style={exerciseTypePickerWrap} role="tablist" aria-label={tt('Упражнение')}>
               {favoriteExercises.map((type) => {
@@ -847,13 +1031,14 @@ export default function DashboardPage() {
             >
               <input
                 type="date"
-                value={date}
+                value={dateTouched ? date : todayKey}
                 onChange={(e) => {
                   if (!e.target.value) {
                     resetEntryDateTimeToNow();
                     return;
                   }
                   setDate(e.target.value);
+                  setDateTouched(true);
                 }}
                 style={smallInput}
                 aria-label={tt('Дата')}
@@ -875,7 +1060,7 @@ export default function DashboardPage() {
 
               {/* Сброс внутри системного пикера перехватить нельзя, поэтому,
                   когда ввод уехал с сегодняшнего дня, даём собственный возврат. */}
-              {date !== todayKey ? (
+              {dateTouched && date !== todayKey ? (
                 <button type="button" onClick={resetEntryDateTimeToNow} style={resetDateButton}>
                   ↺ {tt('Сегодня')}
                 </button>
@@ -1307,6 +1492,15 @@ export default function DashboardPage() {
                                 <Image src={exerciseFeedIcon(w.exerciseType)} alt={catalogExerciseLabel(w.exerciseType, locale)} width={16} height={16} style={detailsExerciseIcon} unoptimized />
                                 <span style={{ fontWeight: 800 }}>{catalogExerciseLabel(w.exerciseType, locale)}</span>
                               </div>
+                              {w.queueStatus ? (
+                                <div style={w.queueStatus === 'rejected' ? queueBadgeRejected : queueBadge}>
+                                  {w.queueStatus === 'rejected'
+                                    ? `${queueText.rejectedBadge}${w.queueError ? `: ${w.queueError}` : ''}. ${queueText.rejectedHint}`
+                                    : w.queueStatus === 'sending'
+                                      ? queueText.sendingBadge
+                                      : queueText.pendingBadge}
+                                </div>
+                              ) : null}
                               <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag)}</b></div>
                               <div>{getExercise(w.exerciseType).unit === 'distance' ? cardioMessages[locale].valueLabel : tt(exerciseValueLabel(w.exerciseType))}: <b>{formatWorkoutValue(w, locale)}</b></div>
                             </div>
@@ -1352,6 +1546,51 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+const queueRow: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8,
+  justifyContent: 'center',
+  marginBottom: 10,
+};
+
+const queuePill: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  padding: '4px 10px',
+  borderRadius: 999,
+  background: '#fef3c7',
+  color: '#92400e',
+  fontSize: 13,
+  fontWeight: 700,
+};
+
+const queuePillRejected: React.CSSProperties = {
+  ...queuePill,
+  background: '#fee2e2',
+  color: '#991b1b',
+  border: 'none',
+  cursor: 'pointer',
+};
+
+const queueBadge: React.CSSProperties = {
+  justifySelf: 'start',
+  padding: '2px 8px',
+  borderRadius: 999,
+  background: '#fef3c7',
+  color: '#92400e',
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const queueBadgeRejected: React.CSSProperties = {
+  ...queueBadge,
+  background: '#fee2e2',
+  color: '#991b1b',
+  borderRadius: 10,
+};
 
 const exerciseTypePickerWrap: React.CSSProperties = {
   position: 'relative',
