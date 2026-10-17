@@ -2,6 +2,7 @@ package app.pushuptracker.mobile;
 
 import android.os.Bundle;
 import app.pushuptracker.mobile.plugins.BackgroundUploadPlugin;
+import app.pushuptracker.mobile.plugins.HealthBridgePlugin;
 import app.pushuptracker.mobile.plugins.SecureTokenPlugin;
 import com.getcapacitor.BridgeActivity;
 
@@ -11,6 +12,7 @@ public class MainActivity extends BridgeActivity {
         // Локальные плагины приложения регистрируются до создания моста.
         registerPlugin(SecureTokenPlugin.class);
         registerPlugin(BackgroundUploadPlugin.class);
+        registerPlugin(HealthBridgePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

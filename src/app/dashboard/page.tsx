@@ -21,6 +21,8 @@ import { resolveEntryMoment, type OutboxItem, type OutboxPayloadPatch, type Outb
 import { OUTBOX_FLUSHED_EVENT, OUTBOX_ITEM_SENT_EVENT, outboxPausedUntil, type FlushResult, type OutboxFlushedDetail, type OutboxItemSentDetail } from '@/lib/offline/sync';
 import { OutboxBusyError, useOutbox } from '@/lib/offline/use-outbox';
 import { offlineOutboxMessages } from '@/i18n/messages/features/offline-outbox';
+import { installHealthSync, removeWorkoutFromHealth, syncWorkoutToHealth } from '@/lib/health/health';
+import { healthExternalId } from '@/lib/health/reconcile';
 import { recommendToday } from '@/lib/recommendation';
 import DailyGoalRing from '@/components/DailyGoalRing';
 import TodayRecommendation from '@/components/TodayRecommendation';
@@ -608,6 +610,8 @@ export default function DashboardPage() {
     const moment = resolveEntryMoment({ date, time, dateTouched, timeTouched }, new Date(), entryZone);
     const item = await outbox.enqueue({ reps: value, ...extra, date: moment.date, time: moment.time, exerciseType: selectedType });
     awaitingSendRef.current = item.id;
+    // Apple Health / Health Connect: written at once, also offline (app only, when switched on).
+    void syncWorkoutToHealth(item.payload);
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);
@@ -621,6 +625,11 @@ export default function DashboardPage() {
       reportUnsent(result);
     });
   }, [date, dateTouched, entryZone, outbox, reportUnsent, time, timeTouched]);
+
+  // Health reconcile at app start, on resume and after the queue went out (app only, when on).
+  useEffect(() => {
+    if (user?.id) installHealthSync(user.id);
+  }, [user?.id]);
 
   // Answers from the server for queued entries (this tab's flushes and the background timer).
   useEffect(() => {
@@ -817,6 +826,13 @@ export default function DashboardPage() {
       };
       try {
         await outbox.update(editingId, patch);
+        void syncWorkoutToHealth({
+          clientRequestId: editingId,
+          exerciseType: editExerciseType,
+          reps: patch.reps ?? 0,
+          durationSeconds: patch.durationSeconds ?? null,
+          time: patch.time ?? toIsoTime(editDate, editTime),
+        });
         setEditingId(null);
         setInfo(queueText.queueUpdated);
         void outbox.flush();
@@ -831,8 +847,9 @@ export default function DashboardPage() {
       return;
     }
 
+    const editedOriginal = workouts.find((w) => w.id === editingId);
     try {
-      await fetchJsonSafe('/api/workouts', {
+      const updated = await fetchJsonSafe('/api/workouts', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -848,6 +865,16 @@ export default function DashboardPage() {
           exerciseType: editExerciseType,
         }),
       });
+      if (isJsonObject(updated) && typeof updated.id === 'string') {
+        const record = updated as Workout;
+        void syncWorkoutToHealth({
+          clientRequestId: healthExternalId({ id: record.id, clientRequestId: editedOriginal?.clientRequestId ?? null }),
+          exerciseType: record.exerciseType ?? editExerciseType,
+          reps: record.reps,
+          durationSeconds: record.durationSeconds ?? null,
+          time: record.time ?? toIsoTime(editDate, editTime),
+        });
+      }
       setEditingId(null);
       setInfo(tt('Изменения сохранены'));
       await loadWorkouts();
@@ -864,6 +891,7 @@ export default function DashboardPage() {
     if (allWorkouts.some((w) => w.id === id && w.queueStatus)) {
       try {
         await outbox.remove(id);
+        void removeWorkoutFromHealth(id);
         setInfo(queueText.queueRemoved);
       } catch (error: unknown) {
         setError(error instanceof OutboxBusyError ? queueText.inFlight : getErrorMessage(error));
@@ -875,12 +903,14 @@ export default function DashboardPage() {
       return;
     }
 
+    const deletedRecord = workouts.find((w) => w.id === id);
     try {
       await fetchJsonSafe('/api/workouts', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
       });
+      void removeWorkoutFromHealth(healthExternalId({ id, clientRequestId: deletedRecord?.clientRequestId ?? null }));
       setInfo(tt('Запись удалена'));
       await loadWorkouts();
     } catch (error: unknown) {

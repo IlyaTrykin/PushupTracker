@@ -22,6 +22,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Pushup Tracker читает тренировки из «Здоровья», чтобы не записывать их дважды и импортировать бег, велосипед и греблю.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Pushup Tracker записывает ваши тренировки в «Здоровье»: тип, время, длительность и дистанцию.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

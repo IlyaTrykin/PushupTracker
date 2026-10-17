@@ -6,7 +6,8 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "app.pushuptracker.mobile"
-        minSdkVersion rootProject.ext.minSdkVersion
+        // Health Connect (connect-client) работает с Android 8.0 (API 26); общий minSdk проекта — 24.
+        minSdkVersion Math.max(rootProject.ext.minSdkVersion as int, 26)
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
@@ -45,6 +46,11 @@ dependencies {
     implementation "androidx.security:security-crypto:$androidxSecurityCryptoVersion"
     // BackgroundUpload: отправка очереди тренировок при появлении сети, даже если приложение закрыто.
     implementation "androidx.work:work-runtime:2.10.2"
+    // HealthBridge: запись тренировок в Health Connect (ExerciseSessionRecord + DistanceRecord).
+    implementation "androidx.health.connect:connect-client:1.1.0"
+    // connect-client тянет guava 31.1-android (runtime), из-за чего пустой listenablefuture вытесняет
+    // ListenableFuture WorkManager с classpath компиляции. Та же guava — только для компиляции, новой библиотеки нет.
+    compileOnly "com.google.guava:guava:31.1-android"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

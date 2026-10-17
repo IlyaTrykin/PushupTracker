@@ -104,7 +104,8 @@ export async function GET(request: Request) {
         ...(exerciseType ? { exerciseType } : {}),
       },
       orderBy: [{ date: 'desc' }, { time: 'desc' }, { id: 'desc' }],
-      select: WORKOUT_SELECT,
+      // clientRequestId: the app's key of the workout in Apple Health / Health Connect (added field).
+      select: { ...WORKOUT_SELECT, clientRequestId: true },
     });
 
     return NextResponse.json(workouts);
