@@ -44,9 +44,10 @@ export const WORKOUT_SELECT = {
 export type WorkoutSource = 'web' | 'telegram' | 'program' | 'health';
 
 /**
- * Sources whose workouts do not notify followers (`friend_workout`) or challenge rivals
- * (`challenge_rank_change`): an import from Health brings up to 50 past sessions at once, and a push
- * per session (also about old ones) would flood every follower.
+ * Sources whose workouts do not notify followers (`friend_workout`), challenge rivals
+ * (`challenge_rank_change`) or friends about records and badges (`friend_achievement`): an import from
+ * Health brings up to 50 past sessions at once, and a push per session (also about old ones) would
+ * flood every follower. Records and badges are still saved and shown to the user.
  */
 const SILENT_SOURCES: ReadonlySet<WorkoutSource> = new Set<WorkoutSource>(['health']);
 
@@ -337,7 +338,7 @@ export function createWorkoutCreator(deps: WorkoutCreateDeps): CreateWorkout {
 
     let hooks: WorkoutHookResult = { records: [], achievements: [] };
     try {
-      hooks = await deps.onWorkoutCreated(workout, { id: user.id, username: user.username, timeZone });
+      hooks = await deps.onWorkoutCreated(workout, { id: user.id, username: user.username, timeZone }, { notifyFriends: notify });
     } catch (e) {
       console.error('WORKOUT HOOK ERROR:', e);
     }

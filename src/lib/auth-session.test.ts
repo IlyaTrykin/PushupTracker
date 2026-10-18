@@ -10,6 +10,7 @@ import {
   isNativeClient,
   setSessionCookie,
 } from './auth';
+import { checkApiRequest } from './request-guard';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -129,4 +130,33 @@ test('X-Client: native marks the app client', () => {
   assert.equal(isNativeClient(req({ 'x-client': 'Native' })), true);
   assert.equal(isNativeClient(req({ 'x-client': 'web' })), false);
   assert.equal(isNativeClient(req({})), false);
+});
+
+// --- One reading of the session cookie for the CSRF guard and for auth ---
+
+test('the guard and getSessionToken agree on whether the request carries the session cookie', () => {
+  // The guard lifts the Origin check for an app request without the session cookie; if auth then
+  // found a cookie session the guard did not see, a cross-site page could ride on it.
+  const cases = [
+    `session=${COOKIE}`,
+    `a=1; session=${COOKIE}`,
+    `session= ${COOKIE}`,
+    `session=${COOKIE} `,
+    `xsession=${COOKIE}`,
+    'session=',
+    'session=; a=1',
+    'session= ; a=1',
+    `mysession=x; session=${COOKIE}`,
+  ];
+  for (const cookie of cases) {
+    const token = getSessionToken(req({ cookie }));
+    const verdict = checkApiRequest({
+      method: 'POST',
+      pathname: '/api/workouts',
+      headers: new Headers({ cookie, 'x-client': 'native', origin: 'https://evil.example', 'content-type': 'application/json' }),
+      appUrl: 'http://localhost:3100',
+    });
+    assert.equal(verdict.ok, token === null, `${JSON.stringify(cookie)} → token ${JSON.stringify(token)}`);
+    if (token !== null) assert.equal(token, COOKIE, JSON.stringify(cookie));
+  }
 });

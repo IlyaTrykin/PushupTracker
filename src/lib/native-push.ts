@@ -4,7 +4,8 @@
  * `fetch` — no SDKs. Keys come from env (`APNS_*`, `FCM_*`); without them a platform is off and
  * nothing is sent. Called from `notifyUsers` next to web push — channel preferences are the same.
  *
- * Tokens the push service calls dead (APNs 410, FCM `UNREGISTERED`) are switched off
+ * Tokens the push service calls dead (APNs 410 / `BadDeviceToken` / `DeviceTokenNotForTopic`,
+ * FCM 404 / `UNREGISTERED` / `INVALID_ARGUMENT`) are switched off
  * (`PushDevice.isActive = false`).
  */
 import { createSign, sign as signData } from 'node:crypto';
@@ -162,19 +163,33 @@ export function buildFcmMessage(payload: PushPayload, token: string): FcmMessage
 
 export type NativeSendResult = 'sent' | 'dead' | 'failed';
 
-/** APNs: 2xx — delivered; 410 `Unregistered` — the token is no longer valid for the topic. */
+/** APNs `reason`s that mean this token will never be delivered to (the app was removed, a garbage token). */
+const DEAD_APNS_REASONS = new Set(['BadDeviceToken', 'DeviceTokenNotForTopic', 'Unregistered']);
+
+/**
+ * APNs: 2xx — delivered; 410, or `BadDeviceToken` / `DeviceTokenNotForTopic` / `Unregistered` — the
+ * token is dead. Anything else (5xx, 429, provider-token or topic errors) is temporary or ours: the
+ * device stays on. A token switched off by mistake (e.g. sandbox vs production) comes back with the
+ * app's next registration.
+ */
 export function classifyApnsResponse(status: number, body: string): NativeSendResult {
   if (status >= 200 && status < 300) return 'sent';
-  if (status === 410 || apnsReason(body) === 'Unregistered') return 'dead';
+  if (status === 410 || DEAD_APNS_REASONS.has(apnsReason(body))) return 'dead';
   return 'failed';
 }
 
-/** FCM v1: 2xx — accepted; error detail `UNREGISTERED` — the app instance is gone. */
+/**
+ * FCM v1: 2xx — accepted; 404 / `UNREGISTERED` (the app instance is gone) and `INVALID_ARGUMENT`
+ * (a malformed token — our payload is fixed by `buildFcmMessage` and covered by tests) — dead.
+ * 401/403/429/5xx are credentials, quota or outage: the device stays on.
+ */
 export function classifyFcmResponse(status: number, body: string): NativeSendResult {
   if (status >= 200 && status < 300) return 'sent';
+  if (status === 404) return 'dead';
   try {
-    const details = (JSON.parse(body) as { error?: { details?: Array<{ errorCode?: unknown }> } }).error?.details;
-    if (Array.isArray(details) && details.some((d) => d?.errorCode === 'UNREGISTERED')) return 'dead';
+    const error = (JSON.parse(body) as { error?: { status?: unknown; details?: Array<{ errorCode?: unknown }> } }).error;
+    const codes = [error?.status, ...(Array.isArray(error?.details) ? error.details.map((d) => d?.errorCode) : [])];
+    if (codes.some((code) => code === 'UNREGISTERED' || code === 'INVALID_ARGUMENT')) return 'dead';
   } catch {}
   return 'failed';
 }

@@ -34,6 +34,15 @@ export type WorkoutHookUser = { id: string; username: string; timeZone: string }
 
 export type WorkoutHookResult<R = RecordHit, A = AchievementDto> = { records: R[]; achievements: A[] };
 
+export type WorkoutHookOptions = {
+  /**
+   * Tell friends about new records and badges (`friend_achievement`). Default true; false for a bulk
+   * import (Health): one request of up to 50 workouts would give each friend a notification per record.
+   * Records and badges are saved and returned either way.
+   */
+  notifyFriends?: boolean;
+};
+
 export type AchievementRow = {
   userId: string;
   kind: 'badge' | 'record';
@@ -115,7 +124,11 @@ export function createAchievementHook(deps: AchievementHookDeps) {
     });
   }
 
-  async function onWorkoutCreated(workout: CreatedWorkout, user: WorkoutHookUser): Promise<WorkoutHookResult> {
+  async function onWorkoutCreated(
+    workout: CreatedWorkout,
+    user: WorkoutHookUser,
+    opts: WorkoutHookOptions = {},
+  ): Promise<WorkoutHookResult> {
     const context = await deps.loadContext(user.id);
     const today = dayKeyInZone(deps.now(), normalizeTimeZone(user.timeZone));
     const day = workoutDayKey(workout);
@@ -154,7 +167,7 @@ export function createAchievementHook(deps: AchievementHookDeps) {
     // A user without a single achievement yet gets the badges earned before the feature existed
     // all at once: they are saved and shown in the toast, but friends are not told about the backlog.
     const newsworthyBadges = context.hasAchievements ? achievements.map((item) => item.code) : [];
-    tellFriends(user.id, user.username, records, newsworthyBadges);
+    if (opts.notifyFriends !== false) tellFriends(user.id, user.username, records, newsworthyBadges);
     return { records, achievements };
   }
 

@@ -6,6 +6,7 @@ import { tooManyRequests } from '@/lib/rate-limit';
 import { WORKOUT_SELECT, WorkoutCreateError, createWorkoutForUser } from '@/lib/workout-create';
 import { parseWorkoutDay, parseWorkoutDuration, parseWorkoutExerciseType, parseWorkoutLoadFields, parseWorkoutTime } from '@/lib/workout-input';
 import { GroupError, recordGroupAuditLog, requireManagedGroupMemberAccess } from '@/lib/groups';
+import { deleteOwnWorkoutByRequestId, parseWorkoutDeleteBody } from '@/lib/workout-delete';
 
 export const dynamic = 'force-dynamic';
 
@@ -299,8 +300,14 @@ export async function DELETE(request: Request) {
     const body = await request.json().catch(() => null);
     if (!body) return jsonError('Некорректный JSON');
 
-    const id = String(body.id || '').trim();
-    if (!id) return jsonError('id обязателен');
+    const parsed = parseWorkoutDeleteBody(body);
+    if (!parsed.ok) return jsonError(parsed.error, 400, parsed.code);
+    if (parsed.target.by === 'clientRequestId') {
+      // The outbox deleting a record that may have reached us: only the caller's own, idempotent.
+      await deleteOwnWorkoutByRequestId(actor.id, parsed.target.clientRequestId, prisma);
+      return NextResponse.json({ ok: true });
+    }
+    const { id } = parsed.target;
 
     const existing = await prisma.workout.findUnique({
       where: { id },
@@ -309,7 +316,7 @@ export async function DELETE(request: Request) {
     if (!existing) return jsonError('Запись не найдена', 404);
 
     let managedByGroup = false;
-    let groupId = String(body.groupId || '').trim() || null;
+    let groupId = parsed.target.groupId;
     if (existing.userId !== actor.id && !actor.isAdmin) {
       if (!groupId) return jsonError('Для управления тренировкой участника группы нужен groupId', 400, 'GROUP_ID_REQUIRED');
       const access = await requireManagedGroupMemberAccess(actor, groupId, existing.userId);

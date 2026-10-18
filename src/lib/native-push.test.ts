@@ -132,18 +132,46 @@ test('buildFcmMessage: notification + string data with link and tag for the tap 
   assert.equal(minimal.notification.body, '');
 });
 
-test('dead tokens: APNs 410 and FCM UNREGISTERED; other errors are not treated as dead', () => {
+test('dead tokens: APNs BadDeviceToken / DeviceTokenNotForTopic / Unregistered (410), FCM INVALID_ARGUMENT / 404 / UNREGISTERED', () => {
   assert.equal(classifyApnsResponse(200, ''), 'sent');
   assert.equal(classifyApnsResponse(410, '{"reason":"Unregistered"}'), 'dead');
-  assert.equal(classifyApnsResponse(400, '{"reason":"BadDeviceToken"}'), 'failed');
-  assert.equal(classifyApnsResponse(500, ''), 'failed');
+  assert.equal(classifyApnsResponse(410, ''), 'dead');
+  assert.equal(classifyApnsResponse(400, '{"reason":"BadDeviceToken"}'), 'dead');
+  assert.equal(classifyApnsResponse(400, '{"reason":"DeviceTokenNotForTopic"}'), 'dead');
+
   assert.equal(classifyFcmResponse(200, '{"name":"projects/x/messages/1"}'), 'sent');
   const unregistered = JSON.stringify({
     error: { code: 404, status: 'NOT_FOUND', details: [{ '@type': 'type.googleapis.com/google.firebase.fcm.v1.FcmError', errorCode: 'UNREGISTERED' }] },
   });
   assert.equal(classifyFcmResponse(404, unregistered), 'dead');
-  assert.equal(classifyFcmResponse(400, JSON.stringify({ error: { status: 'INVALID_ARGUMENT', details: [{ errorCode: 'INVALID_ARGUMENT' }] } })), 'failed');
-  assert.equal(classifyFcmResponse(503, 'oops'), 'failed');
+  assert.equal(classifyFcmResponse(404, JSON.stringify({ error: { code: 404, status: 'NOT_FOUND' } })), 'dead');
+  assert.equal(classifyFcmResponse(400, JSON.stringify({ error: { code: 400, status: 'INVALID_ARGUMENT', details: [{ errorCode: 'INVALID_ARGUMENT' }] } })), 'dead');
+  assert.equal(classifyFcmResponse(400, JSON.stringify({ error: { code: 400, status: 'INVALID_ARGUMENT' } })), 'dead');
+});
+
+test('a temporary or server-side failure never switches a device off', () => {
+  for (const [status, body] of [
+    [500, ''],
+    [503, '{"reason":"ServiceUnavailable"}'],
+    [429, '{"reason":"TooManyRequests"}'],
+    [403, '{"reason":"ExpiredProviderToken"}'],
+    [403, '{"reason":"InvalidProviderToken"}'],
+    [400, '{"reason":"BadTopic"}'],
+    [400, '{"reason":"PayloadTooLarge"}'],
+    [400, 'not json'],
+  ] as const) {
+    assert.equal(classifyApnsResponse(status, body), 'failed', `APNs ${status} ${body}`);
+  }
+  for (const [status, body] of [
+    [503, 'oops'],
+    [500, JSON.stringify({ error: { code: 500, status: 'INTERNAL' } })],
+    [429, JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', details: [{ errorCode: 'QUOTA_EXCEEDED' }] } })],
+    [401, JSON.stringify({ error: { code: 401, status: 'UNAUTHENTICATED' } })],
+    [403, JSON.stringify({ error: { code: 403, status: 'PERMISSION_DENIED', details: [{ errorCode: 'SENDER_ID_MISMATCH' }] } })],
+    [400, 'not json'],
+  ] as const) {
+    assert.equal(classifyFcmResponse(status, body), 'failed', `FCM ${status} ${body}`);
+  }
 });
 
 test('device tokens: APNs hex lowercased, FCM token charset; garbage rejected', () => {

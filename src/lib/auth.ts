@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { LOCALE_COOKIE_NAME, type Locale, getLocaleFromAcceptLanguage, normalizeLocale } from '@/i18n/locale';
 import { hitRateLimit } from '@/lib/rate-limit';
 import { normalizeTimeZone } from '@/lib/calendar-day';
-import { isNativeClientHeader, parseBearerToken } from '@/lib/request-guard';
+import { isNativeClientHeader, parseBearerToken, readSessionCookie } from '@/lib/request-guard';
 
 /** Unified auth helpers for API routes. */
 
@@ -157,12 +157,6 @@ export async function checkRateLimits(rules: RateLimitRule[]): Promise<{ ok: boo
   return { ok, retryAfterSeconds };
 }
 
-type RequestWithOptionalCookies = Request & {
-  cookies?: {
-    get?: (name: string) => { value?: string } | undefined;
-  };
-};
-
 const authUserSelect = {
   id: true,
   username: true,
@@ -261,23 +255,13 @@ function parseCookieHeader(cookieHeader: string, name: string): string | null {
 
 /**
  * Raw session token of the request: `Authorization: Bearer <64 hex>` (native app) first,
- * then the `session` cookie (site). A malformed Authorization header is ignored.
+ * then the `session` cookie (site). A malformed Authorization header is ignored. The cookie is read
+ * by `readSessionCookie` — the same function the CSRF guard uses to decide whether to check Origin.
  */
 export function getSessionToken(request: Request): string | null {
   const bearer = parseBearerToken(request.headers.get('authorization'));
   if (bearer) return bearer;
-
-  const requestWithCookies = request as RequestWithOptionalCookies;
-  try {
-    const v = requestWithCookies.cookies?.get?.('session')?.value;
-    if (typeof v === 'string' && v) return v;
-  } catch {
-    // ignore
-  }
-
-  const cookieHeader = request.headers.get('cookie') || '';
-  const token = parseCookieHeader(cookieHeader, 'session');
-  return token || null;
+  return readSessionCookie(request.headers.get('cookie'));
 }
 
 /** Secure in production always (behind the proxy the hop may be plain http); elsewhere only over https. */

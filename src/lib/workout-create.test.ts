@@ -7,7 +7,8 @@ import {
   rankChallengeParticipants,
   type WorkoutCreateDeps,
 } from './workout-create';
-import type { CreatedWorkout } from './workout-hooks';
+import { createAchievementHook, type CreatedWorkout } from './workout-hooks';
+import type { NotifyEvent } from './notify';
 import { programSetWorkoutInput } from './program-plan';
 import { importHealthWorkouts } from './health-import';
 
@@ -237,4 +238,66 @@ test('a workout from the app or the site still tells followers and challenge riv
   });
   await createWorkoutCreator(deps)(ann, { exerciseType: 'run', reps: 5000, durationSeconds: 1800 }, { source: 'web', now });
   assert.deepEqual(notifiedEvents, ['friend_workout', 'challenge_rank_change']);
+});
+
+/**
+ * A real achievement hook over the created rows: every imported run beats the previous best, so each
+ * one is a record; the user already has achievements, so records are news for friends.
+ */
+function importWithAchievements(source: 'health' | 'web') {
+  const notifications: Array<{ ids: string[]; event: NotifyEvent }> = [];
+  const pending: Array<() => Promise<void>> = [];
+  const saved: string[] = [];
+  const history = { id: 'old', date: day('2026-09-01'), reps: 1000, exerciseType: 'run', loadKg: null };
+  let created: ReturnType<typeof fakeDeps>['rows'] = [];
+  const hook = createAchievementHook({
+    loadContext: async () => ({ workouts: [history, ...created], dailyGoalPoints: null, ownedBadges: ['first_exercise'], hasAchievements: true }),
+    saveAchievement: async (row) => {
+      saved.push(row.code);
+      return { id: `a${saved.length}`, achievedAt: now };
+    },
+    friendIds: async () => ['f1', 'f2'],
+    usernameOf: async () => 'ann',
+    notify: async (ids, event) => {
+      notifications.push({ ids, event });
+    },
+    defer: (task) => {
+      pending.push(task);
+    },
+    now: () => now,
+  });
+  const world = fakeDeps({ findFollowerIds: async () => [], onWorkoutCreated: (workout, user, opts) => hook.onWorkoutCreated(workout, user, opts) });
+  created = world.rows;
+  const create = createWorkoutCreator(world.deps);
+  const items = [1, 2, 3].map((n) => ({
+    clientRequestId: `hk:${n}`,
+    exerciseType: 'run' as const,
+    reps: 5000 + n * 1000,
+    durationSeconds: 1800 + n * 300,
+    date: '2026-10-0' + n,
+    time: `2026-10-0${n}T07:00:00.000Z`,
+  }));
+  const run = async () => {
+    const outcomes =
+      source === 'health'
+        ? (await importHealthWorkouts(ann, items, { createWorkout: (user, input, options) => create(user, input, { ...options, now }) })).results
+        : await Promise.all(items.map(async (item) => create(ann, item, { source: 'web', now })));
+    for (const task of pending.splice(0)) await task();
+    const perFriend = (id: string) => notifications.filter((n) => n.event === 'friend_achievement' && n.ids.includes(id)).length;
+    return { outcomes, perFriend, saved };
+  };
+  return { run };
+}
+
+test('health import: one request gives each friend at most one friend_achievement, records are still saved and returned', async () => {
+  const { outcomes, perFriend, saved } = await importWithAchievements('health').run();
+  assert.equal(outcomes.length, 3);
+  assert.ok(saved.filter((code) => code === 'best_set').length >= 3, `records saved: ${saved.join(',')}`);
+  assert.ok(perFriend('f1') <= 1, `f1 got ${perFriend('f1')}`);
+  assert.ok(perFriend('f2') <= 1, `f2 got ${perFriend('f2')}`);
+});
+
+test('records from the site or the app still tell friends (the health rule does not leak)', async () => {
+  const { perFriend } = await importWithAchievements('web').run();
+  assert.ok(perFriend('f1') >= 1, 'a web record is news for friends');
 });

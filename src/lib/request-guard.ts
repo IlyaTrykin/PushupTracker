@@ -86,8 +86,20 @@ export function isNativeClientHeader(value: string | null | undefined): boolean 
   return value?.trim().toLowerCase() === 'native';
 }
 
+const SESSION_COOKIE_PATTERN = /(?:^|;)\s*session=([^;]*)/;
+
+/**
+ * The `session` cookie from a `Cookie` header (first occurrence, trimmed); empty or absent → null.
+ * The one reading shared by this guard and `getSessionToken` (`auth.ts`): the Origin check is
+ * lifted only for requests without the session cookie, so both must see the same cookie.
+ */
+export function readSessionCookie(cookieHeader: string | null | undefined): string | null {
+  const value = cookieHeader?.match(SESSION_COOKIE_PATTERN)?.[1]?.trim();
+  return value || null;
+}
+
 function hasSessionCookie(cookieHeader: string | null): boolean {
-  return /(?:^|;\s*)session=[^;\s]/.test(cookieHeader ?? '');
+  return readSessionCookie(cookieHeader) !== null;
 }
 
 /** Native-app request with no session cookie to ride on: a well-formed Bearer token or `X-Client: native`. */

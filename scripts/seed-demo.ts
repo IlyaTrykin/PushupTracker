@@ -87,35 +87,58 @@ function daysFromNow(days: number, hour = 19, minute = 0) {
   return d;
 }
 
+const DEMO_EMAIL_DOMAIN = '@demo.local';
+const LOCAL_DATABASE_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * The seed deletes and recreates demo accounts: it runs only against a database on this machine.
+ * The host must be exactly one of the local names, and `host` / `hostaddr` in the query (which the
+ * driver would connect to instead of the URL host) are refused whatever their value.
+ */
+function assertLocalDatabase(databaseUrl: string | undefined): void {
+  if (!databaseUrl) throw new Error('DATABASE_URL is required');
+  let url: URL;
+  try {
+    url = new URL(databaseUrl);
+  } catch {
+    throw new Error('seed-demo: DATABASE_URL is not a valid URL');
+  }
+  const overrides = [...url.searchParams.keys()].filter((key) => ['host', 'hostaddr'].includes(key.toLowerCase()));
+  if (overrides.length) {
+    throw new Error(`seed-demo: refusing to run: DATABASE_URL overrides the host with query parameter(s) ${overrides.join(', ')}`);
+  }
+  const host = url.hostname.toLowerCase();
+  if (!LOCAL_DATABASE_HOSTS.has(host)) {
+    throw new Error(`seed-demo: refusing to run against a non-local database (host "${host}"); only localhost / 127.0.0.1 / [::1]`);
+  }
+}
+
 async function cleanupPreviousDemoData() {
+  // Only the seed's own accounts: a username match could hit a real user with the same name.
   const demoUsers = await prisma.user.findMany({
-    where: {
-      OR: [
-        { email: { endsWith: '@demo.local' } },
-        { username: { in: DEMO_USER_SPECS.map((user) => user.username) } },
-      ],
-    },
+    where: { email: { endsWith: DEMO_EMAIL_DOMAIN } },
     select: { id: true },
   });
 
   const demoUserIds = demoUsers.map((user) => user.id);
 
   if (demoUserIds.length) {
+    // Rows that keep a user from being deleted (`onDelete: Restrict`): challenges they created and
+    // groups they own (made while trying the demo) — otherwise a second run fails on the foreign key.
     await prisma.challenge.deleteMany({
       where: {
         creatorId: { in: demoUserIds },
       },
     });
+    await prisma.group.deleteMany({
+      where: {
+        ownerId: { in: demoUserIds },
+      },
+    });
+    await prisma.user.deleteMany({
+      where: { id: { in: demoUserIds }, email: { endsWith: DEMO_EMAIL_DOMAIN } },
+    });
   }
-
-  await prisma.user.deleteMany({
-    where: {
-      OR: [
-        { email: { endsWith: '@demo.local' } },
-        { username: { in: DEMO_USER_SPECS.map((user) => user.username) } },
-      ],
-    },
-  });
 }
 
 async function ensureUser(spec: DemoUserSpec) {
@@ -496,9 +519,7 @@ async function seedPrograms(users: CreatedUsers) {
 }
 
 async function main() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required');
-  }
+  assertLocalDatabase(process.env.DATABASE_URL);
 
   await cleanupPreviousDemoData();
   const users = await seedUsers();

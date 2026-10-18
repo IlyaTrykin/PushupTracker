@@ -3,68 +3,36 @@ import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { normalizeLocale } from '@/i18n/locale';
 import { setPreferredLocaleCookie } from '@/i18n/server';
-import { filterUsersByChannel } from '@/lib/notification-preferences';
-import { sendWebPushToUsers } from '@/lib/web-push';
-import { sendAdminNewUserRegisteredEmail } from '@/lib/notification-email';
 import { normalizeEmail, validateNewPassword, validateNewUsername } from '@/lib/account-validation';
 import { authRateLimitRules, authText, checkRateLimits, requestLocale, validationErrorText } from '@/lib/auth';
 import { clientIp, tooManyRequests } from '@/lib/rate-limit';
 import { registerAccount } from './register-account';
-import { inviteJoinedMessage, notifyUsers } from '@/lib/notify';
+import { inviteJoinedMessage, notifyUsers, type LocalizedMessage, type NotifyLocale } from '@/lib/notify';
 import { parseSignupAttribution } from '@/lib/referral';
 import { applySignupAttribution } from '@/lib/signup-attribution';
 
-async function notifyAdminsOfRegistration(
-  user: { id: string; username: string; email: string },
-  request: Request,
-): Promise<void> {
-  const admins = await prisma.user.findMany({
-    where: { isAdmin: true, deletedAt: null },
-    select: { id: true, username: true, email: true },
-  });
+/** «Новая регистрация пользователя» — name and email of the new account, link to the admin users page. */
+function adminRegistrationMessage(locale: NotifyLocale, user: { username: string; email: string }): LocalizedMessage {
+  return {
+    title: locale === 'en' ? 'New user registration' : 'Новая регистрация пользователя',
+    body: `${user.username} (${user.email})`,
+    link: '/admin/users',
+  };
+}
+
+/**
+ * Admins learn about a new account through the common channel (`notifyUsers`): in-app row, web push
+ * and the app's native push, email, Telegram — by each admin's `admin_new_user_registered` settings.
+ */
+async function notifyAdminsOfRegistration(user: { id: string; username: string; email: string }): Promise<void> {
+  const admins = await prisma.user.findMany({ where: { isAdmin: true, deletedAt: null }, select: { id: true } });
   if (!admins.length) return;
-
-  const adminIds = admins.map((a) => a.id);
-  const title = 'Новая регистрация пользователя';
-  const body = `${user.username} (${user.email})`;
-  const link = '/admin/users';
-  const adminIdsForPush = await filterUsersByChannel(adminIds, 'admin_new_user_registered', 'push');
-  const adminIdsForEmail = await filterUsersByChannel(adminIds, 'admin_new_user_registered', 'email');
-  const adminIdsForInApp = Array.from(new Set([...adminIdsForPush, ...adminIdsForEmail]));
-
-  if (adminIdsForInApp.length) {
-    await prisma.notification.createMany({
-      data: adminIdsForInApp.map((adminId) => ({
-        userId: adminId,
-        type: 'admin_new_user_registered',
-        title,
-        body,
-        link,
-      })),
-    });
-  }
-
-  if (adminIdsForPush.length) {
-    await sendWebPushToUsers(adminIdsForPush, { title, body, link, tag: `admin-register-${user.id}` }).catch(
-      (pushError) => {
-        console.error('REGISTER ADMIN PUSH ERROR:', pushError);
-      },
-    );
-  }
-
-  for (const admin of admins) {
-    if (!admin.email) continue;
-    if (!adminIdsForEmail.includes(admin.id)) continue;
-    await sendAdminNewUserRegisteredEmail({
-      to: admin.email,
-      adminUsername: admin.username,
-      newUsername: user.username,
-      newEmail: user.email,
-      request,
-    }).catch((mailError) => {
-      console.error('REGISTER ADMIN EMAIL ERROR:', mailError);
-    });
-  }
+  await notifyUsers(
+    admins.map((admin) => admin.id),
+    'admin_new_user_registered',
+    (locale) => adminRegistrationMessage(locale, user),
+    { tag: `admin-register-${user.id}` },
+  );
 }
 
 export async function POST(request: Request) {
@@ -133,9 +101,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // Админам — in-app/push/email о новой регистрации; после ответа, ошибки только в лог.
+    // Админам — через notifyUsers (in-app, push сайта и приложения, почта); после ответа, ошибки только в лог.
     after(() =>
-      notifyAdminsOfRegistration(user, request).catch((notifyError) => {
+      notifyAdminsOfRegistration(user).catch((notifyError) => {
         console.error('REGISTER ADMIN NOTIFY ERROR:', notifyError);
       }),
     );
