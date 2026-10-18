@@ -7,5 +7,6 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(SecureTokenPlugin())
         bridge?.registerPluginInstance(BackgroundUploadPlugin())
         bridge?.registerPluginInstance(HealthBridgePlugin())
+        bridge?.registerPluginInstance(RepCounterPlugin())
     }
 }

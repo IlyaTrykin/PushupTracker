@@ -51,6 +51,11 @@ dependencies {
     // connect-client тянет guava 31.1-android (runtime), из-за чего пустой listenablefuture вытесняет
     // ListenableFuture WorkManager с classpath компиляции. Та же guava — только для компиляции, новой библиотеки нет.
     compileOnly "com.google.guava:guava:31.1-android"
+    // RepCounter: превью и кадры камеры (CameraX) + распознавание позы ML Kit (встроенная модель, без сети).
+    implementation "androidx.camera:camera-camera2:1.4.2"
+    implementation "androidx.camera:camera-lifecycle:1.4.2"
+    implementation "androidx.camera:camera-view:1.4.2"
+    implementation "com.google.mlkit:pose-detection:18.0.0-beta5"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

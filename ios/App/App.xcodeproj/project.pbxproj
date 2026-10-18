@@ -21,6 +21,11 @@
 		7A1C0E142F00000100A1B205 /* BackgroundUploadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E132F00000100A1B205 /* BackgroundUploadManager.swift */; };
 		7A1C0E222F00000100A1B206 /* HealthBridgePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E212F00000100A1B206 /* HealthBridgePlugin.swift */; };
 		7A1C0E042F00000100A1B201 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E032F00000100A1B201 /* MainViewController.swift */; };
+		7A1C0E322F00000100A1B208 /* RepCounterPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E312F00000100A1B208 /* RepCounterPlugin.swift */; };
+		7A1C0E342F00000100A1B208 /* RepCounterViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E332F00000100A1B208 /* RepCounterViewController.swift */; };
+		7A1C0E362F00000100A1B208 /* RepStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E352F00000100A1B208 /* RepStateMachine.swift */; };
+		7A1C0E372F00000100A1B208 /* RepStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E352F00000100A1B208 /* RepStateMachine.swift */; };
+		7A1C0E392F00000100A1B208 /* RepStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E382F00000100A1B208 /* RepStateMachineTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +46,11 @@
 		7A1C0E212F00000100A1B206 /* HealthBridgePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthBridgePlugin.swift; sourceTree = "<group>"; };
 		7A1C0E232F00000100A1B206 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		7A1C0E032F00000100A1B201 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
+		7A1C0E312F00000100A1B208 /* RepCounterPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepCounterPlugin.swift; sourceTree = "<group>"; };
+		7A1C0E332F00000100A1B208 /* RepCounterViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepCounterViewController.swift; sourceTree = "<group>"; };
+		7A1C0E352F00000100A1B208 /* RepStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepStateMachine.swift; sourceTree = "<group>"; };
+		7A1C0E382F00000100A1B208 /* RepStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepStateMachineTests.swift; sourceTree = "<group>"; };
+		7A1C0E3A2F00000100A1B208 /* RepCounterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RepCounterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +62,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7A1C0E3E2F00000100A1B208 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -60,6 +77,7 @@
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
+				7A1C0E3B2F00000100A1B208 /* RepCounterTests */,
 				504EC3051FED79650016851F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -68,6 +86,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				7A1C0E3A2F00000100A1B208 /* RepCounterTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -98,8 +117,19 @@
 				7A1C0E112F00000100A1B205 /* BackgroundUploadPlugin.swift */,
 				7A1C0E132F00000100A1B205 /* BackgroundUploadManager.swift */,
 				7A1C0E212F00000100A1B206 /* HealthBridgePlugin.swift */,
+				7A1C0E312F00000100A1B208 /* RepCounterPlugin.swift */,
+				7A1C0E332F00000100A1B208 /* RepCounterViewController.swift */,
+				7A1C0E352F00000100A1B208 /* RepStateMachine.swift */,
 			);
 			path = Plugins;
+			sourceTree = "<group>";
+		};
+		7A1C0E3B2F00000100A1B208 /* RepCounterTests */ = {
+			isa = PBXGroup;
+			children = (
+				7A1C0E382F00000100A1B208 /* RepStateMachineTests.swift */,
+			);
+			path = RepCounterTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -126,6 +156,22 @@
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
 		};
+		7A1C0E3C2F00000100A1B208 /* RepCounterTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7A1C0E3F2F00000100A1B208 /* Build configuration list for PBXNativeTarget "RepCounterTests" */;
+			buildPhases = (
+				7A1C0E3D2F00000100A1B208 /* Sources */,
+				7A1C0E3E2F00000100A1B208 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RepCounterTests;
+			productName = RepCounterTests;
+			productReference = 7A1C0E3A2F00000100A1B208 /* RepCounterTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -144,6 +190,9 @@
 								enabled = 1;
 							};
 						};
+					};
+					7A1C0E3C2F00000100A1B208 = {
+						CreatedOnToolsVersion = 26.0;
 					};
 				};
 			};
@@ -164,6 +213,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				7A1C0E3C2F00000100A1B208 /* RepCounterTests */,
 			);
 		};
 /* End PBXProject section */
@@ -214,6 +264,18 @@
 				7A1C0E122F00000100A1B205 /* BackgroundUploadPlugin.swift in Sources */,
 				7A1C0E142F00000100A1B205 /* BackgroundUploadManager.swift in Sources */,
 				7A1C0E222F00000100A1B206 /* HealthBridgePlugin.swift in Sources */,
+				7A1C0E322F00000100A1B208 /* RepCounterPlugin.swift in Sources */,
+				7A1C0E342F00000100A1B208 /* RepCounterViewController.swift in Sources */,
+				7A1C0E362F00000100A1B208 /* RepStateMachine.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7A1C0E3D2F00000100A1B208 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A1C0E372F00000100A1B208 /* RepStateMachine.swift in Sources */,
+				7A1C0E392F00000100A1B208 /* RepStateMachineTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -394,6 +456,32 @@
 			};
 			name = Release;
 		};
+		7A1C0E402F00000100A1B208 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.pushuptracker.mobile.RepCounterTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7A1C0E412F00000100A1B208 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.pushuptracker.mobile.RepCounterTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -411,6 +499,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7A1C0E3F2F00000100A1B208 /* Build configuration list for PBXNativeTarget "RepCounterTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7A1C0E402F00000100A1B208 /* Debug */,
+				7A1C0E412F00000100A1B208 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

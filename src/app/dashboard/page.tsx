@@ -15,6 +15,8 @@ import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalo
 import { useExerciseLoad } from '@/lib/use-exercise-load';
 import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
 import SideLoadEntry, { WeightPicker } from './SideLoadEntry';
+import RepCounterButtons from './RepCounterButtons';
+import { repCounterMessages } from '@/i18n/messages/features/rep-counter';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
 import { resolveEntryMoment, type OutboxItem, type OutboxPayloadPatch, type OutboxStatus } from '@/lib/offline/outbox-core';
@@ -334,6 +336,8 @@ export default function DashboardPage() {
   const [time, setTime] = useState<string>(normalizeTime(new Date()));
   const [timeTouched, setTimeTouched] = useState(false);
   const [reps, setReps] = useState<number>(0);
+  // Длительность подхода, посчитанного камерой / касанием (уходит с тренировкой, в т. ч. в Health).
+  const [countedDuration, setCountedDuration] = useState<number | null>(null);
   const [distanceKm, setDistanceKm] = useState('');
   const [durationText, setDurationText] = useState('');
   const cardio = cardioMessages[locale];
@@ -405,7 +409,10 @@ export default function DashboardPage() {
 
   const handleExerciseTypeChange = (next: ExerciseType) => {
     // Замер принадлежит выбранному упражнению: при смене упражнения он сбрасывается.
-    if (next !== exerciseType) timedStopwatch.reset();
+    if (next !== exerciseType) {
+      timedStopwatch.reset();
+      setCountedDuration(null);
+    }
     persistExerciseType(next);
   };
 
@@ -615,6 +622,7 @@ export default function DashboardPage() {
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);
+    setCountedDuration(null);
     setDistanceKm('');
     setDurationText('');
     setRepsLeft(0);
@@ -730,7 +738,10 @@ export default function DashboardPage() {
       return;
     }
 
-    await runAdd(() => submitWorkout(reps, exerciseType, activeExercise.load ? { loadKg: exerciseLoad.loadKg } : {}));
+    await runAdd(() => submitWorkout(reps, exerciseType, {
+      ...(activeExercise.load ? { loadKg: exerciseLoad.loadKg } : {}),
+      ...(countedDuration ? { durationSeconds: countedDuration } : {}),
+    }));
   };
 
   const handleTimerStart = () => {
@@ -1166,6 +1177,7 @@ export default function DashboardPage() {
                 if (timerStarted) return;
                 const v = e.target.value.replace(/[^\d]/g, '');
                 setReps(v === '' ? 0 : Math.min(9999, parseInt(v, 10)));
+                if (v === '') setCountedDuration(null);
               }}
               placeholder="0"
               style={repsInputStyle}
@@ -1190,6 +1202,25 @@ export default function DashboardPage() {
                     {isTimedExercise(exerciseType) ? `+10 ${tt('сек')}` : '+10'}
                   </button>
                 </div>
+
+                {!isTimedSelected ? (
+                  <RepCounterButtons
+                    exerciseType={exerciseType}
+                    locale={locale}
+                    disabled={adding}
+                    onCounted={(count, seconds) => {
+                      setError(null);
+                      setInfo(null);
+                      setReps(count);
+                      setCountedDuration(seconds);
+                    }}
+                  />
+                ) : null}
+                {countedDuration && !isTimedSelected ? (
+                  <div style={countedDurationNote}>
+                    ⏱ {repCounterMessages[locale].durationNote.replace('{duration}', formatDuration(countedDuration))}
+                  </div>
+                ) : null}
 
                 {isTimedSelected ? (
                   // Секундомер для упражнений на время: замер «сколько простоял»; ручной
@@ -1873,6 +1904,14 @@ const plusButtonBase: React.CSSProperties = {
   fontVariantNumeric: 'tabular-nums',
   padding: '0 10px',
   boxShadow: '0 18px 32px rgba(15, 23, 42, 0.08)',
+};
+
+const countedDurationNote: React.CSSProperties = {
+  textAlign: 'center',
+  fontSize: 14,
+  fontWeight: 600,
+  color: '#475569',
+  fontVariantNumeric: 'tabular-nums',
 };
 
 const plus5Button: React.CSSProperties = {

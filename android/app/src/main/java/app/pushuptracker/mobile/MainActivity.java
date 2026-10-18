@@ -4,6 +4,7 @@ import android.os.Bundle;
 import app.pushuptracker.mobile.plugins.BackgroundUploadPlugin;
 import app.pushuptracker.mobile.plugins.HealthBridgePlugin;
 import app.pushuptracker.mobile.plugins.SecureTokenPlugin;
+import app.pushuptracker.mobile.plugins.repcounter.RepCounterPlugin;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -13,6 +14,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SecureTokenPlugin.class);
         registerPlugin(BackgroundUploadPlugin.class);
         registerPlugin(HealthBridgePlugin.class);
+        registerPlugin(RepCounterPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

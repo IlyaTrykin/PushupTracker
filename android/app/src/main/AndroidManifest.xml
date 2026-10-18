@@ -38,6 +38,14 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- RepCounter: полноэкранный счёт повторений (камера / датчик приближения). -->
+        <activity
+            android:name=".plugins.repcounter.RepCounterActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode"
+            android:theme="@style/AppTheme.NoActionBar" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -50,6 +58,12 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- RepCounter: счёт повторений по позе (кадры обрабатываются на устройстве и не сохраняются). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Камера и датчик приближения не обязательны: без них приложение ставится, счёт скрыт/объясняется. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.proximity" android:required="false" />
     <!-- HealthBridge: тренировки и дистанция в Health Connect (запись; чтение — свои записи и импорт). -->
     <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
     <uses-permission android:name="android.permission.health.READ_EXERCISE" />
