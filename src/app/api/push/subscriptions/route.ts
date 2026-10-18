@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
 import { isPushConfigured } from '@/lib/web-push';
+import { isNativePlatform, isNativePushConfigured } from '@/lib/native-push';
 import { isUniqueViolation } from '@/lib/groups';
 import {
   MAX_PUSH_SUBSCRIPTIONS_PER_USER,
@@ -43,7 +44,10 @@ export async function GET(request: NextRequest) {
   }
 
   const count = await prisma.pushSubscription.count({ where: { userId, isActive: true } });
-  return NextResponse.json({ enabled: count > 0, count, configured: isPushConfigured() });
+  // Native app: are APNs / FCM keys set on the server (for `?platform=ios|android` — that platform's).
+  const platform = request.nextUrl.searchParams.get('platform');
+  const nativeConfigured = isNativePushConfigured(isNativePlatform(platform) ? platform : undefined);
+  return NextResponse.json({ enabled: count > 0, count, configured: isPushConfigured(), nativeConfigured });
 }
 
 export async function POST(request: NextRequest) {

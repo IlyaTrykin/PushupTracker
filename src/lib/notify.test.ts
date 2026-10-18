@@ -258,3 +258,63 @@ test('friends and groups texts: recipient language, exercise name and value inst
     assert.doesNotMatch(`${message.title} ${message.body}`, /[А-Яа-яЁё]/);
   }
 });
+
+test('push channel: the same payload goes to web push and to native push; one failing does not stop the other', async () => {
+  const { createPushSender } = await import('./notify');
+  const calls: Array<[string, string[], unknown]> = [];
+  const errors: string[] = [];
+  const sendPush = createPushSender({
+    web: async (ids, payload) => {
+      calls.push(['web', ids, payload]);
+      throw new Error('VAPID service down');
+    },
+    native: async (ids, payload) => {
+      calls.push(['native', ids, payload]);
+    },
+    logError: (label) => errors.push(label),
+  });
+  const payload = { title: 'Цель дня', body: 'Осталось 20', link: '/dashboard', tag: 'pushup-daily_goal_reminder' };
+  await sendPush('u1', payload);
+  assert.deepEqual(calls.sort((a, b) => a[0].localeCompare(b[0])), [['native', ['u1'], payload], ['web', ['u1'], payload]]);
+  assert.deepEqual(errors, ['NOTIFY WEB PUSH ERROR']);
+});
+
+test('notifyUsers with push on and no APNs/FCM keys: web push still goes, native sends nothing and does not fail', async () => {
+  const { createPushSender } = await import('./notify');
+  const { sendNativePushToUsers } = await import('./native-push');
+  const web: string[] = [];
+  let devicesLookedUp = false;
+  let nativeSent = 0;
+  const sendPush = createPushSender({
+    web: async (ids) => {
+      web.push(...ids);
+    },
+    native: (ids, payload) => sendNativePushToUsers(ids, payload, undefined, {
+      env: {},
+      now: () => new Date(),
+      findDevices: async () => {
+        devicesLookedUp = true;
+        return [{ id: 'd1', platform: 'ios', token: 'a'.repeat(64) }];
+      },
+      deactivate: async () => {},
+      sendApns: async () => {
+        nativeSent += 1;
+        return { status: 200, body: '' };
+      },
+      sendFcm: async () => {
+        nativeSent += 1;
+        return { status: 200, body: '' };
+      },
+      logError: () => {},
+    }).then(() => undefined),
+    logError: () => {},
+  });
+  const { deps, settle, errors } = fakeWorld([recipient('u1')]);
+  const { notifyUsers } = createNotifier({ ...deps, sendPush });
+  await notifyUsers(['u1'], 'friend_request', () => ({ title: 'Hi', link: '/friends' }));
+  await settle();
+  assert.deepEqual(web, ['u1']);
+  assert.equal(devicesLookedUp, false);
+  assert.equal(nativeSent, 0);
+  assert.deepEqual(errors, []);
+});

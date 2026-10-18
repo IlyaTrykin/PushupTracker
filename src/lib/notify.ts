@@ -157,6 +157,26 @@ export function createNotifier(deps: NotifyDeps) {
   return { claimDispatch, notifyUsers };
 }
 
+export type PushChannels = {
+  web(userIds: string[], payload: PushPayload): Promise<unknown>;
+  native(userIds: string[], payload: PushPayload): Promise<unknown>;
+  logError(label: string, error: unknown): void;
+};
+
+/**
+ * The push channel of `notifyUsers`: web push (browsers, PWA) and native push (iOS / Android apps)
+ * in parallel with the same payload. Preferences are already applied; one transport failing does
+ * not stop the other. Without VAPID / APNs / FCM keys the respective transport sends nothing.
+ */
+export function createPushSender(channels: PushChannels): NotifyDeps['sendPush'] {
+  return async (userId, payload) => {
+    await Promise.all([
+      channels.web([userId], payload).catch((error) => channels.logError('NOTIFY WEB PUSH ERROR', error)),
+      channels.native([userId], payload).catch((error) => channels.logError('NOTIFY NATIVE PUSH ERROR', error)),
+    ]);
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Localized message builders (pure). Exercise names always come from the catalog.
 // ---------------------------------------------------------------------------
@@ -383,11 +403,20 @@ const prismaDeps: NotifyDeps = {
     const { prisma } = await import('@/lib/prisma');
     await prisma.notification.createMany({ data: rows });
   },
-  sendPush: async (userId, payload) => {
-    const { sendWebPushToUsers } = await import('@/lib/web-push');
-    // Preferences are already applied by `loadRecipients`.
-    await sendWebPushToUsers([userId], payload);
-  },
+  // Preferences are already applied by `loadRecipients`.
+  sendPush: createPushSender({
+    web: async (userIds, payload) => {
+      const { sendWebPushToUsers } = await import('@/lib/web-push');
+      await sendWebPushToUsers(userIds, payload);
+    },
+    native: async (userIds, payload) => {
+      const { sendNativePushToUsers } = await import('@/lib/native-push');
+      await sendNativePushToUsers(userIds, payload);
+    },
+    logError: (label, error) => {
+      console.error(`${label}:`, errorText(error));
+    },
+  }),
   sendEmail: async (to, message, locale) => {
     const { sendNotificationEmail } = await import('@/lib/notification-email');
     await sendNotificationEmail(to, message, locale);

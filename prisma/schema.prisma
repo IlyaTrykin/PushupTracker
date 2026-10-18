@@ -45,6 +45,7 @@ model User {
   comparisonHiddenBy       FriendComparisonHide[]   @relation("ComparisonHideFriend")
   workoutReactions         WorkoutReaction[]
   pushSubscriptions        PushSubscription[]
+  pushDevices              PushDevice[]
   ownedGroups              Group[]                  @relation("GroupOwner")
   groupMemberships         GroupMembership[]
   groupJoinRequests        GroupJoinRequest[]
@@ -368,6 +369,20 @@ model PushSubscription {
   p256dh    String
   auth      String
   userAgent String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, isActive])
+}
+
+/// Native push token of the iOS (APNs) / Android (FCM) app; one row per device token.
+model PushDevice {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform  String // 'ios' | 'android'
+  token     String   @unique
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

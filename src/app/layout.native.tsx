@@ -16,6 +16,7 @@ import { nativeAppMessages } from '@/i18n/messages/features/native-app';
 import { DEFAULT_LOCALE, LOCALE_STORAGE_KEY, getLocaleFromAcceptLanguage, isLocale, type Locale } from '@/i18n/locale';
 import { clearToken, currentToken, loadToken, writeCachedUser } from '@/lib/native-auth';
 import { installNativeFetch } from '@/lib/native-fetch';
+import { installPushActionHandler, restoreNativePush } from '@/lib/native-push-client';
 import { apiBase } from '@/lib/platform';
 
 const geistSans = Geist({
@@ -197,10 +198,34 @@ function NativeSystemHooks() {
 }
 
 /**
+ * Нативные пуши: нажатие на пуш открывает `toAppRoute(link)` через роутер (в том числе пуш,
+ * которым приложение запустили); у вошедшего пользователя, включившего пуши, токен
+ * устройства тихо обновляется на сервере при старте и входе.
+ */
+function NativePushHooks() {
+  const router = useRouter();
+  const routerRef = useRef(router);
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
+
+  useEffect(() => installPushActionHandler((path) => routerRef.current.push(path)), []);
+
+  useEffect(() => {
+    if (userId) void restoreNativePush(userId);
+  }, [userId]);
+
+  return null;
+}
+
+/**
  * Корневой layout приложения (статический экспорт, клиентский). Пользователь и локаль
  * известны только на устройстве, поэтому при сборке рендерится пустая оболочка, а дерево —
  * после монтирования и загрузки токена: без расхождения гидрации. Service worker и
- * PWA-скрипты здесь не подключаются. Нативные пуши — таск 09.
+ * PWA-скрипты здесь не подключаются. Нативные пуши — `NativePushHooks`.
  */
 export default function NativeRootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const mounted = useSyncExternalStore(subscribeNoop, () => true, () => false);
@@ -219,6 +244,7 @@ export default function NativeRootLayout({ children }: Readonly<{ children: Reac
           <LocaleProvider initialLocale={locale}>
             <AuthProvider>
               <NativeSystemHooks />
+              <NativePushHooks />
               <TapSound />
               <AppNav />
               <ThirdOfSeptemberEgg />

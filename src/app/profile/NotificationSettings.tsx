@@ -5,6 +5,15 @@ import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { base64ToUint8Array, setPushWanted } from '@/components/RegisterSW';
 import { TELEGRAM_LINK_EVENT } from '@/components/TelegramConnect';
+import { nativeAppMessages } from '@/i18n/messages/features/native-app';
+import {
+  isNativePushAvailable,
+  isNativePushWanted,
+  nativePushPermission,
+  registerNativePush,
+  unregisterNativePush,
+} from '@/lib/native-push-client';
+import { isNativeApp } from '@/lib/platform';
 
 type PushKeyResponse = { enabled: boolean; publicKey?: string; error?: string };
 type Channel = 'pushEnabled' | 'emailEnabled' | 'telegramEnabled';
@@ -29,7 +38,96 @@ function readPreferences(data: PreferencesResponse): { rows: PreferenceRow[]; te
 }
 
 /**
- * Notification settings in the profile: this device's push subscription and, per event,
+ * Native app: this phone's APNs / FCM push instead of web push. Until the server has the keys
+ * (before publication) — only the explanation, no switch.
+ */
+function NativePushControls({ userId }: { userId: string | null }) {
+  const { locale, messages } = useI18n();
+  const text = nativeAppMessages[locale === 'en' ? 'en' : 'ru'];
+  const [state, setState] = useState<'loading' | 'unavailable' | 'ready'>('loading');
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const available = await isNativePushAvailable();
+      if (cancelled) return;
+      if (!available) {
+        setState('unavailable');
+        return;
+      }
+      const permission = await nativePushPermission();
+      if (cancelled) return;
+      setEnabled(isNativePushWanted(userId) && permission === 'granted');
+      setState('ready');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  async function enable() {
+    setMessage(null);
+    setBusy(true);
+    try {
+      const result = await registerNativePush(userId);
+      if (result === 'registered') {
+        setEnabled(true);
+        setMessage(messages.push.enabled);
+      } else if (result === 'denied') {
+        setMessage(text.pushDenied);
+      } else {
+        setState('unavailable');
+      }
+    } catch {
+      setMessage(messages.push.enableError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable() {
+    setMessage(null);
+    setBusy(true);
+    try {
+      await unregisterNativePush(userId);
+      setEnabled(false);
+      setMessage(messages.push.disabled);
+    } catch {
+      setMessage(messages.push.disableError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (state === 'loading') return null;
+  if (state === 'unavailable') return <div style={hint}>{text.pushUnavailable}</div>;
+  return (
+    <>
+      <div style={hint}>
+        {messages.push.statusLabel}: {enabled ? messages.push.statusEnabled : messages.push.statusDisabled}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {!enabled ? (
+          <button type="button" disabled={busy} onClick={enable} style={enableButton}>
+            {messages.push.enableButton}
+          </button>
+        ) : (
+          <button type="button" disabled={busy} onClick={disable} style={disableButton}>
+            {messages.push.disableButton}
+          </button>
+        )}
+      </div>
+      {message ? <div style={{ fontSize: 13 }}>{message}</div> : null}
+    </>
+  );
+}
+
+/**
+ * Notification settings in the profile: this device's push subscription (in the app — native
+ * push, `NativePushControls`) and, per event,
  * push / e-mail / Telegram switches. The Telegram column appears only when the bot is on
  * (`telegramAvailable` from `/api/push/preferences`) and this account has a linked chat
  * (`/api/profile/telegram`, kept in sync with the Telegram section via `TELEGRAM_LINK_EVENT`).
@@ -50,7 +148,7 @@ export default function NotificationSettings() {
   const [telegramLinked, setTelegramLinked] = useState(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || isNativeApp()) return;
     const hasRequiredApis = 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
     const secureContextRequired = !window.isSecureContext
       && window.location.hostname !== 'localhost'
@@ -224,7 +322,9 @@ export default function NotificationSettings() {
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
-      {supported ? (
+      {isNativeApp() ? (
+        <NativePushControls userId={user?.id ?? null} />
+      ) : supported ? (
         <>
           <div style={hint}>
             {messages.push.statusLabel}: {enabled ? messages.push.statusEnabled : messages.push.statusDisabled}

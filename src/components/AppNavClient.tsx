@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { clearClientDataCaches } from '@/lib/client-cache';
 import { clearToken } from '@/lib/native-auth';
+import { currentPushToken } from '@/lib/native-push-client';
 import { cancelAllBackground } from '@/lib/offline/background-upload';
 import { useOutboxLogoutGuard } from '@/lib/offline/logout-guard';
 import { useOutboxSync } from '@/lib/offline/use-outbox';
@@ -195,7 +196,13 @@ export default function AppNavClient() {
     if (!isNativeApp()) await unsubscribeThisDeviceFromPush();
     try {
       // В приложении запрос идёт с Bearer и закрывает только эту сессию; без связи не ждём.
-      const request = fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      // Токен пушей этого телефона: сервер снимает устройство, чтобы уведомления вышедшего не приходили.
+      const pushToken = isNativeApp() ? currentPushToken() : null;
+      const request = fetch('/api/logout', {
+        method: 'POST',
+        credentials: 'include',
+        ...(pushToken ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pushToken }) } : {}),
+      });
       await (isNativeApp() ? withTimeout(request, 5000) : request);
     } catch {}
     // Приложение: токен стирается с устройства даже без связи.
