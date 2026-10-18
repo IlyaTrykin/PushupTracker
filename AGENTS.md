@@ -17,7 +17,7 @@ NATIVE_API_BASE=http://localhost:3100 npm run cap:sync   # сборка инте
 NATIVE_API_BASE=http://10.0.2.2:3100 npm run cap:sync   # то же для Android-эмулятора
 xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/pushup-dd build
 xcodebuild test -project ios/App/App.xcodeproj -scheme RepCounterTests -destination 'platform=iOS Simulator,name=iPhone 17'   # тесты счётчика повторений (Swift)
-(cd android && JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ANDROID_HOME=/opt/homebrew/share/android-commandlinetools ./gradlew assembleDebug test)   # APK + JUnit
+(cd android && NATIVE_API_BASE=http://10.0.2.2:3100 JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ANDROID_HOME=/opt/homebrew/share/android-commandlinetools ./gradlew assembleDebug test)   # APK + JUnit; NATIVE_API_BASE тот же, что в cap:sync — из него хост App Links
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk && adb shell am start -n app.pushuptracker.mobile/.MainActivity   # monkey приложение не открывает
 $ANDROID_HOME/emulator/emulator -avd pushup-api36 -no-window -no-audio &   # ANDROID_HOME как выше
 npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик планировщика, только против локальной БД
@@ -55,6 +55,7 @@ npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик
 - `npm run build:native` откладывает сайтовый `.next` в `tmp/next-web-stash`; не запускать параллельно с `npm run build`; после прерывания вернуть `tmp/next-web-stash` в `.next`
 - Новый Swift-файл плагина — добавить в `ios/App/App.xcodeproj/project.pbxproj` вручную, иначе не соберётся
 - Android: Health Connect → minSdk приложения 26 (`android/app/build.gradle`, общий в `android/variables.gradle` — 24); `register()` пушей без `google-services.json` роняет приложение — `native-push-client.ts` проверяет, что сборка с Firebase-конфигом
+- `NATIVE_API_BASE` нужен и `cap:sync`, и `gradlew`: без него в gradle хост App Links = `app-links.invalid` (ссылки приложение не открывают)
 - Адрес сервера — только env `NATIVE_API_BASE` при сборке, в файлы не писать (репозиторий публичный); cleartext (Android) и ATS-исключение (iOS) — только в debug
 - `loggingBehavior: 'none'` в `capacitor.config.ts` не убирать: без него мост пишет токен в консоль WebView/logcat
 - Кросс-доменные запросы приложения: `Retry-After` виден JS только через `Access-Control-Expose-Headers` (`src/lib/cors.ts`); Bearer без cookie обходит Origin-проверку (`src/lib/request-guard.ts`)
