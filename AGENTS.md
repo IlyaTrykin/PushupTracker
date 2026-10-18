@@ -56,7 +56,7 @@ npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик
 - Новый Swift-файл плагина — добавить в `ios/App/App.xcodeproj/project.pbxproj` вручную, иначе не соберётся
 - Android: Health Connect → minSdk приложения 26 (`android/app/build.gradle`, общий в `android/variables.gradle` — 24); `register()` пушей без `google-services.json` роняет приложение — `native-push-client.ts` проверяет, что сборка с Firebase-конфигом
 - Адрес сервера — только env `NATIVE_API_BASE` при сборке, в файлы не писать (репозиторий публичный); cleartext (Android) и ATS-исключение (iOS) — только в debug
-- `loggingBehavior: 'none'` в `capacitor.config.ts` не включать: в логи попадёт токен
+- `loggingBehavior: 'none'` в `capacitor.config.ts` не убирать: без него мост пишет токен в консоль WebView/logcat
 - Кросс-доменные запросы приложения: `Retry-After` виден JS только через `Access-Control-Expose-Headers` (`src/lib/cors.ts`); Bearer без cookie обходит Origin-проверку (`src/lib/request-guard.ts`)
 - Для приложения `/api/login` с `X-Client: native` отдаёт токен в теле (сессия 180 дней), cookie не ставит
 - `npx tsx scripts/seed-demo.ts` падает FK-ошибкой, если demo уже есть — вход demo / demo123 при этом работает
@@ -78,6 +78,8 @@ npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик
 - `NATIVE_APP_ORIGINS` — разрешённые CORS-origin приложений; пусто = `capacitor://localhost` и `https://localhost`
 - `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`, `APNS_BUNDLE_ID`, `APNS_PRODUCTION` — пуши iOS через APNs (`APNS_PRODUCTION=1` — боевой APNs); пусто — канал выключен
 - `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, `FCM_PRIVATE_KEY` — пуши Android через FCM HTTP v1; пусто — канал выключен
+- `ANDROID_APP_PACKAGE`, `ANDROID_CERT_SHA256` — `/.well-known/assetlinks.json` (App Links); `APPLE_TEAM_ID`, `APPLE_BUNDLE_ID` — `/.well-known/apple-app-site-association`; пусто — 404
+- `LEGAL_OPERATOR_NAME`, `LEGAL_CONTACT_EMAIL` — оператор и контакт на `/privacy`, `/terms`, `/support`, `/account-deletion`; значения только в env сервера (репозиторий публичный), пусто — видимая заглушка
 - `SCHEDULER_ENABLED` — `1` включает фоновый планировщик (только прод)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_API_BASE` — бот (без токена Telegram скрыт); вебхук ставит `scripts/telegram-set-webhook.ts`
 
