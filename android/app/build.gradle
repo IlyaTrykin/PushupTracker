@@ -11,6 +11,14 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // App Links: схема и хост intent-filter — из того же env, что и сборка интерфейса (NATIVE_API_BASE).
+        // Не задан — заглушка .invalid, ссылки не перехватываются.
+        def apiMatch = (System.getenv('NATIVE_API_BASE') ?: '').trim() =~ /^(https?):\/\/([^\/:?#]+)/
+        def hasApi = apiMatch.find()
+        manifestPlaceholders = [
+            deepLinkScheme: hasApi ? apiMatch.group(1) : 'https',
+            deepLinkHost  : hasApi ? apiMatch.group(2) : 'app-links.invalid',
+        ]
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

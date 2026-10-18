@@ -20,6 +20,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- App Links: приглашение, сброс пароля и группа по коду открывают приложение. Хост — из env
+                 сборки (NATIVE_API_BASE, см. build.gradle), в git его нет. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${deepLinkScheme}" android:host="${deepLinkHost}" android:pathPrefix="/invite/" />
+                <data android:path="/reset-password" />
+                <data android:path="/groups" />
+            </intent-filter>
             <!-- Health Connect (Android 13 и ниже): «зачем приложению доступ» — открывает приложение. -->
             <intent-filter>
                 <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />

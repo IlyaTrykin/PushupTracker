@@ -17,6 +17,8 @@ import { DEFAULT_LOCALE, LOCALE_STORAGE_KEY, getLocaleFromAcceptLanguage, isLoca
 import { clearToken, currentToken, loadToken, writeCachedUser } from '@/lib/native-auth';
 import { installNativeFetch } from '@/lib/native-fetch';
 import { installPushActionHandler, restoreNativePush } from '@/lib/native-push-client';
+import { captureAttribution } from '@/lib/attribution-client';
+import { hostOf, resolveDeepLink } from '@/lib/deep-links';
 import { apiBase } from '@/lib/platform';
 
 const geistSans = Geist({
@@ -222,6 +224,49 @@ function NativePushHooks() {
 }
 
 /**
+ * Ссылки сайта (приглашение, сброс пароля, группа по коду) открывают приложение на нужном экране:
+ * `appUrlOpen` во время работы и `getLaunchUrl` для запуска ссылкой. Чужой хост и неизвестные пути
+ * игнорируются (`resolveDeepLink`); одну и ту же ссылку из двух источников обрабатываем один раз.
+ */
+function NativeDeepLinkHooks() {
+  const router = useRouter();
+  const routerRef = useRef(router);
+
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
+
+  useEffect(() => {
+    const ownHost = hostOf(apiBase());
+    let lastUrl = '';
+    let lastAt = 0;
+    const open = (url: string) => {
+      const now = Date.now();
+      if (url === lastUrl && now - lastAt < 3000) return;
+      const route = resolveDeepLink(url, ownHost);
+      if (!route) return;
+      lastUrl = url;
+      lastAt = now;
+      // Код приглашения запоминаем сразу: экран регистрации мог быть уже открыт и не перечитает адрес.
+      const invite = /^\/register\?invite=([^&]+)/.exec(route);
+      if (invite) captureAttribution(decodeURIComponent(invite[1]));
+      routerRef.current.push(route);
+    };
+    const handle = App.addListener('appUrlOpen', ({ url }) => open(url));
+    void App.getLaunchUrl()
+      .then((launch) => {
+        if (launch?.url) open(launch.url);
+      })
+      .catch(() => {});
+    return () => {
+      void handle.then((h) => h.remove());
+    };
+  }, []);
+
+  return null;
+}
+
+/**
  * Корневой layout приложения (статический экспорт, клиентский). Пользователь и локаль
  * известны только на устройстве, поэтому при сборке рендерится пустая оболочка, а дерево —
  * после монтирования и загрузки токена: без расхождения гидрации. Service worker и
@@ -245,6 +290,7 @@ export default function NativeRootLayout({ children }: Readonly<{ children: Reac
             <AuthProvider>
               <NativeSystemHooks />
               <NativePushHooks />
+              <NativeDeepLinkHooks />
               <TapSound />
               <AppNav />
               <ThirdOfSeptemberEgg />
