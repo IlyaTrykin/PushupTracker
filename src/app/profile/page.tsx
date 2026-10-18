@@ -9,10 +9,11 @@ import TelegramConnect from '@/components/TelegramConnect';
 import { useI18n } from '@/i18n/provider';
 import { useRouter } from 'next/navigation';
 import { clearToken } from '@/lib/native-auth';
-import { hardNavigate, isNativeApp, mediaUrl } from '@/lib/platform';
+import { hardNavigate, isNativeApp, mediaUrl, openExternal, publicLink } from '@/lib/platform';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { DAILY_GOAL_MAX_POINTS, DAILY_GOAL_MIN_POINTS, DEFAULT_REMINDER_TIME } from '@/lib/daily-goal';
 import { dailyGoalMessages } from '@/i18n/messages/features/daily-goal';
+import { privacyMessages } from '@/i18n/messages/features/privacy';
 
 type Profile = {
   id: string;
@@ -98,6 +99,7 @@ export default function ProfilePage() {
   const router = useRouter();
   const { locale, messages } = useI18n();
   const goalText = dailyGoalMessages[locale];
+  const privacyText = privacyMessages[locale];
   const cacheKey = useMemo(() => getUserScopedCacheKey('profile', user?.id, user?.username), [user?.id, user?.username]);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -586,6 +588,22 @@ export default function ProfilePage() {
           </div>
         ) : null}
         <NotificationSettings />
+      </section>
+
+      <section style={panelCard}>
+        <div style={sectionTitle}>{privacyText.profileLink}</div>
+        <div style={fieldHint}>{privacyText.profileHint}</div>
+        <div>
+          {isNativeApp() ? (
+            <button type="button" onClick={() => openExternal(publicLink('/privacy'))} style={buttonSecondary}>
+              {privacyText.profileLink}
+            </button>
+          ) : (
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ ...buttonSecondary, display: 'inline-block', textDecoration: 'none' }}>
+              {privacyText.profileLink}
+            </a>
+          )}
+        </div>
       </section>
 
       <section style={dangerCard}>
