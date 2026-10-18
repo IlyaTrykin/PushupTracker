@@ -89,6 +89,13 @@ rsync -az --info=stats1 \
   --exclude '*.dump' \
   --exclude '*.tsbuildinfo' \
   --exclude '.DS_Store' \
+  --exclude 'android' \
+  --exclude 'ios' \
+  --exclude 'out' \
+  --exclude '.next-native' \
+  --exclude '/downloads' \
+  --exclude '*.apk' \
+  --exclude '*.aab' \
   ./ "${SERVER}:${REMOTE_DIR}/"
 
 echo "[2/4] Build web image on server (GIT_SHA=${GIT_SHA}, BUILD_TIME=${BUILD_TIME})"

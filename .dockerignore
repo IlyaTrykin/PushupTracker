@@ -27,6 +27,15 @@ __MACOSX
 # Misc
 *.log
 
+# Native apps and their builds — the web image does not need them
+android
+ios
+out
+.next-native
+downloads
+*.apk
+*.aab
+
 # VCS / CI / local-only material (never needed in the image, may hold infra notes)
 .git
 .github

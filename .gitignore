@@ -35,6 +35,11 @@ backups/
 *.tgz
 !prisma/migrations/**/migration.sql
 
+# files for /downloads (APK) and native build outputs
+/downloads/
+*.apk
+*.aab
+
 # local import data
 import/*.xlsx
 .autopilot/serve.*

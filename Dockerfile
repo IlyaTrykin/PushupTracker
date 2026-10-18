@@ -49,8 +49,8 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=node:node /app/.next ./.next
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \
-  && mkdir -p /app/public/uploads \
-  && chown node:node /app/public/uploads
+  && mkdir -p /app/public/uploads /app/downloads \
+  && chown node:node /app/public/uploads /app/downloads
 
 EXPOSE 3000
 # Entrypoint стартует от root только чтобы отдать том uploads пользователю node,

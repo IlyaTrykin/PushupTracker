@@ -6,6 +6,7 @@
  * - same-origin app navigations for faster repeat opens
  * We never cache:
  * - /api/*
+ * - /downloads/* (APK по прямой ссылке — не класть сотню мегабайт в кэш)
  * - /_next/image and other dynamic internals
  *
  * Navigations are network-first (cache is only an offline fallback), so a deploy is
@@ -79,6 +80,7 @@ function shouldBypass(url) {
   return (
     (url.pathname.startsWith('/_next/') && !url.pathname.startsWith('/_next/static/')) ||
     url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/downloads/') ||
     url.pathname === '/sw.js'
   );
 }

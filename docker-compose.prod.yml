@@ -52,6 +52,8 @@ services:
         condition: service_healthy
     volumes:
       - pushup_uploads_data:/app/public/uploads
+      # Файлы по прямой ссылке /downloads/<имя> (APK для тестеров); не в бэкапе — пересобираются.
+      - pushup_downloads_data:/app/downloads
     networks: [internal, proxy]
     healthcheck:
       test:
@@ -71,3 +73,4 @@ networks:
 volumes:
   pushup_db_data:
   pushup_uploads_data:
+  pushup_downloads_data:
