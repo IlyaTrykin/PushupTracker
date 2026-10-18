@@ -9,6 +9,7 @@ import {
 } from './workout-create';
 import type { CreatedWorkout } from './workout-hooks';
 import { programSetWorkoutInput } from './program-plan';
+import { importHealthWorkouts } from './health-import';
 
 const day = (d: string) => new Date(`${d}T00:00:00.000Z`);
 
@@ -187,4 +188,53 @@ test('a program set is recorded through the common path: linked to its session, 
   assert.deepEqual(hooked, [first.workout.id]);
   assert.deepEqual(notified, [['friend']]);
   assert.equal(repeat.replayed, true);
+});
+
+test('health import: one POST /api/health/import sends followers and challenge rivals no notification per imported run', async () => {
+  const notifiedEvents: string[] = [];
+  let rankCalls = 0;
+  const { deps, rows } = fakeDeps({
+    findActiveChallenges: async () => [{ challengeId: 'c1', challenge: { name: 'Run club' } }],
+    // Every new run overtakes the rival: ranks flip on every call.
+    challengeRanks: async () => {
+      rankCalls += 1;
+      return rankCalls % 2 ? new Map([['rival', 1], ['u1', 2]]) : new Map([['u1', 1], ['rival', 2]]);
+    },
+    notifyUsers: async (_userIds, event) => {
+      notifiedEvents.push(event);
+    },
+  });
+  const create = createWorkoutCreator(deps);
+  const items = [1, 2, 3].map((n) => ({
+    clientRequestId: `hk:${n}`,
+    exerciseType: 'run' as const,
+    reps: 5000 + n,
+    durationSeconds: 1800,
+    date: '2026-10-0' + n,
+    time: `2026-10-0${n}T07:00:00.000Z`,
+  }));
+
+  const { results } = await importHealthWorkouts(ann, items, { createWorkout: (user, input, options) => create(user, input, { ...options, now }) });
+
+  assert.deepEqual(results.map((r) => r.status), ['created', 'created', 'created']);
+  assert.equal(rows.length, 3);
+  assert.equal(notifiedEvents.filter((e) => e === 'friend_workout').length, 0);
+  assert.equal(notifiedEvents.filter((e) => e === 'challenge_rank_change').length, 0);
+});
+
+test('a workout from the app or the site still tells followers and challenge rivals', async () => {
+  const notifiedEvents: string[] = [];
+  let rankCalls = 0;
+  const { deps } = fakeDeps({
+    findActiveChallenges: async () => [{ challengeId: 'c1', challenge: { name: 'Run club' } }],
+    challengeRanks: async () => {
+      rankCalls += 1;
+      return rankCalls % 2 ? new Map([['rival', 1], ['u1', 2]]) : new Map([['u1', 1], ['rival', 2]]);
+    },
+    notifyUsers: async (_userIds, event) => {
+      notifiedEvents.push(event);
+    },
+  });
+  await createWorkoutCreator(deps)(ann, { exerciseType: 'run', reps: 5000, durationSeconds: 1800 }, { source: 'web', now });
+  assert.deepEqual(notifiedEvents, ['friend_workout', 'challenge_rank_change']);
 });

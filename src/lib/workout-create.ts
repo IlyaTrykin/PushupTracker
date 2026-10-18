@@ -43,6 +43,13 @@ export const WORKOUT_SELECT = {
 
 export type WorkoutSource = 'web' | 'telegram' | 'program' | 'health';
 
+/**
+ * Sources whose workouts do not notify followers (`friend_workout`) or challenge rivals
+ * (`challenge_rank_change`): an import from Health brings up to 50 past sessions at once, and a push
+ * per session (also about old ones) would flood every follower.
+ */
+const SILENT_SOURCES: ReadonlySet<WorkoutSource> = new Set<WorkoutSource>(['health']);
+
 /** The owner of the new workout. */
 export type WorkoutCreateUser = { id: string; username: string; timeZone?: string | null };
 
@@ -285,7 +292,8 @@ export function createWorkoutCreator(deps: WorkoutCreateDeps): CreateWorkout {
     }
 
     const date = dayKeyToDbDate(day);
-    const activeChallenges = await deps.findActiveChallenges(user.id, exerciseType, date);
+    const notify = !SILENT_SOURCES.has(options.source);
+    const activeChallenges = notify ? await deps.findActiveChallenges(user.id, exerciseType, date) : [];
 
     const beforeRanks = new Map<string, Map<string, number>>();
     for (const c of activeChallenges) {
@@ -319,10 +327,12 @@ export function createWorkoutCreator(deps: WorkoutCreateDeps): CreateWorkout {
 
     const reward = await deps.findReward(reps, exerciseType, loadKg);
 
-    try {
-      await notifyAboutWorkout(user, workout, activeChallenges, beforeRanks);
-    } catch (e) {
-      console.error('WORKOUT NOTIFICATIONS ERROR:', e);
+    if (notify) {
+      try {
+        await notifyAboutWorkout(user, workout, activeChallenges, beforeRanks);
+      } catch (e) {
+        console.error('WORKOUT NOTIFICATIONS ERROR:', e);
+      }
     }
 
     let hooks: WorkoutHookResult = { records: [], achievements: [] };

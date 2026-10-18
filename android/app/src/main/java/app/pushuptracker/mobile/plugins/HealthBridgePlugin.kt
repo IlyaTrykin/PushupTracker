@@ -220,7 +220,7 @@ class HealthBridgePlugin : Plugin() {
                         ),
                     )
                 }
-                deleteOwn(client, externalId)
+                deleteOwn(client, externalId, granted.contains(WRITE_DISTANCE))
                 client.insertRecords(records)
                 true
             }
@@ -238,7 +238,10 @@ class HealthBridgePlugin : Plugin() {
             call.reject("externalId is required", "invalid_request")
             return
         }
-        launch(call, { deleteOwn(client(), externalId) }) { deleted ->
+        launch(call, {
+            val client = client()
+            deleteOwn(client, externalId, client.permissionController.getGrantedPermissions().contains(WRITE_DISTANCE))
+        }) { deleted ->
             call.resolve(JSObject().put("deleted", deleted))
         }
     }
@@ -369,10 +372,13 @@ class HealthBridgePlugin : Plugin() {
     /**
      * Deletes the session and its distance by `clientRecordId` (unique per app in Health Connect,
      * so there is never more than one of each). `true` — nothing of this workout is left.
+     * Without the distance write permission (the user granted workouts only) the distance is not
+     * touched: deleting it would throw SecurityException and fail the whole save (a distance written
+     * before the permission was taken back stays — Health Connect does not let the app change it).
      */
-    private suspend fun deleteOwn(client: HealthConnectClient, externalId: String): Boolean {
+    private suspend fun deleteOwn(client: HealthConnectClient, externalId: String, canWriteDistance: Boolean): Boolean {
         deleteByClientIds(client, ExerciseSessionRecord::class, listOf(externalId))
-        deleteByClientIds(client, DistanceRecord::class, listOf(externalId + DISTANCE_SUFFIX))
+        if (canWriteDistance) deleteByClientIds(client, DistanceRecord::class, listOf(externalId + DISTANCE_SUFFIX))
         return true
     }
 

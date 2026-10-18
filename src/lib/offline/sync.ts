@@ -10,7 +10,7 @@
 import {
   applyOutcome,
   classifyResponse,
-  markSending,
+  holdsLease,
   needsFollowUpEdit,
   nextSendable,
   toRequestBody,
@@ -126,20 +126,21 @@ async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
 
   if (readPause(userId) > now().getTime()) return { ...result, stopped: 'rate-limited' };
 
+  const pick = { ignoreBackoff: deps.ignoreBackoff };
   for (let i = 0; i < MAX_ITEMS_PER_FLUSH; i += 1) {
-    const items = await outboxStore.list(userId);
-    const item = nextSendable(items, now(), { ignoreBackoff: deps.ignoreBackoff });
-    if (!item) break;
     if (isOffline()) {
-      result.stopped = 'offline';
+      if (nextSendable(await outboxStore.list(userId), now(), pick)) result.stopped = 'offline';
       break;
     }
+    // Picked and marked `sending` in one transaction: an edit or delete either lands before (and is
+    // what gets sent) or sees the item in flight and is refused.
+    const item = await outboxStore.claimNext(userId, now(), pick);
+    if (!item) break;
 
-    await outboxStore.put(markSending(item, now()));
     const outcome = await send(item.payload);
     const applied = applyOutcome(item, outcome, now());
-    if (applied.item) await outboxStore.put(applied.item);
-    else await outboxStore.remove(item.id);
+    // Written only while the item is still under this lease (see `holdsLease`).
+    await outboxStore.change(item.id, (current) => ({ next: holdsLease(current, item) ? applied.item : undefined, result: null }));
     if (applied.pauseUntil) writePause(userId, applied.pauseUntil);
     emit<OutboxItemSentDetail>(OUTBOX_ITEM_SENT_EVENT, { userId, id: item.id, outcome, item: applied.item });
 

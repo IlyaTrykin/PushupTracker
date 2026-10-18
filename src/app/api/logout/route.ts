@@ -18,19 +18,20 @@ async function readPushToken(request: Request): Promise<string> {
 /**
  * Closes the session of this request only: the `Authorization: Bearer` one (native app) when present,
  * otherwise the cookie one — other sessions of the user stay alive (`getSessionToken` picks the token).
- * With `{ pushToken }` in the body the app's native push device of this user is removed too, so the
- * phone stops getting the signed-out user's notifications.
+ * With `{ pushToken }` in the body the phone stops getting push: the device of the signed-in user is
+ * removed; a device the session cannot vouch for (the session already expired or was revoked, or the
+ * token belongs to another account) is switched off (`isActive=false`) — never deleted, and switched
+ * back on by its owner's next registration. Knowing the long secret token is required either way.
  */
 export async function POST(request: Request) {
   try {
     const pushToken = await readPushToken(request);
     if (pushToken) {
       const user = await getAuthUser(request).catch(() => null);
-      if (user) {
-        // APNs tokens are stored lower-cased; FCM tokens as they are.
-        const tokens = Array.from(new Set([pushToken, pushToken.toLowerCase()]));
-        await prisma.pushDevice.deleteMany({ where: { userId: user.id, token: { in: tokens } } }).catch(() => {});
-      }
+      // APNs tokens are stored lower-cased; FCM tokens as they are.
+      const tokens = Array.from(new Set([pushToken, pushToken.toLowerCase()]));
+      if (user) await prisma.pushDevice.deleteMany({ where: { userId: user.id, token: { in: tokens } } }).catch(() => {});
+      await prisma.pushDevice.updateMany({ where: { token: { in: tokens }, isActive: true }, data: { isActive: false } }).catch(() => {});
     }
     await invalidateSession(request);
   } finally {

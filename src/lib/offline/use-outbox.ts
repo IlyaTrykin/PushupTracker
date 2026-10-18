@@ -15,8 +15,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { isNativeApp } from '@/lib/platform';
-import { cancelBackground, dropBackground, mirrorToBackground, reconcileBackground } from './background-upload';
-import { createOutboxItem, editOutboxItem, isInFlight, type NewOutboxPayload, type OutboxItem, type OutboxPayloadPatch } from './outbox-core';
+import { dropBackground, mirrorToBackground, reconcileBackground } from './background-upload';
+import { removeQueuedItem, updateQueuedItem } from './outbox-actions';
+import { createOutboxItem, type NewOutboxPayload, type OutboxItem, type OutboxPayloadPatch } from './outbox-core';
 import { OUTBOX_CHANGED_EVENT, outboxStore } from './outbox-store';
 import { OUTBOX_FLUSHED_EVENT, OUTBOX_ITEM_SENT_EVENT, flushOutbox, type FlushResult, type OutboxItemSentDetail } from './sync';
 
@@ -24,28 +25,7 @@ const RETRY_TIMER_MS = 60_000;
 const NO_USER_RESULT: FlushResult = { sent: 0, rejected: 0 };
 const NO_ITEMS: OutboxItem[] = [];
 
-/** The item is being sent right now and cannot be changed (it may already be on the server). */
-export class OutboxBusyError extends Error {
-  constructor() {
-    super('outbox item is being sent');
-    this.name = 'OutboxBusyError';
-  }
-}
-
-/** The native background sender already took the item to the server: change it after the sync. */
-export class OutboxAlreadySentError extends OutboxBusyError {
-  constructor() {
-    super();
-    this.message = 'outbox item was already sent in the background';
-    this.name = 'OutboxAlreadySentError';
-  }
-}
-
-/** The refusal; the JS sender then fetches the server's record (replay), so the entry soon becomes editable there. */
-function alreadySent(userId: string): OutboxAlreadySentError {
-  void flushOutbox(userId, { ignoreBackoff: true });
-  return new OutboxAlreadySentError();
-}
+export { OutboxAlreadySentError, OutboxBusyError } from './outbox-actions';
 
 export type UseOutbox = {
   items: OutboxItem[];
@@ -193,38 +173,21 @@ export function useOutbox(): UseOutbox {
     [userId],
   );
 
-  const findItem = useCallback(
-    async (id: string) => {
-      if (!userId) return null;
-      return (await outboxStore.list(userId)).find((item) => item.id === id) ?? null;
+  const update = useCallback(
+    async (id: string, patch: OutboxPayloadPatch) => {
+      if (!userId) throw new Error('outbox: no signed-in user');
+      const edited = await updateQueuedItem(userId, id, patch);
+      await mirrorToBackground(edited);
     },
     [userId],
   );
 
-  const update = useCallback(
-    async (id: string, patch: OutboxPayloadPatch) => {
-      const current = await findItem(id);
-      if (!current) throw new OutboxBusyError(); // already sent and removed
-      if (isInFlight(current, new Date())) throw new OutboxBusyError();
-      // The background copy carries the old values: take it back first, or refuse.
-      if ((await cancelBackground(id)) === 'sent') throw alreadySent(current.userId);
-      const edited = editOutboxItem(current, patch, new Date());
-      if (!edited) throw new OutboxBusyError();
-      await outboxStore.put(edited);
-      await mirrorToBackground(edited);
-    },
-    [findItem],
-  );
-
   const remove = useCallback(
     async (id: string) => {
-      const current = await findItem(id);
-      if (!current) return;
-      if (isInFlight(current, new Date())) throw new OutboxBusyError();
-      if ((await cancelBackground(id)) === 'sent') throw alreadySent(current.userId);
-      await outboxStore.remove(id);
+      if (!userId) return;
+      await removeQueuedItem(userId, id);
     },
-    [findItem],
+    [userId],
   );
 
   const flush = useCallback(

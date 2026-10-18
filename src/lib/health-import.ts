@@ -3,6 +3,7 @@
  * The app reads the sessions and sends the ones the user ticked; every item is created through the
  * common `createWorkoutForUser` path (points, records, achievements, daily limit charged to the
  * user as in ADR 0011). `clientRequestId` (`hk:` / `hc:` + the Health id) makes a repeat a duplicate.
+ * Source `'health'` is silent: followers and challenge rivals get no push per imported session.
  */
 
 import { isImportedFromHealth } from './health/reconcile';

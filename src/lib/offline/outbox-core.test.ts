@@ -15,6 +15,7 @@ import {
   type OutboxItem,
   type OutboxPayload,
 } from './outbox-core';
+import { workoutFingerprint } from '../health/reconcile';
 
 const NOW = new Date('2026-10-17T10:00:00.000Z');
 
@@ -247,4 +248,32 @@ test('a chosen day and time are read on the user wall clock', () => {
     resolveEntryMoment({ date: '2026-10-16', time: '23:59', dateTouched: true, timeTouched: false }, now, 'Europe/Moscow'),
     { date: '2026-10-16', time: '2026-10-15T21:30:00.000Z' },
   );
+});
+
+test('RepCounter duration is not queued for rep exercises (the server keeps duration only for distance)', () => {
+  const counted = createOutboxItem('u1', payload({ exerciseType: 'pushups', reps: 20, durationSeconds: 40 }), NOW);
+  assert.equal(counted.payload.durationSeconds, undefined);
+  assert.equal('durationSeconds' in toRequestBody(counted.payload), false);
+
+  const run = createOutboxItem('u1', payload({ exerciseType: 'run', reps: 5000, durationSeconds: 1500 }), NOW);
+  assert.equal(run.payload.durationSeconds, 1500);
+
+  const edited = editOutboxItem(counted, { reps: 25, durationSeconds: 50 }, NOW);
+  assert.equal(edited?.payload.durationSeconds, undefined);
+});
+
+test('the server answer without duration for a counted rep workout needs no follow-up edit', () => {
+  // An item queued by an older build still carries the counted duration.
+  const old = { ...createOutboxItem('u1', payload({ exerciseType: 'squats', reps: 20 }), NOW).payload, durationSeconds: 40 };
+  const server = { id: 'w1', exerciseType: 'squats', reps: 20, date: old.date, time: old.time, loadKg: null, durationSeconds: null };
+  assert.equal(needsFollowUpEdit(old, server), false);
+  // Distance still compares the duration.
+  const run = createOutboxItem('u1', payload({ exerciseType: 'run', reps: 5000, durationSeconds: 1500 }), NOW).payload;
+  assert.equal(needsFollowUpEdit(run, { ...server, exerciseType: 'run', reps: 5000, durationSeconds: 1200 }), true);
+});
+
+test('Health fingerprint of a counted workout written at once equals the one of the server record (no rewrite on reconcile)', () => {
+  const queued = createOutboxItem('u1', payload({ exerciseType: 'pullups', reps: 8, durationSeconds: 30 }), NOW).payload;
+  const server = { id: 'w1', clientRequestId: queued.clientRequestId, exerciseType: 'pullups', reps: 8, durationSeconds: null, time: queued.time };
+  assert.equal(workoutFingerprint(queued), workoutFingerprint(server));
 });

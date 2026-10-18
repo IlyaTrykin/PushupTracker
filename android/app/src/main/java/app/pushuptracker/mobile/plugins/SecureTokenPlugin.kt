@@ -79,7 +79,11 @@ class SecureTokenPlugin : Plugin() {
     @PluginMethod
     fun remove(call: PluginCall) {
         try {
-            storage().edit().remove(KEY_TOKEN).commit()
+            // Выход без связи полагается на это стирание: неудачная запись — ошибка, а не тихий успех.
+            if (!storage().edit().remove(KEY_TOKEN).commit()) {
+                call.reject("Could not remove the token", "storage_write_failed")
+                return
+            }
             call.resolve()
         } catch (error: Exception) {
             call.reject("Secure storage is unavailable", "storage_unavailable", error)

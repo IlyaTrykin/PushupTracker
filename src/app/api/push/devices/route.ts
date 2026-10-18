@@ -9,7 +9,9 @@ import { subscriptionsToEvict } from '@/lib/push-endpoint';
  * Native push devices of the iOS / Android apps (APNs / FCM tokens).
  * POST `{ platform, token }` — upsert by token (a token re-registered by another account moves to it);
  * at most 10 active devices per user, the oldest are switched off.
- * DELETE `{ token }` — removes this device of the current user.
+ * DELETE `{ token }` — removes the device with this token, whoever it is registered to: the app of a
+ * user who keeps push off releases a token left on the phone by the previous account (shared phone,
+ * sign-out without connection). Knowing the token is the proof, as in POST, which can already move it.
  */
 
 type JsonObject = Record<string, unknown>;
@@ -70,6 +72,11 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
+/** The token as sent and as stored (APNs tokens are stored lower-cased; FCM tokens as they are). */
+function deviceTokenVariants(token: string): string[] {
+  return Array.from(new Set([token, token.toLowerCase()]));
+}
+
 export async function DELETE(request: NextRequest) {
   const userId = await currentUserId(request);
   if (typeof userId !== 'string') return userId;
@@ -80,6 +87,6 @@ export async function DELETE(request: NextRequest) {
   if (!token) return jsonError('Не указан токен устройства', 400);
 
   // APNs tokens are stored lower-cased; FCM tokens as they are.
-  await prisma.pushDevice.deleteMany({ where: { userId, token: { in: Array.from(new Set([token, token.toLowerCase()])) } } });
+  await prisma.pushDevice.deleteMany({ where: { token: { in: deviceTokenVariants(token) } } });
   return NextResponse.json({ ok: true });
 }

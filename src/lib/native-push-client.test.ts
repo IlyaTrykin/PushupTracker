@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { installPushActionHandler, isNativePushAvailable, pushActionRoute, registerNativePush, type NativePushAvailabilityDeps } from './native-push-client';
+import {
+  installPushActionHandler,
+  isNativePushAvailable,
+  pushActionRoute,
+  registerNativePush,
+  restoreNativePush,
+  type NativePushAvailabilityDeps,
+  type NativePushRegistration,
+  type PushHandoverDeps,
+} from './native-push-client';
 
 type Listener = Parameters<NonNullable<Parameters<typeof installPushActionHandler>[1]>>[0];
 
@@ -81,4 +90,69 @@ test('a failing build check (plugin missing in an older app) counts as no Fireba
     throw new Error('PushConfig plugin is not implemented');
   };
   assert.equal(await isNativePushAvailable(deps), false);
+});
+
+/** A phone: the stored device token, per-user «push on» flags and what reached the server. */
+function fakePhone(opts: { token?: string | null; wanted?: string[]; registerResult?: NativePushRegistration | 'throw'; releaseOk?: boolean }) {
+  const state = {
+    token: opts.token ?? null,
+    registered: [] as string[],
+    released: [] as string[],
+  };
+  const deps: PushHandoverDeps = {
+    wanted: (userId) => (opts.wanted ?? []).includes(userId),
+    storedToken: () => state.token,
+    register: async (userId) => {
+      if (opts.registerResult === 'throw') throw new Error('server refused');
+      state.registered.push(userId);
+      return opts.registerResult ?? 'registered';
+    },
+    release: async (token) => {
+      state.released.push(token);
+      return opts.releaseOk ?? true;
+    },
+    forgetToken: () => {
+      state.token = null;
+    },
+  };
+  return { state, deps };
+}
+
+const DEVICE = 'f'.repeat(64);
+
+test('shared phone: B signs in without push on — the token left by A is released, B never gets A’s pushes', async () => {
+  const { state, deps } = fakePhone({ token: DEVICE, wanted: ['userA'] });
+  await restoreNativePush('userB', deps);
+  assert.deepEqual(state.released, [DEVICE]);
+  assert.deepEqual(state.registered, []);
+  assert.equal(state.token, null, 'released token is forgotten, not released again on every start');
+});
+
+test('shared phone: B signs in with push on here — the token is re-registered to B (the server moves it from A)', async () => {
+  const { state, deps } = fakePhone({ token: DEVICE, wanted: ['userB'] });
+  await restoreNativePush('userB', deps);
+  assert.deepEqual(state.registered, ['userB']);
+  assert.deepEqual(state.released, []);
+});
+
+test('push wanted but registration denied or failing: the old token is still released', async () => {
+  for (const registerResult of ['denied', 'unavailable', 'throw'] as const) {
+    const { state, deps } = fakePhone({ token: DEVICE, wanted: ['userB'], registerResult });
+    await restoreNativePush('userB', deps);
+    assert.deepEqual(state.released, [DEVICE], registerResult);
+  }
+});
+
+test('no stored token or no user: nothing is sent; a failed release keeps the token for the next start', async () => {
+  const empty = fakePhone({ token: null });
+  await restoreNativePush('userB', empty.deps);
+  assert.deepEqual(empty.state.released, []);
+
+  const noUser = fakePhone({ token: DEVICE });
+  await restoreNativePush(null, noUser.deps);
+  assert.deepEqual(noUser.state.released, []);
+
+  const offline = fakePhone({ token: DEVICE, releaseOk: false });
+  await restoreNativePush('userB', offline.deps);
+  assert.equal(offline.state.token, DEVICE);
 });

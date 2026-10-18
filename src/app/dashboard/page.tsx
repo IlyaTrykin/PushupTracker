@@ -738,10 +738,8 @@ export default function DashboardPage() {
       return;
     }
 
-    await runAdd(() => submitWorkout(reps, exerciseType, {
-      ...(activeExercise.load ? { loadKg: exerciseLoad.loadKg } : {}),
-      ...(countedDuration ? { durationSeconds: countedDuration } : {}),
-    }));
+    // Длительность от RepCounter только показывается: сервер хранит её лишь у дистанции.
+    await runAdd(() => submitWorkout(reps, exerciseType, activeExercise.load ? { loadKg: exerciseLoad.loadKg } : {}));
   };
 
   const handleTimerStart = () => {

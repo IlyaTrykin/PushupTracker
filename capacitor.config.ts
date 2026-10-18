@@ -12,6 +12,10 @@ const config: CapacitorConfig = {
   appId: 'app.pushuptracker.mobile',
   appName: 'Pushup Tracker',
   webDir: 'out',
+  // Мост Capacitor по умолчанию пишет в logcat / лог Xcode аргументы и ответы плагинов — среди них
+  // токен сессии (SecureToken) и заголовок Authorization (BackgroundUpload). Логи моста выключены
+  // во всех сборках.
+  loggingBehavior: 'none',
   server: {
     iosScheme: 'capacitor',
     androidScheme: 'https',

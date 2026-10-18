@@ -159,11 +159,49 @@ export async function unregisterNativePush(userId: string | null | undefined): P
   if (!res.ok) throw new Error(`push device removal failed: ${res.status}`);
 }
 
-/** At start: refresh the token of a user who turned push on (tokens rotate). Errors are ignored. */
-export async function restoreNativePush(userId: string | null | undefined): Promise<void> {
-  if (!isNativePushWanted(userId)) return;
+export type PushHandoverDeps = {
+  wanted(userId: string): boolean;
+  /** The device token of the last registration on this phone (whoever registered it). */
+  storedToken(): string | null;
+  register(userId: string): Promise<NativePushRegistration>;
+  /** `DELETE /api/push/devices {token}`; true when the server forgot the device. */
+  release(token: string): Promise<boolean>;
+  forgetToken(): void;
+};
+
+const defaultHandover: PushHandoverDeps = {
+  wanted: (userId) => isNativePushWanted(userId),
+  storedToken: currentPushToken,
+  register: (userId) => registerNativePush(userId, { prompt: false }),
+  release: async (token) => {
+    const res = await fetch('/api/push/devices', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    return res.ok;
+  },
+  forgetToken: () => storageSet(TOKEN_KEY, null),
+};
+
+/**
+ * At start and after every sign-in (`userId` changes) on this device:
+ * - the user turned push on here → re-register (tokens rotate; the server moves the token to them);
+ * - otherwise a token left by an earlier registration (another account on a shared phone, or a
+ *   sign-out without connection) is released, so the previous owner's pushes stop coming here.
+ * Errors are ignored: the next start tries again.
+ */
+export async function restoreNativePush(userId: string | null | undefined, deps: PushHandoverDeps = defaultHandover): Promise<void> {
+  if (!userId) return;
+  if (deps.wanted(userId)) {
+    try {
+      if ((await deps.register(userId)) === 'registered') return;
+    } catch {}
+  }
+  const token = deps.storedToken();
+  if (!token) return;
   try {
-    await registerNativePush(userId, { prompt: false });
+    if (await deps.release(token)) deps.forgetToken();
   } catch {}
 }
 

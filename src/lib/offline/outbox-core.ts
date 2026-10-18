@@ -10,6 +10,7 @@
 import { dayKeyInZone, localHHMM, zonedTimeToInstant, type DayKey } from '@/lib/calendar-day';
 import { newClientRequestId } from '@/lib/client-request-id';
 import { calculateExercisePoints, pointsToTenths, tenthsToPoints } from '@/lib/exercise-points';
+import { isDistanceExercise } from '@/lib/exercises';
 
 export type OutboxPayload = {
   exerciseType: string;
@@ -61,12 +62,25 @@ function plusSeconds(now: Date, seconds: number): string {
   return new Date(now.getTime() + seconds * 1000).toISOString();
 }
 
+/**
+ * Only fields the server keeps: duration is stored for distance exercises only, so a duration from
+ * RepCounter on push-ups and the like is not queued. Otherwise the server's answer (`null`) would
+ * differ from the payload (a needless follow-up PUT) and the Health record written at once would
+ * carry another fingerprint than the server's record (a rewrite on every reconcile).
+ */
+function storedFields<T extends { exerciseType: string; durationSeconds?: number | null }>(payload: T): T {
+  if (payload.durationSeconds == null || isDistanceExercise(payload.exerciseType)) return payload;
+  const { durationSeconds: _dropped, ...rest } = payload;
+  void _dropped;
+  return rest as T;
+}
+
 export function createOutboxItem(userId: string, payload: NewOutboxPayload, now: Date): OutboxItem {
   const clientRequestId = payload.clientRequestId || newClientRequestId();
   return {
     id: clientRequestId,
     userId,
-    payload: { ...payload, clientRequestId },
+    payload: storedFields({ ...payload, clientRequestId }),
     createdAt: now.toISOString(),
     attempts: 0,
     status: 'pending',
@@ -100,6 +114,15 @@ export function nextSendable(items: OutboxItem[], now: Date, opts: { ignoreBacko
 /** The item while a sender owns it. */
 export function markSending(item: OutboxItem, now: Date): OutboxItem {
   return { ...item, status: 'sending', nextAttemptAt: plusSeconds(now, SENDING_LEASE_SECONDS) };
+}
+
+/**
+ * The stored item is still the one `leased` to this sender (same lease): only then may the sender
+ * write its result. Otherwise the lease ran out and the item was edited, deleted or taken by
+ * another sender meanwhile — that newer state wins.
+ */
+export function holdsLease(current: OutboxItem | null, leased: OutboxItem): boolean {
+  return Boolean(current) && current!.id === leased.id && current!.status === 'sending' && current!.nextAttemptAt === leased.nextAttemptAt;
 }
 
 /** 5, 15, 60, 300, then 900 seconds after the 1st, 2nd, … failed attempt. */
@@ -143,7 +166,7 @@ export function editOutboxItem(item: OutboxItem, patch: OutboxPayloadPatch, now:
   if (isInFlight(item, now)) return null;
   return {
     ...item,
-    payload: { ...item.payload, ...patch, clientRequestId: item.payload.clientRequestId },
+    payload: storedFields({ ...item.payload, ...patch, clientRequestId: item.payload.clientRequestId }),
     status: 'pending',
     attempts: 0,
     nextAttemptAt: null,
@@ -170,7 +193,9 @@ export function needsFollowUpEdit(payload: OutboxPayload, workout: ServerWorkout
   if (typeof workout.date === 'string' && workout.date.slice(0, 10) !== payload.date) return true;
   if (typeof workout.time === 'string' && new Date(workout.time).getTime() !== new Date(payload.time).getTime()) return true;
   if (workout.loadKg !== undefined && !sameNumber(workout.loadKg, payload.loadKg)) return true;
-  if (workout.durationSeconds !== undefined && !sameNumber(workout.durationSeconds, payload.durationSeconds)) return true;
+  // Duration exists only for distance exercises (the server answers null for the rest).
+  const exerciseType = typeof workout.exerciseType === 'string' ? workout.exerciseType : payload.exerciseType;
+  if (isDistanceExercise(exerciseType) && workout.durationSeconds !== undefined && !sameNumber(workout.durationSeconds, payload.durationSeconds)) return true;
   return false;
 }
 

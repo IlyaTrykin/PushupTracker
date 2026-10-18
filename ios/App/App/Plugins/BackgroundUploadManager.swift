@@ -6,6 +6,8 @@ import Foundation
 /// возвращает уже созданную запись.
 ///
 /// Записи (`id` = `clientRequestId`) и тела запросов лежат в Application Support/BackgroundUpload.
+/// В записях `queued` есть заголовок Authorization, поэтому каталог исключён из резервных копий
+/// (iCloud / компьютер), а у записей `done` / `failed` заголовки стираются сразу.
 /// Состояния: `queued` (ждёт или отправляется), `done` (2xx), `failed` (4xx, 401 — ждём входа).
 /// Сетевая ошибка, 408, 429 и 5xx — новая попытка с паузой (429 — по Retry-After).
 final class BackgroundUploadManager: NSObject, URLSessionDataDelegate {
@@ -15,7 +17,7 @@ final class BackgroundUploadManager: NSObject, URLSessionDataDelegate {
     struct Record: Codable {
         let id: String
         let url: String
-        let headers: [String: String]
+        var headers: [String: String]
         var state: String
         var httpStatus: Int?
         var attempts: Int
@@ -46,10 +48,19 @@ final class BackgroundUploadManager: NSObject, URLSessionDataDelegate {
         recordsFile = directory.appendingPathComponent("records.json")
         super.init()
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        Self.excludeFromBackup(directory)
         if let data = try? Data(contentsOf: recordsFile),
            let saved = try? JSONDecoder().decode([String: Record].self, from: data) {
             records = saved
         }
+    }
+
+    /// Токен сессии в заголовках не должен попасть в бэкап и восстановиться на другом устройстве.
+    private static func excludeFromBackup(_ url: URL) {
+        var target = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? target.setResourceValues(values)
     }
 
     /// При запуске (в том числе фоновом, по событию сессии) — переподключиться к фоновой сессии.
@@ -108,7 +119,8 @@ final class BackgroundUploadManager: NSObject, URLSessionDataDelegate {
         case "failed":
             removeRecord(id)
             lock.unlock()
-            completion(true)
+            // Была повторная попытка — более ранняя могла дойти до сервера, а ответ потеряться.
+            completion(record.attempts == 0)
             return
         default:
             lock.unlock()
@@ -116,7 +128,8 @@ final class BackgroundUploadManager: NSObject, URLSessionDataDelegate {
         session.getAllTasks { tasks in
             let own = tasks.filter { $0.taskDescription == id && $0.state != .completed }
             // Нет живой задачи — ответ сервера мог уже прийти и ждёт обработки: считаем отправленной.
-            let started = own.isEmpty || own.contains { $0.countOfBytesSent > 0 }
+            // Была хотя бы одна попытка — запрос мог дойти до сервера без ответа: тоже отправленной.
+            let started = own.isEmpty || record.attempts > 0 || own.contains { $0.countOfBytesSent > 0 }
             if started {
                 completion(false)
                 return
@@ -199,17 +212,21 @@ final class BackgroundUploadManager: NSObject, URLSessionDataDelegate {
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let id = task.taskDescription else { return }
-        if let error = error as NSError?, error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled {
-            return // снята через cancel
-        }
+        let cancelled = (error as NSError?).map { $0.domain == NSURLErrorDomain && $0.code == NSURLErrorCancelled } ?? false
         lock.lock()
+        // Свой `cancel` сначала удаляет запись, потом снимает задачу: записи нет — снята нами.
         guard var record = records[id], record.state == "queued" else {
             lock.unlock()
             return
         }
         let response = task.response as? HTTPURLResponse
         var retryDelay: Double?
-        if error == nil, let response = response {
+        if cancelled {
+            // Запись есть и ждёт, а задачу снял не `cancel`: система (приложение закрыли смахиванием,
+            // сессию сбросили). Задача ставится заново; если байты успели уйти — это попытка.
+            if task.countOfBytesSent > 0 { record.attempts += 1 }
+            retryDelay = Self.backoffSeconds[0]
+        } else if error == nil, let response = response {
             record.httpStatus = response.statusCode
             switch response.statusCode {
             case 200..<300:
@@ -225,10 +242,11 @@ final class BackgroundUploadManager: NSObject, URLSessionDataDelegate {
             record.attempts += 1
             retryDelay = Self.backoffSeconds[min(record.attempts, Self.backoffSeconds.count) - 1]
         }
-        records[id] = record
         if record.state != "queued" {
+            record.headers = [:] // Authorization больше не нужен
             try? FileManager.default.removeItem(at: bodyFile(id))
         }
+        records[id] = record
         persist()
         lock.unlock()
         if let delay = retryDelay {

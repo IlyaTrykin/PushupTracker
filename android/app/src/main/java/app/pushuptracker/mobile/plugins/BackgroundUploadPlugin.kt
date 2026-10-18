@@ -78,7 +78,11 @@ class BackgroundUploadPlugin : Plugin() {
         }
     }
 
-    /** `cancelled: true` — копия снята, на сервер она не попадала; `false` — уже отправляется, уже на сервере или её нет. */
+    /**
+     * `cancelled: true` — копия снята, на сервер она не попадала; `false` — уже отправляется, уже на
+     * сервере, её нет или была повторная попытка (`runAttemptCount > 0`: более ранняя могла дойти до
+     * сервера, а ответ потеряться — правку тогда делает JS после ответа сервера).
+     */
     @PluginMethod
     fun cancel(call: PluginCall) {
         val id = call.getString("id")
@@ -87,14 +91,20 @@ class BackgroundUploadPlugin : Plugin() {
             return
         }
         try {
-            val cancelled = when (current(id)?.state) {
+            val info = current(id)
+            val retried = (info?.runAttemptCount ?: 0) > 0
+            val cancelled = when (info?.state) {
                 WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
-                    workManager().cancelUniqueWork(uniqueName(id)).result.get()
-                    true
+                    if (retried) {
+                        false
+                    } else {
+                        workManager().cancelUniqueWork(uniqueName(id)).result.get()
+                        true
+                    }
                 }
                 WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
                     workManager().pruneWork()
-                    true
+                    !retried
                 }
                 WorkInfo.State.SUCCEEDED -> {
                     workManager().pruneWork()
