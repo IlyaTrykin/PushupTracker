@@ -3,7 +3,8 @@ import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
 import { friendReactionMessage, notifyUsers } from '@/lib/notify';
 import { isUniqueViolation } from '@/lib/groups';
-import { isBlockedBetween, loadBlockedPeerIds, visibleReactions } from '@/lib/blocks';
+import { loadBlockedPeerIds, visibleReactions } from '@/lib/blocks';
+import { canReactToWorkout } from '@/lib/blocked-access';
 
 const ALLOWED_EMOJI = ['👍', '🔥', '👎', '💩'] as const;
 const ALLOWED_EMOJI_SET = new Set<string>(ALLOWED_EMOJI);
@@ -213,39 +214,8 @@ export async function POST(request: NextRequest) {
 
     if (!workout) return jsonError('Тренировка не найдена', 404);
 
-    if (workout.userId !== userId) {
-      if (await isBlockedBetween(prisma, userId, workout.userId)) return jsonError('Нет доступа к тренировке', 403);
-      const [friendLink, sharedGroup] = await Promise.all([
-        prisma.friendship.findFirst({
-          where: {
-            status: 'accepted',
-            OR: [
-              { userId, friendId: workout.userId },
-              { userId: workout.userId, friendId: userId },
-            ],
-          },
-          select: { id: true },
-        }),
-        prisma.groupMembership.findFirst({
-          where: {
-            userId: workout.userId,
-            status: 'active',
-            group: {
-              deletedAt: null,
-              memberships: {
-                some: {
-                  userId,
-                  status: 'active',
-                },
-              },
-            },
-          },
-          select: { id: true },
-        }),
-      ]);
-
-      if (!friendLink && !sharedGroup) return jsonError('Нет доступа к тренировке', 403);
-    }
+    // Own, a friend's or a fellow group member's workout — never one of someone blocked either way (R33.1).
+    if (!(await canReactToWorkout(prisma, userId, workout.userId))) return jsonError('Нет доступа к тренировке', 403);
 
     const existing = await prisma.workoutReaction.findUnique({
       where: { workoutId_userId: { workoutId, userId } },

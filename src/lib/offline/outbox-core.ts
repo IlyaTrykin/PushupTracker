@@ -107,12 +107,19 @@ export function isInFlight(item: OutboxItem, now: Date): boolean {
   return item.status === 'sending' && item.nextAttemptAt !== null && new Date(item.nextAttemptAt).getTime() > now.getTime();
 }
 
+export type NextSendableOptions = {
+  /** Network back, app resumed, sign-in, the user just saved: skip retry pauses (never a lease). */
+  ignoreBackoff?: boolean;
+  /** Tombstones already tried in this flush: not picked again, so they cannot loop it. */
+  skipDeletes?: ReadonlySet<string>;
+};
+
 /**
  * The item to send now: the oldest one that is not rejected. Order is strict — when the oldest
  * is still in its pause or being sent, nothing goes, so the server gets the records in the order
  * they were made. `ignoreBackoff` (network back, app resumed, sign-in) skips a retry pause, never a lease.
  */
-export function nextSendable(items: OutboxItem[], now: Date, opts: { ignoreBackoff?: boolean } = {}): OutboxItem | null {
+export function nextSendable(items: OutboxItem[], now: Date, opts: NextSendableOptions = {}): OutboxItem | null {
   const due = (item: OutboxItem) =>
     item.status === 'sending'
       ? !isInFlight(item, now)
@@ -120,7 +127,7 @@ export function nextSendable(items: OutboxItem[], now: Date, opts: { ignoreBacko
   const waiting = items.filter((item) => item.status !== 'rejected').sort(byRecordOrder);
   // Deletes («будет удалена») need no order: one the server keeps refusing waits out its own pause
   // without holding back the workouts after it.
-  const tombstone = waiting.find((item) => item.deleteOnServer && due(item));
+  const tombstone = waiting.find((item) => item.deleteOnServer && !opts.skipDeletes?.has(item.id) && due(item));
   if (tombstone) return tombstone;
   const head = waiting.find((item) => !item.deleteOnServer);
   return head && due(head) ? head : null;

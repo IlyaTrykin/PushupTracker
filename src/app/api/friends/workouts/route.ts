@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { isExerciseType, type ExerciseType } from '@/lib/exercises';
-import { loadBlockedPeerIds } from '@/lib/blocks';
+import { loadFeedUserIds } from '@/lib/blocked-access';
 
 type WorkoutResponseItem = {
   id: string;
@@ -45,19 +45,8 @@ export async function GET(request: NextRequest) {
 
     const exerciseType = getExerciseTypeFromQuery(request);
 
-    const friendships = await prisma.friendship.findMany({
-      where: { status: 'accepted', OR: [{ userId }, { friendId: userId }] },
-      select: { userId: true, friendId: true },
-    });
-
-    const ids = new Set<string>([userId]);
-    for (const f of friendships) {
-      ids.add(f.userId);
-      ids.add(f.friendId);
-    }
-    // Feed and comparison: nobody blocked in either direction (R33.1).
-    const blocked = await loadBlockedPeerIds(prisma, userId, Array.from(ids));
-    const userIds = Array.from(ids).filter((id) => !blocked.has(id));
+    // Feed and comparison: me and friends, nobody blocked in either direction (R33.1).
+    const userIds = await loadFeedUserIds(prisma, userId);
 
     const users = await prisma.user.findMany({
       where: { id: { in: userIds } },

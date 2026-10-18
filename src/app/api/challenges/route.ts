@@ -5,13 +5,11 @@ import { challengeInviteMessage, notifyUsers } from '@/lib/notify';
 import { isExerciseType } from '@/lib/exercises';
 import { dayKeyToDbDate, parseDayKey } from '@/lib/calendar-day';
 import { hitRateLimit, tooManyRequests } from '@/lib/rate-limit';
-import { loadBlockedPeerIds } from '@/lib/blocks';
+import { resolveChallengeInvitees } from '@/lib/blocked-access';
 import {
   CHALLENGE_CREATE_LIMIT_PER_DAY,
   CHALLENGE_NAME_MAX_LENGTH,
-  CHALLENGE_PARTICIPANTS_MAX,
   isChallengeMode,
-  splitChallengeInvitees,
 } from '@/lib/challenge-scoring';
 
 type JsonObject = Record<string, unknown>;
@@ -151,41 +149,10 @@ export async function POST(request: NextRequest) {
     });
     if (!me?.username) return jsonError('Пользователь не найден', 404);
 
-    // Приглашать можно только подтверждённых друзей, не удалённых (S05, B34).
-    const friendships = await prisma.friendship.findMany({
-      where: { status: 'accepted', OR: [{ userId }, { friendId: userId }] },
-      select: {
-        userId: true,
-        user: { select: { id: true, username: true, deletedAt: true } },
-        friend: { select: { id: true, username: true, deletedAt: true } },
-      },
-    });
-    const friends = new Map<string, string>(); // username → id
-    for (const f of friendships) {
-      const other = f.userId === userId ? f.friend : f.user;
-      if (!other.deletedAt) friends.set(other.username, other.id);
-    }
-
-    const { invited, notFriends } = splitChallengeInvitees(requestedUsernames, Array.from(friends.keys()), me.username);
-    if (notFriends.length) {
-      const shown = notFriends.slice(0, 20).join(', ') + (notFriends.length > 20 ? '…' : '');
-      return jsonError('Пригласить можно только друзей', 400, `Не в друзьях: ${shown}`, 'CHALLENGE_NOT_FRIENDS');
-    }
-    if (invited.length + 1 > CHALLENGE_PARTICIPANTS_MAX) {
-      return jsonError(
-        `В соревновании может быть не больше ${CHALLENGE_PARTICIPANTS_MAX} участников`,
-        400,
-        undefined,
-        'CHALLENGE_TOO_MANY_PARTICIPANTS',
-      );
-    }
-
-    const invitedIds = invited.map((username) => friends.get(username) as string);
-    // Nobody blocked in either direction can be invited (R33.1).
-    const blocked = await loadBlockedPeerIds(prisma, userId, invitedIds);
-    if (blocked.size) {
-      return jsonError('Пригласить этого пользователя нельзя', 403, undefined, 'USER_BLOCKED');
-    }
+    // Только подтверждённые друзья, не удалённые (S05, B34), не больше лимита, никого из заблокированных (R33.1).
+    const invitees = await resolveChallengeInvitees(prisma, { id: userId, username: me.username }, requestedUsernames);
+    if (!invitees.ok) return jsonError(invitees.error, invitees.status, invitees.details, invitees.code);
+    const { invitedIds } = invitees;
 
     const limit = await hitRateLimit(`challenge-create:${userId}`, CHALLENGE_CREATE_LIMIT_PER_DAY, 24 * 60 * 60);
     if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);

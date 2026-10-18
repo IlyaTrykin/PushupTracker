@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android ≤ 11: токен сессии не уходит в резервную копию (ключ Keystore на другом устройстве не восстановится). -->
+<!-- Android ≤ 11: токен сессии не уходит в резервную копию (ключ Keystore на другом устройстве не восстановится).
+     База WorkManager тоже: в задачах фоновой отправки лежит заголовок Authorization с этим токеном. -->
 <full-backup-content>
     <exclude domain="sharedpref" path="pushup_secure_token.xml" />
+    <exclude domain="database" path="androidx.work.workdb" />
+    <exclude domain="database" path="androidx.work.workdb-wal" />
+    <exclude domain="database" path="androidx.work.workdb-shm" />
 </full-backup-content>

@@ -4,28 +4,10 @@ import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { claimFriendRequestNotification, cooldownRetryDays, isUniqueViolation } from '@/lib/groups';
 import { friendRequestAcceptedMessage, friendRequestMessage, notifyUsers } from '@/lib/notify';
-import { BlockError, assertNotBlocked, loadBlockedPeerIds } from '@/lib/blocks';
+import { BlockError, assertNotBlocked } from '@/lib/blocks';
+import { loadFriendList } from '@/lib/blocked-access';
 
 type JsonObject = Record<string, unknown>;
-// Чужой email в ответах не отдаём (S04): только ник и аватар.
-type FriendDirectoryUser = {
-  id: string;
-  username: string;
-  avatarPath: string | null;
-  deletedAt: Date | null;
-};
-type FriendListItem = {
-  friendshipId: string;
-  userId: string;
-  username: string;
-  avatarPath: string | null;
-  since: Date;
-  isFollowing: boolean;
-  /** Hidden by the caller from the comparison table on /friends; still a friend everywhere else. */
-  hiddenInComparison: boolean;
-};
-
-const publicUserSelect = { id: true, username: true, avatarPath: true, deletedAt: true } as const;
 
 function jsonError(message: string, status = 400, code?: string, details?: Record<string, unknown>) {
   return NextResponse.json(code ? { error: message, code, details } : { error: message }, { status });
@@ -76,57 +58,8 @@ export async function GET(request: NextRequest) {
   try {
     const userId = await getCurrentUserId(request);
 
-    const friendships = await prisma.friendship.findMany({
-      where: {
-        status: 'accepted',
-        OR: [{ userId }, { friendId: userId }],
-      },
-      include: {
-        user: { select: publicUserSelect },
-        friend: { select: publicUserSelect },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const friendIds: string[] = [];
-    const base: FriendListItem[] = friendships.reduce<FriendListItem[]>((acc, f) => {
-      const isInitiator = f.userId === userId;
-      const other: FriendDirectoryUser = isInitiator ? f.friend : f.user;
-      if (other.deletedAt) return acc;
-      friendIds.push(other.id);
-      acc.push({
-        friendshipId: f.id,
-        userId: other.id,
-        username: other.username,
-        avatarPath: other.avatarPath ?? null,
-        since: f.createdAt,
-        isFollowing: false,
-        hiddenInComparison: false,
-      });
-      return acc;
-    }, []);
-
-    // Blocked in either direction (R33.1): not in the list or the comparison table.
-    const blocked = await loadBlockedPeerIds(prisma, userId, friendIds);
-    const visible = base.filter((row) => !blocked.has(row.userId));
-    if (!visible.length) return NextResponse.json([]);
-
-    const [follows, hides] = await Promise.all([
-      prisma.friendFollow.findMany({
-        where: { followerId: userId, friendId: { in: friendIds } },
-        select: { friendId: true },
-      }),
-      prisma.friendComparisonHide.findMany({
-        where: { userId, friendId: { in: friendIds } },
-        select: { friendId: true },
-      }),
-    ]);
-    const following = new Set(follows.map((x) => x.friendId));
-    const hidden = new Set(hides.map((x) => x.friendId));
-
-    return NextResponse.json(
-      visible.map((r) => ({ ...r, isFollowing: following.has(r.userId), hiddenInComparison: hidden.has(r.userId) })),
-    );
+    // Without deleted accounts and anyone blocked in either direction (R33.1).
+    return NextResponse.json(await loadFriendList(prisma, userId));
   } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
     if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);

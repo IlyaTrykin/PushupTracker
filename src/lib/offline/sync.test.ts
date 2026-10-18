@@ -190,3 +190,71 @@ test('«sign out and delete» keeps entries «будет удалена»: they 
   void unsent;
   await outboxStore.clear(userId);
 });
+
+test('a delete the server refuses (4xx) goes out once per flush and does not hold back the workouts after it, also with ignoreBackoff', async () => {
+  const userId = 'tomb-refused';
+  const tomb = markForServerDelete(createOutboxItem(userId, { exerciseType: 'pushups', reps: 30, date: '2026-10-17', time: '2026-10-17T09:50:00.000Z' }, T0));
+  await outboxStore.put({ ...tomb, attempts: 1, everSent: true });
+  const first = await queued(userId, 20);
+  const deletes: string[] = [];
+  const posted: string[] = [];
+  const server = {
+    send: async (p: OutboxPayload): Promise<SendOutcome> => (posted.push(p.clientRequestId), { kind: 'created', workoutId: `w-${p.clientRequestId}` }),
+    sendDelete: async (id: string): Promise<SendOutcome> => (deletes.push(id), { kind: 'rejected', status: 400, message: 'Invalid clientRequestId' }),
+  };
+
+  // The dashboard always flushes with ignoreBackoff.
+  const result = await flushOutbox(userId, { ...server, now: () => T0, ignoreBackoff: true });
+  assert.deepEqual(deletes, [tomb.id], 'the refused delete is sent once in this flush');
+  assert.deepEqual(posted, [first.id], 'the workout after it goes out');
+  assert.equal(result.sent, 1);
+  assert.equal(result.stopped, undefined);
+  const kept = await outboxStore.list(userId);
+  assert.deepEqual(kept.map((i) => i.id), [tomb.id], 'the tombstone stays until the server confirms');
+  assert.equal(kept[0].deleteOnServer, true);
+  assert.equal(kept[0].lastError, 'Invalid clientRequestId');
+
+  // Next save: again one delete try, and the new workout is not held back.
+  const second = await queued(userId, 25);
+  await flushOutbox(userId, { ...server, now: () => T0, ignoreBackoff: true });
+  assert.deepEqual(deletes, [tomb.id, tomb.id]);
+  assert.deepEqual(posted, [first.id, second.id]);
+  assert.deepEqual((await outboxStore.list(userId)).map((i) => i.id), [tomb.id]);
+  await outboxStore.clear(userId);
+});
+
+test('a delete waiting for its native copy does not hold back the workouts after it', async () => {
+  const userId = 'tomb-native-wait';
+  const tomb = markForServerDelete(createOutboxItem(userId, { exerciseType: 'pushups', reps: 30, date: '2026-10-17', time: '2026-10-17T09:50:00.000Z' }, T0));
+  await outboxStore.put(tomb);
+  const next = await queued(userId, 20);
+  const deletes: string[] = [];
+  const posted: string[] = [];
+  await flushOutbox(userId, {
+    now: () => T0,
+    ignoreBackoff: true,
+    send: async (p) => (posted.push(p.clientRequestId), { kind: 'created', workoutId: 'w1' }),
+    sendDelete: async (id) => (deletes.push(id), { kind: 'retry', reason: 'background upload' }),
+  });
+  assert.deepEqual(deletes, [tomb.id]);
+  assert.deepEqual(posted, [next.id]);
+  await outboxStore.clear(userId);
+});
+
+test('without a connection a failed delete still stops the flush (no pointless requests)', async () => {
+  const userId = 'tomb-offline-stop';
+  const tomb = markForServerDelete(createOutboxItem(userId, { exerciseType: 'pushups', reps: 30, date: '2026-10-17', time: '2026-10-17T09:50:00.000Z' }, T0));
+  await outboxStore.put(tomb);
+  await queued(userId, 20);
+  const posted: string[] = [];
+  const result = await flushOutbox(userId, {
+    now: () => T0,
+    ignoreBackoff: true,
+    send: async (p) => (posted.push(p.clientRequestId), { kind: 'retry', reason: 'network' }),
+    sendDelete: async () => ({ kind: 'retry', reason: 'network' }),
+  });
+  assert.deepEqual(posted, []);
+  assert.equal(result.stopped, 'offline');
+  assert.equal(result.retryReason, 'network');
+  await outboxStore.clear(userId);
+});

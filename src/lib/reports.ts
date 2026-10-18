@@ -8,6 +8,8 @@
  * `hitRateLimit` and `sendReportEmail`).
  */
 
+import { esc } from './notification-email';
+
 export const REPORT_LIMIT_PER_HOUR = 10;
 export const REPORT_TEXT_MAX_LENGTH = 500;
 export const REPORT_REASONS = ['spam', 'abuse', 'inappropriate', 'cheating', 'other'] as const;
@@ -180,10 +182,6 @@ const CONTEXT_LABELS: Record<ReportContext, string> = {
   reaction: 'реакция',
 };
 
-function escapeHtml(input: string): string {
-  return input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
 /** The letter to the admin; user-written parts are escaped in HTML. */
 export function buildReportEmail(
   data: ReportEmailData,
@@ -203,14 +201,14 @@ export function buildReportEmail(
   if (opts.adminUrl) lines.push('', `Разобрать: ${opts.adminUrl}`);
 
   const html = [
-    `<p>Новая жалоба на пользователя · <b>${escapeHtml(opts.label)}</b> (${escapeHtml(opts.site)}).</p>`,
-    `<p>На кого: <b>${escapeHtml(data.target.username)}</b> (ID ${escapeHtml(data.target.id)})<br/>`,
-    `От кого: <b>${escapeHtml(data.reporter.username)}</b> (ID ${escapeHtml(data.reporter.id)})<br/>`,
-    `Где: ${escapeHtml(where)}<br/>`,
-    `Причина: ${escapeHtml(REASON_LABELS[data.reason])}<br/>`,
-    `ID жалобы: ${escapeHtml(data.id)}</p>`,
-    data.text ? `<p>Текст:</p><p style="white-space:pre-wrap">${escapeHtml(data.text)}</p>` : '',
-    opts.adminUrl ? `<p><a href="${escapeHtml(opts.adminUrl)}">Разобрать в админке</a></p>` : '',
+    `<p>Новая жалоба на пользователя · <b>${esc(opts.label)}</b> (${esc(opts.site)}).</p>`,
+    `<p>На кого: <b>${esc(data.target.username)}</b> (ID ${esc(data.target.id)})<br/>`,
+    `От кого: <b>${esc(data.reporter.username)}</b> (ID ${esc(data.reporter.id)})<br/>`,
+    `Где: ${esc(where)}<br/>`,
+    `Причина: ${esc(REASON_LABELS[data.reason])}<br/>`,
+    `ID жалобы: ${esc(data.id)}</p>`,
+    data.text ? `<p>Текст:</p><p style="white-space:pre-wrap">${esc(data.text)}</p>` : '',
+    opts.adminUrl ? `<p><a href="${esc(opts.adminUrl)}">Разобрать в админке</a></p>` : '',
   ].join('');
 
   return { subject: `[${opts.label}] Жалоба на пользователя · ${opts.site}`, text: lines.join('\n'), html };

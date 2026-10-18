@@ -18,7 +18,9 @@ import {
   holdsLease,
   needsFollowUpEdit,
   nextSendable,
+  queueErrorKind,
   toRequestBody,
+  type NextSendableOptions,
   type OutboxItem,
   type OutboxPayload,
   type SendOutcome,
@@ -159,6 +161,11 @@ export async function sendWorkoutDelete(clientRequestId: string): Promise<SendOu
   }
 }
 
+function isConnectionFailure(reason: string): boolean {
+  const kind = queueErrorKind(reason);
+  return kind === 'network' || kind === 'timeout';
+}
+
 async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
   const send = deps.send ?? sendWorkout;
   const sendDelete = deps.sendDelete ?? sendWorkoutDelete;
@@ -167,7 +174,11 @@ async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
 
   if (readPause(userId) > now().getTime()) return { ...result, stopped: 'rate-limited' };
 
-  const pick = { ignoreBackoff: deps.ignoreBackoff };
+  // A tombstone goes out at most once per flush: one the server refuses (4xx) or that waits for its
+  // native copy would otherwise be picked again at once under `ignoreBackoff` and loop the flush.
+  const triedDeletes = new Set<string>();
+  // `claimNext` hands the options to `nextSendable` as they are.
+  const pick: NextSendableOptions = { ignoreBackoff: deps.ignoreBackoff, skipDeletes: triedDeletes };
   for (let i = 0; i < MAX_ITEMS_PER_FLUSH; i += 1) {
     if (isOffline()) {
       if (nextSendable(await outboxStore.list(userId), now(), pick)) result.stopped = 'offline';
@@ -179,6 +190,7 @@ async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
     if (!item) break;
 
     const outcome = item.deleteOnServer ? await sendDelete(item.id) : await send(item.payload);
+    if (item.deleteOnServer) triedDeletes.add(item.id);
     const applied = applyOutcome(item, outcome, now());
     // Written only while the item is still under this lease (see `holdsLease`).
     await outboxStore.change(item.id, (current) => ({ next: holdsLease(current, item) ? applied.item : undefined, result: null }));
@@ -196,6 +208,9 @@ async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
       result.stopped = 'rate-limited';
       break;
     }
+    // A delete that failed for its own reason (refused, waits for its native copy, server error) does
+    // not hold back the workouts after it; no connection stops the flush as for a workout.
+    if (outcome.kind === 'retry' && item.deleteOnServer && !isConnectionFailure(outcome.reason)) continue;
     if (outcome.kind === 'retry') {
       result.stopped = 'offline';
       result.retryReason = outcome.reason;

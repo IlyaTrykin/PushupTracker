@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { challengeResponseMessage, notifyUsers } from '@/lib/notify';
-import { isBlockedBetween } from '@/lib/blocks';
-
-type InviteAnswer = 'accepted' | 'declined';
+import { prepareInviteAnswer, type InviteAnswer } from '@/lib/blocked-access';
 
 // Ответ на приглашение в челлендж (B20): повторное нажатие того же ответа возвращает
 // текущий статус без второго уведомления создателю. Ответ можно сменить (принять после
@@ -26,25 +24,11 @@ export async function respondToChallengeInvite(
 
     const { id } = await ctx.params;
 
-    const participant = await prisma.challengeParticipant.findFirst({
-      where: { challengeId: id, userId: user.id },
-      select: { id: true, status: true, challenge: { select: { groupId: true, creatorId: true, name: true } } },
-    });
+    // Not found, group challenge, same answer, or an invitation from someone blocked in either direction (R33.1).
+    const step = await prepareInviteAnswer(prisma, id, user.id, answer);
+    if (step.kind === 'respond') return NextResponse.json(step.body, { status: step.status });
+    const { participant } = step;
 
-    if (!participant) return NextResponse.json({ error: 'Приглашение не найдено', code: 'NOT_FOUND' }, { status: 404 });
-    if (participant.challenge.groupId) {
-      return NextResponse.json(
-        { error: 'В соревнованиях группы участие подтверждается автоматически', code: 'GROUP_CHALLENGE_AUTO_ACCEPTED' },
-        { status: 400 },
-      );
-    }
-
-    if (participant.status === answer) return NextResponse.json({ ok: true, status: answer });
-    // An invitation from someone blocked in either direction cannot be accepted (R33.1).
-    const { creatorId: inviterId } = participant.challenge;
-    if (answer === 'accepted' && inviterId && inviterId !== user.id && (await isBlockedBetween(prisma, user.id, inviterId))) {
-      return NextResponse.json({ error: 'Принять приглашение нельзя: пользователь заблокирован', code: 'USER_BLOCKED' }, { status: 403 });
-    }
     // The creator takes part in his own challenge; other statuses are not answers to change.
     const changeable = participant.status === 'pending' || participant.status === 'accepted' || participant.status === 'declined';
     if (!changeable || participant.challenge.creatorId === user.id) {

@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import type { AuthUser } from '@/lib/auth';
 import { groupJoinRequestMessage, groupJoinResolvedMessage, notifyUsers } from '@/lib/notify';
 import { addDays, dayKeyInZone, dayKeyToDbDate } from '@/lib/calendar-day';
-import { isBlockedBetween } from '@/lib/blocks';
+import { isBlockedBetween, type BlockReadDb } from '@/lib/blocks';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
 export type GroupActor = Pick<AuthUser, 'id' | 'isAdmin' | 'username'>;
@@ -527,6 +527,69 @@ export async function updateGroupName(actor: GroupActor, groupId: string, rawNam
   });
 }
 
+type GroupBase = Prisma.GroupGetPayload<{ select: typeof groupBaseSelect }>;
+
+export type JoinInviteDb = BlockReadDb & {
+  groupInviteLink: {
+    findUnique(args: { where: { token: string }; select: { token: true; group: { select: typeof groupBaseSelect } } }): Promise<{ token: string; group: GroupBase | null } | null>;
+  };
+};
+
+/**
+ * The group an invite link lets `actorId` ask to join: the link exists, the group is not deleted,
+ * and its owner and `actorId` did not block one another (R33.1) — no join request either way.
+ */
+export async function findJoinableInviteGroup(db: JoinInviteDb, actorId: string, token: string): Promise<GroupBase> {
+  const invite = await db.groupInviteLink.findUnique({
+    where: { token },
+    select: { token: true, group: { select: groupBaseSelect } },
+  });
+  if (!invite?.group || invite.group.deletedAt) {
+    throw new GroupError('Ссылка-приглашение недействительна', 404, 'GROUP_INVITE_NOT_FOUND');
+  }
+  if (await isBlockedBetween(db, actorId, invite.group.ownerId)) {
+    throw new GroupError('Вступить в эту группу нельзя', 403, 'USER_BLOCKED');
+  }
+  return invite.group;
+}
+
+const resolvableJoinRequestSelect = {
+  id: true,
+  groupId: true,
+  userId: true,
+  status: true,
+  user: { select: memberUserPublicSelect },
+} as const;
+type ResolvableJoinRequest = Prisma.GroupJoinRequestGetPayload<{ select: typeof resolvableJoinRequestSelect }>;
+
+export type JoinRequestDb = BlockReadDb & {
+  groupJoinRequest: {
+    findFirst(args: { where: { id: string; groupId: string; group: { deletedAt: null } }; select: typeof resolvableJoinRequestSelect }): Promise<ResolvableJoinRequest | null>;
+  };
+};
+
+/**
+ * The pending join request the owner decides on. Approving one from someone the owner blocked or
+ * was blocked by is refused (R33.1); rejecting it stays possible.
+ */
+export async function findResolvableJoinRequest(
+  db: JoinRequestDb,
+  group: { id: string; ownerId: string },
+  requestId: string,
+  action: 'approve' | 'reject',
+): Promise<ResolvableJoinRequest> {
+  const request = await db.groupJoinRequest.findFirst({
+    where: { id: requestId, groupId: group.id, group: { deletedAt: null } },
+    select: resolvableJoinRequestSelect,
+  });
+  if (!request) throw new GroupError('Заявка не найдена', 404, 'GROUP_JOIN_REQUEST_NOT_FOUND');
+  if (request.status !== 'pending') throw new GroupError('Заявка уже обработана', 409, 'GROUP_JOIN_REQUEST_ALREADY_RESOLVED');
+  if (action === 'approve' && (await isBlockedBetween(db, group.ownerId, request.userId))) {
+    throw new GroupError('Нельзя принять заявку: пользователь заблокирован', 403, 'USER_BLOCKED');
+  }
+  return request;
+}
+
 // `_request` остаётся ради вызывающих маршрутов: ссылки в уведомлениях теперь строятся из APP_URL (notifyUsers).
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, _request?: Request) {
@@ -541,25 +604,10 @@ export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, _r
 
   try {
     result = await prisma.$transaction(async (tx) => {
-      const invite = await tx.groupInviteLink.findUnique({
-        where: { token },
-        select: {
-          token: true,
-          group: { select: groupBaseSelect },
-        },
-      });
-
-      if (!invite?.group || invite.group.deletedAt) {
-        throw new GroupError('Ссылка-приглашение недействительна', 404, 'GROUP_INVITE_NOT_FOUND');
-      }
-
-      // The owner and the requester blocked one another (R33.1): no join request either way.
-      if (await isBlockedBetween(tx, actor.id, invite.group.ownerId)) {
-        throw new GroupError('Вступить в эту группу нельзя', 403, 'USER_BLOCKED');
-      }
+      const target = await findJoinableInviteGroup(tx, actor.id, token);
 
       const membership = await tx.groupMembership.findUnique({
-        where: { groupId_userId: { groupId: invite.group.id, userId: actor.id } },
+        where: { groupId_userId: { groupId: target.id, userId: actor.id } },
         select: { status: true },
       });
 
@@ -576,14 +624,14 @@ export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, _r
         updatedAt: true,
       } as const;
       const group = {
-        id: invite.group.id,
-        name: invite.group.name,
-        ownerId: invite.group.ownerId,
-        owner: invite.group.owner,
+        id: target.id,
+        name: target.name,
+        ownerId: target.ownerId,
+        owner: target.owner,
       };
 
       const existing = await tx.groupJoinRequest.findUnique({
-        where: { groupId_userId: { groupId: invite.group.id, userId: actor.id } },
+        where: { groupId_userId: { groupId: target.id, userId: actor.id } },
         select: { ...requestSelect, resolvedAt: true },
       });
 
@@ -619,12 +667,12 @@ export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, _r
             select: requestSelect,
           })
         : await tx.groupJoinRequest.create({
-            data: { groupId: invite.group.id, userId: actor.id, status: 'pending' },
+            data: { groupId: target.id, userId: actor.id, status: 'pending' },
             select: requestSelect,
           });
 
       await createAuditLog(tx, {
-        groupId: invite.group.id,
+        groupId: target.id,
         actorId: actor.id,
         targetUserId: actor.id,
         action: 'group_join_requested',
@@ -703,26 +751,7 @@ export async function resolveJoinRequest(
 ) {
   const result = await prisma.$transaction(async (tx) => {
     const group = await requireGroupManageAccess(tx, actor, groupId);
-    const request = await tx.groupJoinRequest.findFirst({
-      where: {
-        id: requestId,
-        groupId: group.id,
-        group: { deletedAt: null },
-      },
-      select: {
-        id: true,
-        groupId: true,
-        userId: true,
-        status: true,
-        user: { select: memberUserPublicSelect },
-      },
-    });
-
-    if (!request) throw new GroupError('Заявка не найдена', 404, 'GROUP_JOIN_REQUEST_NOT_FOUND');
-    if (request.status !== 'pending') throw new GroupError('Заявка уже обработана', 409, 'GROUP_JOIN_REQUEST_ALREADY_RESOLVED');
-    if (action === 'approve' && (await isBlockedBetween(tx, group.ownerId, request.userId))) {
-      throw new GroupError('Нельзя принять заявку: пользователь заблокирован', 403, 'USER_BLOCKED');
-    }
+    const request = await findResolvableJoinRequest(tx, group, requestId, action);
 
     const now = new Date();
     const nextStatus = action === 'approve' ? 'approved' : 'rejected';
