@@ -36,6 +36,7 @@ npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик
 - Нативные плагины: iOS `ios/App/App/Plugins/*.swift` (регистрация в `MainViewController.swift`), Android `android/app/src/main/java/app/pushuptracker/mobile/plugins/*.kt` (регистрация в `MainActivity.java`): SecureToken, BackgroundUpload, HealthBridge, RepCounter, PushConfig (только Android)
 - Строки UI приложения — `src/i18n/messages/features/native-app.ts`
 - `docs/architecture.md` — поток данных (в т.ч. раздел «Приложения iOS/Android»), границы модулей, соглашения; `docs/adr/` — решения. Папка `docs/` ЛОКАЛЬНАЯ, в git не попадает (`.git/info/exclude`)
+- APK для тестеров — прямая ссылка `/downloads/<имя>.apk` (`src/app/downloads/[file]/route.ts`, `src/lib/downloads.ts`), файлы в томе `pushup_downloads_data` (`/app/downloads`, не в бэкапе); новую версию класть `docker cp` во временное `.имя.tmp` и `mv` под тем же именем; на сайте ссылки нет
 - Деплой — `./deploy.sh` с локальным `.deploy.env` (образец `.deploy.env.example`); без прямой просьбы не запускать
 
 ## Подводные камни
@@ -81,6 +82,7 @@ npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик
 - `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, `FCM_PRIVATE_KEY` — пуши Android через FCM HTTP v1; пусто — канал выключен
 - `ANDROID_APP_PACKAGE`, `ANDROID_CERT_SHA256` — `/.well-known/assetlinks.json` (App Links); `APPLE_TEAM_ID`, `APPLE_BUNDLE_ID` — `/.well-known/apple-app-site-association`; пусто — 404
 - `LEGAL_OPERATOR_NAME`, `LEGAL_CONTACT_EMAIL` — оператор и контакт на `/privacy`, `/terms`, `/support`, `/account-deletion`; значения только в env сервера (репозиторий публичный), пусто — видимая заглушка
+- `DOWNLOADS_DIR` — папка файлов для `/downloads`; пусто = `<cwd>/downloads` (в контейнере `/app/downloads`)
 - `SCHEDULER_ENABLED` — `1` включает фоновый планировщик (только прод)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_API_BASE` — бот (без токена Telegram скрыт); вебхук ставит `scripts/telegram-set-webhook.ts`
 
