@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { PASSWORD_MIN_LENGTH } from '@/lib/account-validation';
+import { moderationText } from '@/i18n/messages/features/moderation';
 
 type UserRow = {
   id: string;
@@ -478,7 +479,10 @@ export default function AdminUsersClient() {
           <p>{tt('Управление профилями, правами доступа, паролями и поощрениями.')}</p>
           <p className="muted">{tt('Нажмите на пользователя, чтобы открыть все данные и действия.')}</p>
         </div>
-        <button className="btn btn-secondary" onClick={load}>{tt('Обновить')}</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <a className="btn btn-secondary" href="/admin/reports">{moderationText(locale).adminReportsLink}</a>
+          <button className="btn btn-secondary" onClick={load}>{tt('Обновить')}</button>
+        </div>
       </div>
 
       {error ? <div className="error-box">{error}</div> : null}

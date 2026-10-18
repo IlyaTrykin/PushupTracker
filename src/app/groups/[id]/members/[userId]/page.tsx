@@ -16,6 +16,8 @@ import { getIntlLocale, t } from '@/i18n/translate';
 import { appendQuery, groupHref, groupMemberHref } from '@/lib/app-routes';
 import { hardNavigate } from '@/lib/platform';
 import { useRouteParam } from '@/lib/use-route-param';
+import { useAuth } from '@/auth/provider';
+import ModerationActions from '@/components/ModerationActions';
 import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, isLoadedExercise, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 type MemberItem = {
@@ -344,6 +346,7 @@ export default function GroupMemberDetailPage() {
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
   const router = useRouter();
+  const { user: authUser } = useAuth();
   const searchParams = useSearchParams();
   const groupId = useRouteParam('id') || '';
   const memberId = useRouteParam('userId') || '';
@@ -766,6 +769,19 @@ export default function GroupMemberDetailPage() {
           <div style={eyebrow}>{tt('Участник группы')}</div>
           <h1 style={heroTitle}>{member.user.username}</h1>
           <p style={heroText}>{member.isOwner ? tt('Владелец') : tt('Участник')}</p>
+          {authUser?.id && member.userId !== authUser.id ? (
+            <ModerationActions
+              targetUserId={member.userId}
+              targetUsername={member.user.username}
+              context="group"
+              contextId={group.id}
+              contextLabel={group.name}
+              onMessage={(message, kind) => {
+                              setError(kind === 'error' ? message : null);
+                              setInfo(kind === 'info' ? message : null);
+                            }}
+            />
+          ) : null}
         </div>
         <div style={heroActions}>
           {previousMember ? (

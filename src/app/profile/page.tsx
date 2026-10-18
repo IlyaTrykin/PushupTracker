@@ -5,6 +5,7 @@ import { useAuth } from '@/auth/provider';
 import { PASSWORD_MIN_LENGTH } from '@/lib/account-validation';
 import NotificationSettings from './NotificationSettings';
 import HealthSettings from './HealthSettings';
+import BlockedUsers from './BlockedUsers';
 import TelegramConnect from '@/components/TelegramConnect';
 import { useI18n } from '@/i18n/provider';
 import { useRouter } from 'next/navigation';
@@ -589,6 +590,8 @@ export default function ProfilePage() {
         ) : null}
         <NotificationSettings />
       </section>
+
+      <BlockedUsers />
 
       <section style={panelCard}>
         <div style={sectionTitle}>{privacyText.profileLink}</div>

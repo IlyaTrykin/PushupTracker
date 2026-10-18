@@ -5,6 +5,7 @@ import { challengeInviteMessage, notifyUsers } from '@/lib/notify';
 import { isExerciseType } from '@/lib/exercises';
 import { dayKeyToDbDate, parseDayKey } from '@/lib/calendar-day';
 import { hitRateLimit, tooManyRequests } from '@/lib/rate-limit';
+import { loadBlockedPeerIds } from '@/lib/blocks';
 import {
   CHALLENGE_CREATE_LIMIT_PER_DAY,
   CHALLENGE_NAME_MAX_LENGTH,
@@ -179,10 +180,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const invitedIds = invited.map((username) => friends.get(username) as string);
+    // Nobody blocked in either direction can be invited (R33.1).
+    const blocked = await loadBlockedPeerIds(prisma, userId, invitedIds);
+    if (blocked.size) {
+      return jsonError('Пригласить этого пользователя нельзя', 403, undefined, 'USER_BLOCKED');
+    }
+
     const limit = await hitRateLimit(`challenge-create:${userId}`, CHALLENGE_CREATE_LIMIT_PER_DAY, 24 * 60 * 60);
     if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
-
-    const invitedIds = invited.map((username) => friends.get(username) as string);
 
     const created = await prisma.challenge.create({
       data: {

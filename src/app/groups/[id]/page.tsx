@@ -20,6 +20,7 @@ import { t } from '@/i18n/translate';
 import { appendQuery, groupMemberHref } from '@/lib/app-routes';
 import { hardNavigate, publicLink } from '@/lib/platform';
 import { useRouteParam } from '@/lib/use-route-param';
+import ModerationActions from '@/components/ModerationActions';
 import { EXERCISE_ORDER, createByExercise, exerciseIcon, isExerciseType, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 type MemberItem = {
@@ -1399,6 +1400,20 @@ export function GroupPageClient({ view = 'overview' }: { view?: GroupView }) {
                           <button type="button" style={btnDanger} onClick={() => void removeMember(member.userId)}>
                             {tt('Исключить')}
                           </button>
+                        ) : null}
+                        {user?.id && member.userId !== user.id ? (
+                          <ModerationActions
+                            targetUserId={member.userId}
+                            targetUsername={member.user.username}
+                            context="group"
+                            contextId={group.id}
+                            contextLabel={group.name}
+                            compact
+                            onMessage={(message, kind) => {
+                              setError(kind === 'error' ? message : null);
+                              setInfo(kind === 'info' ? message : null);
+                            }}
+                          />
                         ) : null}
                       </div>
                     </td>

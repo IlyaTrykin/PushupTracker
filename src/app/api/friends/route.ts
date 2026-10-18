@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { claimFriendRequestNotification, cooldownRetryDays, isUniqueViolation } from '@/lib/groups';
 import { friendRequestAcceptedMessage, friendRequestMessage, notifyUsers } from '@/lib/notify';
+import { BlockError, assertNotBlocked, loadBlockedPeerIds } from '@/lib/blocks';
 
 type JsonObject = Record<string, unknown>;
 // Чужой email в ответах не отдаём (S04): только ник и аватар.
@@ -105,7 +106,10 @@ export async function GET(request: NextRequest) {
       return acc;
     }, []);
 
-    if (!base.length) return NextResponse.json([]);
+    // Blocked in either direction (R33.1): not in the list or the comparison table.
+    const blocked = await loadBlockedPeerIds(prisma, userId, friendIds);
+    const visible = base.filter((row) => !blocked.has(row.userId));
+    if (!visible.length) return NextResponse.json([]);
 
     const [follows, hides] = await Promise.all([
       prisma.friendFollow.findMany({
@@ -121,7 +125,7 @@ export async function GET(request: NextRequest) {
     const hidden = new Set(hides.map((x) => x.friendId));
 
     return NextResponse.json(
-      base.map((r) => ({ ...r, isFollowing: following.has(r.userId), hiddenInComparison: hidden.has(r.userId) })),
+      visible.map((r) => ({ ...r, isFollowing: following.has(r.userId), hiddenInComparison: hidden.has(r.userId) })),
     );
   } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
@@ -148,6 +152,8 @@ export async function POST(request: NextRequest) {
 
     if (!target || target.deletedAt) return jsonError('Пользователь с таким ником не найден', 404);
     if (target.id === userId) return jsonError('Нельзя добавить в друзья самого себя', 400);
+    // Either of the two blocked the other (R33.1): no request either way.
+    await assertNotBlocked(prisma, userId, target.id);
 
     const outcome = await prisma.$transaction(async (tx) => {
       await lockFriendPair(tx, userId, target.id);
@@ -239,6 +245,7 @@ export async function POST(request: NextRequest) {
     if (getErrorMessage(e) === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
     if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
     if (e instanceof FriendRequestRejection) return jsonError(e.userMessage, e.status, e.code, e.details);
+    if (e instanceof BlockError) return jsonError(e.message, e.status, e.code);
     if (isUniqueViolation(e)) return jsonError('Заявка уже отправлена и ожидает подтверждения', 409, 'FRIEND_REQUEST_PENDING');
     console.error('FRIENDS POST ERROR:', e);
     return jsonError('Внутренняя ошибка сервера', 500);
@@ -266,6 +273,7 @@ export async function PATCH(request: NextRequest) {
     if (action === 'accept') {
       if (friendship.friendId !== userId) return jsonError('Нет доступа', 403);
       if (friendship.status === 'accepted') return NextResponse.json({ ok: true, status: 'accepted' });
+      await assertNotBlocked(prisma, friendship.userId, friendship.friendId);
       // Условное обновление: повторное или параллельное «принять» не шлёт второе уведомление.
       const claimed = await prisma.friendship.updateMany({
         where: { id: friendshipId, status: 'pending' },
@@ -339,6 +347,7 @@ export async function PATCH(request: NextRequest) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
     if (getErrorMessage(e) === 'BAD_JSON') return jsonError('Ожидался корректный JSON в теле запроса', 400);
     if (getErrorMessage(e) === 'INTERNAL_ERROR') return jsonError('Внутренняя ошибка сервера', 500);
+    if (e instanceof BlockError) return jsonError(e.message, e.status, e.code);
     if (isUniqueViolation(e)) return jsonError('Конфликт одновременных изменений, повторите', 409, 'CONFLICT');
     console.error('FRIENDS PATCH ERROR:', e);
     return jsonError('Внутренняя ошибка сервера', 500);

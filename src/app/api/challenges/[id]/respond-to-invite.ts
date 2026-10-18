@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
 import { challengeResponseMessage, notifyUsers } from '@/lib/notify';
+import { isBlockedBetween } from '@/lib/blocks';
 
 type InviteAnswer = 'accepted' | 'declined';
 
@@ -39,6 +40,11 @@ export async function respondToChallengeInvite(
     }
 
     if (participant.status === answer) return NextResponse.json({ ok: true, status: answer });
+    // An invitation from someone blocked in either direction cannot be accepted (R33.1).
+    const { creatorId: inviterId } = participant.challenge;
+    if (answer === 'accepted' && inviterId && inviterId !== user.id && (await isBlockedBetween(prisma, user.id, inviterId))) {
+      return NextResponse.json({ error: 'Принять приглашение нельзя: пользователь заблокирован', code: 'USER_BLOCKED' }, { status: 403 });
+    }
     // The creator takes part in his own challenge; other statuses are not answers to change.
     const changeable = participant.status === 'pending' || participant.status === 'accepted' || participant.status === 'declined';
     if (!changeable || participant.challenge.creatorId === user.id) {

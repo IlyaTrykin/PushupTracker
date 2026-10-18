@@ -8,6 +8,8 @@ import { useAuth } from '@/auth/provider';
 import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
 import InviteFriendCard from '@/components/InviteFriendCard';
 import WeeklyLeague from '@/components/WeeklyLeague';
+import ModerationActions, { ReportSheet } from '@/components/ModerationActions';
+import { fillModeration, moderationText } from '@/i18n/messages/features/moderation';
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
 import { friendsCompareMessages } from '@/i18n/messages/features/friends-compare';
@@ -328,6 +330,18 @@ export default function FriendsPage() {
   const [modalReactionPickerWorkoutId, setModalReactionPickerWorkoutId] = useState<string | null>(null);
   const [feedReactionPickerWorkoutId, setFeedReactionPickerWorkoutId] = useState<string | null>(null);
   const [feedPeriod, setFeedPeriod] = useState<FeedPeriod>('30d');
+  const moderation = moderationText(locale);
+  // A reaction being reported (R33): opened from the reactions list under an open feed row.
+  const [reactionReport, setReactionReport] = useState<WorkoutReactionPayload['recent'][number] | null>(null);
+  const showModerationMessage = useCallback((message: string, kind: 'info' | 'error') => {
+    if (kind === 'info') {
+      setError(null);
+      setInfo(message);
+    } else {
+      setInfo(null);
+      setError(message);
+    }
+  }, []);
 
   const applyPayload = useCallback((payload: FriendsCachePayload) => {
     setMe(payload.me || null);
@@ -1130,9 +1144,17 @@ export default function FriendsPage() {
                           <div style={{ fontSize: 12, color: '#6b7280' }}>{new Date(r.createdAt).toLocaleString(localeTag)}</div>
                         </div>
                       </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                         <button type="button" style={btnPrimary} onClick={() => handleRespondRequest(r.friendshipId, 'accept')}>{tt('Принять')}</button>
                         <button type="button" style={btnDanger} onClick={() => handleRespondRequest(r.friendshipId, 'decline')}>{tt('Отклонить')}</button>
+                        <ModerationActions
+                          targetUserId={r.userId}
+                          targetUsername={r.username}
+                          context="profile"
+                          compact
+                          onMessage={showModerationMessage}
+                          onBlocked={() => void loadAll()}
+                        />
                       </div>
                     </div>
                   ))}
@@ -1298,6 +1320,30 @@ export default function FriendsPage() {
                         })}
                       </div>
                     </div>
+                    {pickerOpen ? (() => {
+                      const others = (reaction?.recent ?? []).filter((r) => r.userId !== me?.id);
+                      if (!others.length) return null;
+                      return (
+                        <div style={reactionPeopleList} onClick={(e) => e.stopPropagation()} data-testid="reaction-people">
+                          <span style={{ fontSize: 12, color: '#475569', fontWeight: 800 }}>{moderation.reactionsTitle}</span>
+                          {others.map((r) => (
+                            <span key={`feed-people-${w.id}-${r.id}`} style={reactionPersonRow}>
+                              <AvatarMini src={r.avatarPath} />
+                              <span style={{ fontWeight: 800 }}>{r.username}</span>
+                              <span>{r.emoji}</span>
+                              <button
+                                type="button"
+                                style={reactionReportBtn}
+                                onClick={() => setReactionReport(r)}
+                                aria-label={fillModeration(moderation.reportReaction, { emoji: r.emoji, name: r.username })}
+                              >
+                                {moderation.report}
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })() : null}
                   </article>
                 );
               })}
@@ -1341,6 +1387,15 @@ export default function FriendsPage() {
               <div style={{ color: '#000', fontSize: 13, marginBottom: 2 }}>
                 {tt('В календаре показаны все виды тренировок.')}
               </div>
+              {selectedFriendObj ? (
+                <ModerationActions
+                  targetUserId={selectedFriendObj.userId}
+                  targetUsername={selectedFriendObj.username}
+                  context="profile"
+                  onMessage={showModerationMessage}
+                  onBlocked={() => void loadAll()}
+                />
+              ) : null}
             </div>
 
             {selectedFriendDayMap.size === 0 ? (
@@ -1548,9 +1603,51 @@ export default function FriendsPage() {
           </section>
         </div>
       ) : null}
+
+      {reactionReport ? (
+        <ReportSheet
+          targetUserId={reactionReport.userId}
+          targetUsername={reactionReport.username}
+          context="reaction"
+          contextId={reactionReport.id}
+          contextLabel={reactionReport.emoji}
+          onClose={() => setReactionReport(null)}
+          onSent={(message) => showModerationMessage(message, 'info')}
+        />
+      ) : null}
     </div>
   );
 }
+
+const reactionPeopleList: React.CSSProperties = {
+  display: 'grid',
+  gap: 6,
+  marginTop: 8,
+  padding: '8px 10px',
+  borderRadius: 14,
+  background: 'rgba(255, 255, 255, 0.9)',
+  border: '1px solid #e2e8f0',
+};
+
+const reactionPersonRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  fontSize: 13,
+  color: '#0f172a',
+};
+
+const reactionReportBtn: React.CSSProperties = {
+  marginLeft: 'auto',
+  border: '1px solid #fca5a5',
+  borderRadius: 999,
+  background: '#fff',
+  color: '#b91c1c',
+  fontWeight: 800,
+  fontSize: 12,
+  padding: '4px 10px',
+  cursor: 'pointer',
+};
 
 const card: React.CSSProperties = {
   padding: 18,

@@ -44,6 +44,10 @@ model User {
   comparisonHides          FriendComparisonHide[]   @relation("ComparisonHideOwner")
   comparisonHiddenBy       FriendComparisonHide[]   @relation("ComparisonHideFriend")
   workoutReactions         WorkoutReaction[]
+  blocksMade               UserBlock[]              @relation("UserBlockBlocker")
+  blockedBy                UserBlock[]              @relation("UserBlockBlocked")
+  reportsMade              UserReport[]             @relation("UserReportReporter")
+  reportsReceived          UserReport[]             @relation("UserReportTarget")
   pushSubscriptions        PushSubscription[]
   pushDevices              PushDevice[]
   ownedGroups              Group[]                  @relation("GroupOwner")
@@ -535,4 +539,42 @@ model RateLimitBucket {
   key         String   @id
   windowStart DateTime
   count       Int
+}
+
+// Blocking (R33.1): the blocker and the blocked do not see each other in friends' feeds, the league
+// and the comparison; requests and invitations between them are refused by the server.
+model UserBlock {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("UserBlockBlocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("UserBlockBlocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+// A report on a user (R33): from the person's profile, a group or a reaction. Read in /admin/reports.
+model UserReport {
+  id           String   @id @default(uuid())
+  reporterId   String
+  targetUserId String
+  // 'profile' | 'group' | 'reaction'
+  context      String
+  // group id for 'group', reaction id for 'reaction'
+  contextId    String?
+  // see REPORT_REASONS in src/lib/reports.ts
+  reason       String
+  text         String?
+  // 'new' | 'reviewed'
+  status       String   @default("new")
+  createdAt    DateTime @default(now())
+
+  reporter   User @relation("UserReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetUser User @relation("UserReportTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([targetUserId])
+  @@index([reporterId, createdAt])
 }

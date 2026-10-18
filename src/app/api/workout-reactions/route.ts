@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
 import { friendReactionMessage, notifyUsers } from '@/lib/notify';
 import { isUniqueViolation } from '@/lib/groups';
+import { isBlockedBetween, loadBlockedPeerIds, visibleReactions } from '@/lib/blocks';
 
 const ALLOWED_EMOJI = ['👍', '🔥', '👎', '💩'] as const;
 const ALLOWED_EMOJI_SET = new Set<string>(ALLOWED_EMOJI);
@@ -100,14 +101,16 @@ async function getAccessibleWorkoutIds(userId: string, requestedWorkoutIds: stri
     }
   }
 
-  return workouts.filter((w) => accessibleOwners.has(w.userId)).map((w) => w.id);
+  // Workouts of someone blocked in either direction (R33.1) are out of reach.
+  const blocked = await loadBlockedPeerIds(prisma, userId, ownerIds);
+  return workouts.filter((w) => accessibleOwners.has(w.userId) && !blocked.has(w.userId)).map((w) => w.id);
 }
 
 async function buildReactionMap(userId: string, requestedWorkoutIds: string[]): Promise<Record<string, ReactionPayload>> {
   const accessibleWorkoutIds = await getAccessibleWorkoutIds(userId, requestedWorkoutIds);
   if (!accessibleWorkoutIds.length) return {};
 
-  const reactions = await prisma.workoutReaction.findMany({
+  const allReactions = await prisma.workoutReaction.findMany({
     where: { workoutId: { in: accessibleWorkoutIds } },
     orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     select: {
@@ -119,6 +122,11 @@ async function buildReactionMap(userId: string, requestedWorkoutIds: string[]): 
       user: { select: { username: true, avatarPath: true } },
     },
   });
+  // Reactions of people the viewer blocked or was blocked by are not shown (R33.1).
+  const reactions = visibleReactions(
+    allReactions,
+    await loadBlockedPeerIds(prisma, userId, [...new Set(allReactions.map((r) => r.userId))]),
+  );
 
   const base = new Map<
     string,
@@ -206,6 +214,7 @@ export async function POST(request: NextRequest) {
     if (!workout) return jsonError('Тренировка не найдена', 404);
 
     if (workout.userId !== userId) {
+      if (await isBlockedBetween(prisma, userId, workout.userId)) return jsonError('Нет доступа к тренировке', 403);
       const [friendLink, sharedGroup] = await Promise.all([
         prisma.friendship.findFirst({
           where: {

@@ -18,6 +18,7 @@ import { pointsToTenths, tenthsToPoints } from './exercise-points';
 import { formatGoalPoints } from './daily-goal';
 import { fillLeagueText, leagueMessages, leaguePlaceToken, leaguePointsWord } from '../i18n/messages/features/league';
 import type { LocalizedMessage, NotifyLocale } from './notify';
+import { loadBlockedPeerIds, type BlockReadDb } from './blocks';
 
 export type LeagueEntry = { userId: string; points: number };
 export type LeagueRow = { userId: string; points: number; place: number };
@@ -126,17 +127,34 @@ async function db() {
   return (await import('./prisma')).prisma;
 }
 
-/** Accepted friends in either direction, soft-deleted users left out. */
-export async function loadFriendIds(userId: string): Promise<string[]> {
-  const prisma = await db();
+/** The part of Prisma `loadFriendIds` reads (`prisma` fits as is). */
+export type LeagueFriendsDb = BlockReadDb & {
+  friendship: {
+    findMany(args: {
+      where: { status: 'accepted'; OR: Array<{ userId: string } | { friendId: string }> };
+      select: { userId: true; friendId: true };
+    }): Promise<Array<{ userId: string; friendId: string }>>;
+  };
+  user: {
+    findMany(args: { where: { id: { in: string[] }; deletedAt: null }; select: { id: true } }): Promise<Array<{ id: string }>>;
+  };
+};
+
+/** Accepted friends in either direction; soft-deleted and blocked (either way) users left out. */
+export async function loadFriendIds(userId: string, client?: LeagueFriendsDb): Promise<string[]> {
+  const prisma: LeagueFriendsDb = client ?? (await db());
   const links = await prisma.friendship.findMany({
     where: { status: 'accepted', OR: [{ userId }, { friendId: userId }] },
     select: { userId: true, friendId: true },
   });
-  const ids = [...new Set(links.map((link) => (link.userId === userId ? link.friendId : link.userId)))];
+  const linked = [...new Set(links.map((link) => (link.userId === userId ? link.friendId : link.userId)))];
+  // Blocked in either direction (R33.1): not in the league, the weekly notices or the feed.
+  const blocked = await loadBlockedPeerIds(prisma, userId, linked);
+  const ids = linked.filter((id) => !blocked.has(id));
   if (!ids.length) return [];
   const active = await prisma.user.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true } });
-  return active.map((user) => user.id);
+  const activeIds = new Set(active.map((user) => user.id));
+  return ids.filter((id) => activeIds.has(id));
 }
 
 /** Points of each user for the days start..end (inclusive), 0 for users without workouts. */

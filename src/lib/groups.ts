@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import type { AuthUser } from '@/lib/auth';
 import { groupJoinRequestMessage, groupJoinResolvedMessage, notifyUsers } from '@/lib/notify';
 import { addDays, dayKeyInZone, dayKeyToDbDate } from '@/lib/calendar-day';
+import { isBlockedBetween } from '@/lib/blocks';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
 export type GroupActor = Pick<AuthUser, 'id' | 'isAdmin' | 'username'>;
@@ -552,6 +553,11 @@ export async function submitJoinRequest(actor: GroupActor, rawToken: unknown, _r
         throw new GroupError('Ссылка-приглашение недействительна', 404, 'GROUP_INVITE_NOT_FOUND');
       }
 
+      // The owner and the requester blocked one another (R33.1): no join request either way.
+      if (await isBlockedBetween(tx, actor.id, invite.group.ownerId)) {
+        throw new GroupError('Вступить в эту группу нельзя', 403, 'USER_BLOCKED');
+      }
+
       const membership = await tx.groupMembership.findUnique({
         where: { groupId_userId: { groupId: invite.group.id, userId: actor.id } },
         select: { status: true },
@@ -714,6 +720,9 @@ export async function resolveJoinRequest(
 
     if (!request) throw new GroupError('Заявка не найдена', 404, 'GROUP_JOIN_REQUEST_NOT_FOUND');
     if (request.status !== 'pending') throw new GroupError('Заявка уже обработана', 409, 'GROUP_JOIN_REQUEST_ALREADY_RESOLVED');
+    if (action === 'approve' && (await isBlockedBetween(tx, group.ownerId, request.userId))) {
+      throw new GroupError('Нельзя принять заявку: пользователь заблокирован', 403, 'USER_BLOCKED');
+    }
 
     const now = new Date();
     const nextStatus = action === 'approve' ? 'approved' : 'rejected';

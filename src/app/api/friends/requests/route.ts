@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, AuthError } from '@/lib/auth';
+import { loadBlockedPeerIds } from '@/lib/blocks';
 
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -37,15 +38,18 @@ export async function GET(request: NextRequest) {
     }),
   ]);
 
+  // Requests from or to someone blocked either way (R33.1) are not shown.
+  const blocked = await loadBlockedPeerIds(prisma, userId, [...incoming.map((r) => r.user.id), ...outgoing.map((r) => r.friend.id)]);
+
   return NextResponse.json({
-    incoming: incoming.map((r) => ({
+    incoming: incoming.filter((r) => !blocked.has(r.user.id)).map((r) => ({
       friendshipId: r.id,
       userId: r.user.id,
       username: r.user.username,
       avatarPath: r.user.avatarPath,
       createdAt: r.createdAt,
     })),
-    outgoing: outgoing.map((r) => ({
+    outgoing: outgoing.filter((r) => !blocked.has(r.friend.id)).map((r) => ({
       friendshipId: r.id,
       userId: r.friend.id,
       username: r.friend.username,
