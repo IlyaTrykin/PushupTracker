@@ -145,3 +145,25 @@ export async function clearToken(): Promise<boolean> {
 export function currentToken(): string | null {
   return cachedToken;
 }
+
+/**
+ * Sign-in got a token but `saveToken` failed: `POST /api/logout` with that token (best effort, the
+ * answer is not waited for long), so the server does not keep a session nobody can sign out of.
+ */
+export async function releaseUnsavedSession(token: string, deps: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<boolean> {
+  const send = deps.fetch ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 5000);
+  try {
+    const res = await send('/api/logout', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}

@@ -16,7 +16,12 @@ export type ServerWorkoutForHealth = {
   time: string;
 };
 
-export type OwnHealthRecord = { externalId: string; fingerprint: string };
+/**
+ * A record the app wrote to Health. `owner` — `healthOwnerTag` of the account it was written for
+ * (iOS metadata `pushup.owner`, Health Connect — prefix of `clientRecordId`); missing on records
+ * written before accounts were told apart.
+ */
+export type OwnHealthRecord = { externalId: string; fingerprint: string; owner?: string | null };
 
 export type HealthReconcilePlan = {
   toSave: ServerWorkoutForHealth[];
@@ -30,6 +35,13 @@ export type HealthReconcileWindow = {
   since: string;
   /** Outbox entries of this device not on the server yet: their records stay. */
   pendingIds?: readonly string[];
+  /**
+   * `healthOwnerTag` of the signed-in account: records of other accounts on this phone are left
+   * alone. Without it every record counts (one account).
+   */
+  owner?: string;
+  /** Records without an owner (written by an older version) are taken over by this account. */
+  claimLegacy?: boolean;
 };
 
 /** The regular pass looks this far back; the first one after switching on — the whole history. */
@@ -70,14 +82,22 @@ export function workoutFingerprint(
   return fnv1a32([w.exerciseType, w.reps, w.durationSeconds ?? '', normalizeTime(w.time)].join('|'));
 }
 
+/** Short tag of an account on its Health records: 8 hex digits of `userId`, not the id itself. */
+export function healthOwnerTag(userId: string): string {
+  return fnv1a32(`owner:${userId}`);
+}
+
 export function reconcileSince(now: Date, days: number = HEALTH_RECONCILE_DAYS): string {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
 /**
  * - `toSave`: server workouts inside the window without a record;
- * - `toRewrite`: server workouts (any time) whose record has another fingerprint, or several records;
+ * - `toRewrite`: server workouts (any time) whose record has another fingerprint, or several records,
+ *   or a record without an owner that this account takes over (it gets the owner tag);
  * - `toDelete`: records (they come from the window) of no server workout and of no queued entry.
+ * With `owner`, only this account's records (and, with `claimLegacy`, ones without an owner) are
+ * looked at: another account's records on the same phone are never deleted or rewritten.
  */
 export function planHealthReconcile(
   server: ServerWorkoutForHealth[],
@@ -86,8 +106,10 @@ export function planHealthReconcile(
 ): HealthReconcilePlan {
   const sinceMs = new Date(window.since).getTime();
   const pending = new Set(window.pendingIds ?? []);
+  const owner = window.owner;
+  const mine = owner === undefined ? own : own.filter((r) => (r.owner ? r.owner === owner : Boolean(window.claimLegacy)));
   const recordsById = new Map<string, OwnHealthRecord[]>();
-  for (const record of own) {
+  for (const record of mine) {
     const list = recordsById.get(record.externalId);
     if (list) list.push(record);
     else recordsById.set(record.externalId, [record]);
@@ -107,7 +129,8 @@ export function planHealthReconcile(
       continue;
     }
     const fingerprint = workoutFingerprint(w);
-    if (records.length > 1 || records[0].fingerprint !== fingerprint) toRewrite.push(w);
+    const untagged = owner !== undefined && !records[0].owner;
+    if (records.length > 1 || untagged || records[0].fingerprint !== fingerprint) toRewrite.push(w);
   }
 
   const toDelete = [...recordsById.keys()].filter((id) => !serverIds.has(id) && !pending.has(id));

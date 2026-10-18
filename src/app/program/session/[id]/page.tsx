@@ -10,6 +10,8 @@ import { t } from '@/i18n/translate';
 import { programSessionMessages } from '@/i18n/messages/features/program-session';
 import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
 import type { ExerciseType } from '@/lib/exercises';
+import { syncWorkoutToHealth } from '@/lib/health/health';
+import { programSetHealthSource } from '@/lib/health/mapping';
 
 type TrainingSet = {
   id: string;
@@ -489,11 +491,26 @@ export default function ProgramSessionPage() {
 
     try {
       await primeAudioPlayback();
-      await fetchJson(`/api/program/session/${session.id}/set/${currentSet.id}`, {
+      const saved = await fetchJson(`/api/program/session/${session.id}/set/${currentSet.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actualReps }),
       });
+      // Apple Health / Health Connect: the set's workout is written at once (app only, when on),
+      // as the server stored it — the next reconcile finds it in place.
+      const savedSet = saved && typeof saved.set === 'object' && saved.set ? (saved.set as Record<string, unknown>) : null;
+      const healthSource = program?.exerciseType && savedSet
+        ? programSetHealthSource(
+            {
+              id: currentSet.id,
+              setNumber: currentSet.setNumber,
+              actualReps: typeof savedSet.actualReps === 'number' ? savedSet.actualReps : null,
+              completedAt: typeof savedSet.completedAt === 'string' ? savedSet.completedAt : null,
+            },
+            program.exerciseType,
+          )
+        : null;
+      if (healthSource) void syncWorkoutToHealth(healthSource);
 
       setSession((prev) => {
         if (!prev) return prev;

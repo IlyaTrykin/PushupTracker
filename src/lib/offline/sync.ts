@@ -3,12 +3,17 @@
  * Stops on the first network failure (offline), on 401 (wait for sign-in) and on 429
  * (paused until Retry-After, the pause survives reloads).
  *
+ * An entry deleted by the user after it may have reached the server («будет удалена»,
+ * `deleteOnServer`) goes out in the same order as `DELETE /api/workouts {clientRequestId}`.
+ *
  * Window events: 'outboxItemSent' {userId, id, outcome} after every answer from the server,
- * 'outboxFlushed' {userId, sent, rejected, stopped} after a flush that sent something.
+ * 'outboxFlushed' {userId, sent, deleted, rejected, stopped} after a flush that sent or deleted something.
  */
 
+import { isBackgroundUploadActive } from './background-upload';
 import {
   applyOutcome,
+  classifyDeleteResponse,
   classifyResponse,
   holdsLease,
   needsFollowUpEdit,
@@ -20,9 +25,19 @@ import {
 } from './outbox-core';
 import { outboxStore } from './outbox-store';
 
-export type FlushResult = { sent: number; rejected: number; stopped?: 'unauthorized' | 'rate-limited' | 'offline' };
+export type FlushResult = {
+  sent: number;
+  /** Tombstones confirmed by the server. */
+  deleted?: number;
+  rejected: number;
+  stopped?: 'unauthorized' | 'rate-limited' | 'offline';
+  /** With `stopped: 'offline'` after a failed request: `network`, `timeout` or `HTTP 5xx`. */
+  retryReason?: string;
+};
 export type FlushDeps = {
   send?(p: OutboxPayload): Promise<SendOutcome>;
+  /** `DELETE /api/workouts {clientRequestId}` of a tombstone. */
+  sendDelete?(clientRequestId: string): Promise<SendOutcome>;
   now?(): Date;
   /** Skip retry pauses (network is back, app resumed, signed in, the user just saved). Never skips a 429 pause. */
   ignoreBackoff?: boolean;
@@ -119,10 +134,36 @@ export async function sendWorkout(p: OutboxPayload): Promise<SendOutcome> {
   }
 }
 
+/**
+ * DELETE /api/workouts {clientRequestId}. Never throws. In the app a native copy still on its way
+ * (queued or running) would land after the delete: the delete waits for it (retry).
+ */
+export async function sendWorkoutDelete(clientRequestId: string): Promise<SendOutcome> {
+  if (await isBackgroundUploadActive(clientRequestId)) return { kind: 'retry', reason: 'background upload' };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
+  try {
+    const res = await fetch('/api/workouts', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientRequestId }),
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    return classifyDeleteResponse(res.status, await readJson(res), res.headers.get('Retry-After'));
+  } catch (error: unknown) {
+    const aborted = error instanceof Error && error.name === 'AbortError';
+    return { kind: 'retry', reason: aborted ? 'timeout' : 'network' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
   const send = deps.send ?? sendWorkout;
+  const sendDelete = deps.sendDelete ?? sendWorkoutDelete;
   const now = deps.now ?? (() => new Date());
-  const result: FlushResult = { sent: 0, rejected: 0 };
+  const result: FlushResult = { sent: 0, deleted: 0, rejected: 0 };
 
   if (readPause(userId) > now().getTime()) return { ...result, stopped: 'rate-limited' };
 
@@ -137,7 +178,7 @@ async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
     const item = await outboxStore.claimNext(userId, now(), pick);
     if (!item) break;
 
-    const outcome = await send(item.payload);
+    const outcome = item.deleteOnServer ? await sendDelete(item.id) : await send(item.payload);
     const applied = applyOutcome(item, outcome, now());
     // Written only while the item is still under this lease (see `holdsLease`).
     await outboxStore.change(item.id, (current) => ({ next: holdsLease(current, item) ? applied.item : undefined, result: null }));
@@ -145,7 +186,8 @@ async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
     emit<OutboxItemSentDetail>(OUTBOX_ITEM_SENT_EVENT, { userId, id: item.id, outcome, item: applied.item });
 
     if (outcome.kind === 'created' || outcome.kind === 'replayed') result.sent += 1;
-    if (outcome.kind === 'rejected') result.rejected += 1;
+    if (outcome.kind === 'deleted') result.deleted = (result.deleted ?? 0) + 1;
+    if (outcome.kind === 'rejected' && !item.deleteOnServer) result.rejected += 1;
     if (applied.stop === 'unauthorized') {
       result.stopped = 'unauthorized';
       break;
@@ -156,11 +198,12 @@ async function runFlush(userId: string, deps: FlushDeps): Promise<FlushResult> {
     }
     if (outcome.kind === 'retry') {
       result.stopped = 'offline';
+      result.retryReason = outcome.reason;
       break;
     }
   }
 
-  if (result.sent > 0) emit<OutboxFlushedDetail>(OUTBOX_FLUSHED_EVENT, { userId, ...result });
+  if (result.sent > 0 || (result.deleted ?? 0) > 0) emit<OutboxFlushedDetail>(OUTBOX_FLUSHED_EVENT, { userId, ...result });
   return result;
 }
 

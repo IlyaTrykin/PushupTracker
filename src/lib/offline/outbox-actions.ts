@@ -3,10 +3,14 @@
  * sender can be tested. The native background copy is taken back first (`cancelBackground`); the
  * write itself checks, in the same storage transaction, that the item is still waiting — an item the
  * sender took meanwhile (it may already be on the server) is refused with `OutboxBusyError`.
+ *
+ * Delete of an entry that may already be on the server (a request went out, or the native copy did)
+ * does not just forget it: the entry becomes «будет удалена» and the sender deletes it on the server
+ * by its `clientRequestId` (`planQueuedRemoval`).
  */
 
 import { cancelBackground, type CancelResult } from './background-upload';
-import { editOutboxItem, isInFlight, type OutboxItem, type OutboxPayloadPatch } from './outbox-core';
+import { editOutboxItem, isInFlight, markForServerDelete, planQueuedRemoval, type OutboxItem, type OutboxPayloadPatch } from './outbox-core';
 import { outboxStore } from './outbox-store';
 import { flushOutbox } from './sync';
 
@@ -60,16 +64,26 @@ export async function updateQueuedItem(userId: string, id: string, patch: Outbox
   return edited;
 }
 
-/** Throws `OutboxBusyError` while the item is being sent or when it went to the server meanwhile. */
-export async function removeQueuedItem(userId: string, id: string, deps: OutboxActionDeps = {}): Promise<void> {
+/**
+ * `'removed'` — the entry never left the device and is gone; `'deleting'` — it may be on the server
+ * and stays as «будет удалена» until the server confirms. Throws `OutboxBusyError` while the item is
+ * being sent or when the sender took it to the server meanwhile.
+ */
+export async function removeQueuedItem(userId: string, id: string, deps: OutboxActionDeps = {}): Promise<'removed' | 'deleting'> {
   const now = deps.now ?? (() => new Date());
   const current = await findItem(userId, id);
-  if (!current) return;
+  if (!current) return 'removed';
+  if (current.deleteOnServer) return 'deleting';
   if (isInFlight(current, now())) throw new OutboxBusyError();
-  if ((await (deps.cancelBackground ?? cancelBackground)(id)) === 'sent') throw alreadySent(userId);
-  // Gone meanwhile means the sender took it to the server; in flight — it may be there already.
-  const removed = await outboxStore.change(id, (latest) =>
-    latest && !isInFlight(latest, now()) ? { next: null, result: true } : { result: false },
-  );
-  if (!removed) throw new OutboxBusyError();
+  const background = await (deps.cancelBackground ?? cancelBackground)(id);
+  // Decided on what is stored now: gone meanwhile means the sender took it to the server (the
+  // dashboard then shows the server record); in flight — refused, it may be there already.
+  const outcome = await outboxStore.change<'removed' | 'deleting' | null>(id, (latest) => {
+    if (!latest || isInFlight(latest, now())) return { result: null };
+    return planQueuedRemoval(latest, background) === 'drop'
+      ? { next: null, result: 'removed' }
+      : { next: markForServerDelete(latest), result: 'deleting' };
+  });
+  if (!outcome) throw new OutboxBusyError();
+  return outcome;
 }

@@ -12,6 +12,7 @@
 import { dayKeyInZone } from '@/lib/calendar-day';
 import { exerciseLabel, getExercise } from '@/lib/exercises';
 import { formatWorkoutValueParts } from '@/lib/exercise-metrics';
+import { programSetClientRequestId, programSetWorkoutTime } from '@/lib/program-plan';
 import { workoutFingerprint } from './reconcile';
 
 export type HealthPlatform = 'apple_health' | 'health_connect';
@@ -29,6 +30,8 @@ export type HealthWorkoutInput = {
   title: string;
   /** `workoutFingerprint` of the workout: a changed workout no longer matches its record. */
   fingerprint: string;
+  /** `healthOwnerTag` of the account the record belongs to (iOS `pushup.owner`, HC `clientRecordId` prefix). */
+  owner?: string;
 };
 
 export type HealthWorkoutSource = {
@@ -110,6 +113,27 @@ export function toHealthWorkout(w: HealthWorkoutSource, platform: HealthPlatform
   if (unit === 'distance') input.distanceMeters = w.reps;
   if (unit === 'reps') input.reps = w.reps;
   return input;
+}
+
+/**
+ * The workout of a just recorded program set, as the server stored it (`programSetWorkoutInput`):
+ * key `programSetClientRequestId`, time = completion + `setNumber` seconds, no duration. Written to
+ * Health at once; the reconcile then finds the same fingerprint and leaves it alone.
+ */
+export function programSetHealthSource(
+  set: { id: string; setNumber: number; actualReps: number | null; completedAt: string | Date | null },
+  exerciseType: string,
+): HealthWorkoutSource | null {
+  if (!set.actualReps || !set.completedAt) return null;
+  const completedAt = new Date(set.completedAt);
+  if (!Number.isFinite(completedAt.getTime())) return null;
+  return {
+    clientRequestId: programSetClientRequestId(set.id),
+    exerciseType,
+    reps: set.actualReps,
+    durationSeconds: null,
+    time: programSetWorkoutTime(completedAt, set.setNumber).toISOString(),
+  };
 }
 
 // --- Import from Health ---

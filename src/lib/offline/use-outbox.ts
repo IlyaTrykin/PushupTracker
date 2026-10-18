@@ -29,14 +29,19 @@ export { OutboxAlreadySentError, OutboxBusyError } from './outbox-actions';
 
 export type UseOutbox = {
   items: OutboxItem[];
-  /** Waiting or being sent (not rejected). */
+  /** Waiting or being sent (not rejected, not «будет удалена»). */
   pendingCount: number;
   rejectedCount: number;
+  /** «Будет удалена»: deleted by the user, waiting for the server to confirm. */
+  deletingCount: number;
   enqueue(p: NewOutboxPayload): Promise<OutboxItem>;
   /** Throws `OutboxBusyError` while the item is being sent (`OutboxAlreadySentError` — sent in the background). */
   update(id: string, patch: OutboxPayloadPatch): Promise<void>;
-  /** Throws `OutboxBusyError` while the item is being sent (`OutboxAlreadySentError` — sent in the background). */
-  remove(id: string): Promise<void>;
+  /**
+   * `'removed'` — gone; `'deleting'` — it may be on the server: «будет удалена» until the server
+   * confirms. Throws `OutboxBusyError` while the item is being sent.
+   */
+  remove(id: string): Promise<'removed' | 'deleting'>;
   flush(opts?: { ignoreBackoff?: boolean }): Promise<FlushResult>;
 };
 
@@ -72,7 +77,11 @@ function useOutboxItems(userId: string | null): OutboxItem[] {
 }
 
 function countPending(items: OutboxItem[]): number {
-  return items.filter((item) => item.status !== 'rejected').length;
+  return items.filter((item) => item.status !== 'rejected' && !item.deleteOnServer).length;
+}
+
+function countDeleting(items: OutboxItem[]): number {
+  return items.filter((item) => item.deleteOnServer).length;
 }
 
 /**
@@ -82,7 +91,8 @@ export function useOutboxSync(): void {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const items = useOutboxItems(userId);
-  const pendingCount = useMemo(() => countPending(items), [items]);
+  // Tombstones wait for the network too: the timer keeps trying them.
+  const pendingCount = useMemo(() => countPending(items) + countDeleting(items), [items]);
 
   // Start / sign-in (userId appears), network back, page or app visible again.
   useEffect(() => {
@@ -137,7 +147,7 @@ export function useOutboxSync(): void {
       const detail = (event as CustomEvent<OutboxItemSentDetail>).detail;
       if (detail?.userId !== userId) return;
       const kind = detail.outcome.kind;
-      if (kind === 'created' || kind === 'replayed' || kind === 'rejected') void dropBackground(detail.id);
+      if (kind === 'created' || kind === 'replayed' || kind === 'rejected' || kind === 'deleted') void dropBackground(detail.id);
     };
     const reconcile = () => {
       void outboxStore
@@ -160,7 +170,8 @@ export function useOutbox(): UseOutbox {
   const userId = user?.id ?? null;
   const items = useOutboxItems(userId);
   const pendingCount = useMemo(() => countPending(items), [items]);
-  const rejectedCount = items.length - pendingCount;
+  const deletingCount = useMemo(() => countDeleting(items), [items]);
+  const rejectedCount = items.length - pendingCount - deletingCount;
 
   const enqueue = useCallback(
     async (p: NewOutboxPayload) => {
@@ -184,8 +195,11 @@ export function useOutbox(): UseOutbox {
 
   const remove = useCallback(
     async (id: string) => {
-      if (!userId) return;
-      await removeQueuedItem(userId, id);
+      if (!userId) return 'removed' as const;
+      const result = await removeQueuedItem(userId, id);
+      // The server deletes it right away when there is a connection.
+      if (result === 'deleting') void flushOutbox(userId, { ignoreBackoff: true });
+      return result;
     },
     [userId],
   );
@@ -196,5 +210,5 @@ export function useOutbox(): UseOutbox {
     [userId],
   );
 
-  return { items, pendingCount, rejectedCount, enqueue, update, remove, flush };
+  return { items, pendingCount, rejectedCount, deletingCount, enqueue, update, remove, flush };
 }

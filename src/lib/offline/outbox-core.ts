@@ -10,7 +10,7 @@
 import { dayKeyInZone, localHHMM, zonedTimeToInstant, type DayKey } from '@/lib/calendar-day';
 import { newClientRequestId } from '@/lib/client-request-id';
 import { calculateExercisePoints, pointsToTenths, tenthsToPoints } from '@/lib/exercise-points';
-import { isDistanceExercise } from '@/lib/exercises';
+import { getExercise, isDistanceExercise } from '@/lib/exercises';
 
 export type OutboxPayload = {
   exerciseType: string;
@@ -39,6 +39,14 @@ export type OutboxItem = {
   /** pending: not before this instant; sending: the lease of the sender ends at this instant. */
   nextAttemptAt: string | null;
   lastError: string | null;
+  /** A sender took the item at least once: it may be on the server even without an answer. */
+  everSent?: boolean;
+  /**
+   * «Будет удалена»: the user deleted an entry that may already be on the server. Instead of the
+   * workout the sender then sends `DELETE /api/workouts {clientRequestId}`; the item leaves the queue
+   * when the server confirms. Kept in the device storage, so it survives a restart.
+   */
+  deleteOnServer?: boolean;
 };
 
 export type SendOutcome =
@@ -46,7 +54,8 @@ export type SendOutcome =
   | { kind: 'rejected'; status: number; message: string } // 400/403/404/409/413/415
   | { kind: 'rate-limited'; retryAfterSeconds: number } // 429
   | { kind: 'unauthorized' } // 401
-  | { kind: 'retry'; reason: string }; // network, 5xx
+  | { kind: 'retry'; reason: string } // network, 5xx
+  | { kind: 'deleted' }; // DELETE by clientRequestId confirmed (deleted, or it never arrived)
 
 export type NewOutboxPayload = Omit<OutboxPayload, 'clientRequestId'> & { clientRequestId?: string };
 export type OutboxPayloadPatch = Partial<Omit<OutboxPayload, 'clientRequestId'>>;
@@ -104,16 +113,22 @@ export function isInFlight(item: OutboxItem, now: Date): boolean {
  * they were made. `ignoreBackoff` (network back, app resumed, sign-in) skips a retry pause, never a lease.
  */
 export function nextSendable(items: OutboxItem[], now: Date, opts: { ignoreBackoff?: boolean } = {}): OutboxItem | null {
-  const head = items.filter((item) => item.status !== 'rejected').sort(byRecordOrder)[0];
-  if (!head) return null;
-  if (head.status === 'sending') return isInFlight(head, now) ? null : head;
-  if (!opts.ignoreBackoff && head.nextAttemptAt && new Date(head.nextAttemptAt).getTime() > now.getTime()) return null;
-  return head;
+  const due = (item: OutboxItem) =>
+    item.status === 'sending'
+      ? !isInFlight(item, now)
+      : opts.ignoreBackoff || !item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now.getTime();
+  const waiting = items.filter((item) => item.status !== 'rejected').sort(byRecordOrder);
+  // Deletes («будет удалена») need no order: one the server keeps refusing waits out its own pause
+  // without holding back the workouts after it.
+  const tombstone = waiting.find((item) => item.deleteOnServer && due(item));
+  if (tombstone) return tombstone;
+  const head = waiting.find((item) => !item.deleteOnServer);
+  return head && due(head) ? head : null;
 }
 
 /** The item while a sender owns it. */
 export function markSending(item: OutboxItem, now: Date): OutboxItem {
-  return { ...item, status: 'sending', nextAttemptAt: plusSeconds(now, SENDING_LEASE_SECONDS) };
+  return { ...item, status: 'sending', everSent: true, nextAttemptAt: plusSeconds(now, SENDING_LEASE_SECONDS) };
 }
 
 /**
@@ -140,8 +155,11 @@ export function applyOutcome(
   switch (outcome.kind) {
     case 'created':
     case 'replayed':
+    case 'deleted':
       return { item: null };
     case 'rejected':
+      // A tombstone is never «not accepted»: the delete is retried, the reason stays visible.
+      if (item.deleteOnServer) return applyOutcome(item, { kind: 'retry', reason: outcome.message }, now);
       return { item: { ...item, status: 'rejected', attempts: item.attempts + 1, nextAttemptAt: null, lastError: outcome.message } };
     case 'rate-limited': {
       const pauseUntil = plusSeconds(now, Math.max(1, outcome.retryAfterSeconds));
@@ -163,7 +181,7 @@ export function applyOutcome(
  * sent again from scratch. `null` while it is being sent — it may already be on the server.
  */
 export function editOutboxItem(item: OutboxItem, patch: OutboxPayloadPatch, now: Date): OutboxItem | null {
-  if (isInFlight(item, now)) return null;
+  if (isInFlight(item, now) || item.deleteOnServer) return null;
   return {
     ...item,
     payload: storedFields({ ...item.payload, ...patch, clientRequestId: item.payload.clientRequestId }),
@@ -199,11 +217,11 @@ export function needsFollowUpEdit(payload: OutboxPayload, workout: ServerWorkout
   return false;
 }
 
-/** Points of not yet sent (and not rejected) items of `day` — through `calculateExercisePoints`. */
+/** Points of not yet sent (not rejected, not being deleted) items of `day` — through `calculateExercisePoints`. */
 export function pendingPoints(items: OutboxItem[], day: DayKey): number {
   let tenths = 0;
   for (const item of items) {
-    if (item.status === 'rejected' || item.payload.date !== day) continue;
+    if (item.status === 'rejected' || item.deleteOnServer || item.payload.date !== day) continue;
     tenths += pointsToTenths(calculateExercisePoints(item.payload.reps, item.payload.exerciseType, item.payload.loadKg ?? null));
   }
   return tenthsToPoints(tenths);
@@ -237,6 +255,12 @@ export function classifyResponse(status: number, body: unknown, retryAfter: stri
   return { kind: 'rejected', status, message: details ? `${base}: ${details}` : base };
 }
 
+/** The send outcome for an HTTP answer of `DELETE /api/workouts {clientRequestId}` (idempotent: 2xx — gone). */
+export function classifyDeleteResponse(status: number, body: unknown, retryAfter: string | null): SendOutcome {
+  if (status >= 200 && status < 300) return { kind: 'deleted' };
+  return classifyResponse(status, body, retryAfter);
+}
+
 /** JSON body of `POST /api/workouts`: empty optional fields are left out. */
 export function toRequestBody(payload: OutboxPayload): Record<string, unknown> {
   const body: Record<string, unknown> = {};
@@ -261,4 +285,98 @@ export function resolveEntryMoment(
   if (input.timeTouched) return { date, time: zonedTimeToInstant(date, input.time, timeZone).toISOString() };
   if (date === today) return { date, time: now.toISOString() };
   return { date, time: zonedTimeToInstant(date, localHHMM(now, timeZone), timeZone).toISOString() };
+}
+
+// --- Deleting an entry that may already be on the server ---
+
+/** What happened to the native background copy when the entry was deleted (see `cancelBackground`). */
+export type BackgroundCancelResult = 'cancelled' | 'none' | 'sent';
+
+/**
+ * Delete of a queued entry: `drop` — it never left the device, remove it; `tombstone` — it may be on
+ * the server (a sender took it, or the native copy went out or its fate is unknown): keep it as
+ * «будет удалена» until the server confirms `DELETE {clientRequestId}`.
+ */
+export function planQueuedRemoval(item: OutboxItem, background: BackgroundCancelResult): 'drop' | 'tombstone' {
+  if (item.deleteOnServer || background === 'sent') return 'tombstone';
+  return item.attempts > 0 || item.everSent ? 'tombstone' : 'drop';
+}
+
+/** The entry as a tombstone: sent again from scratch, now as a delete. */
+export function markForServerDelete(item: OutboxItem): OutboxItem {
+  return { ...item, deleteOnServer: true, status: 'pending', attempts: 0, nextAttemptAt: null, lastError: null };
+}
+
+// --- What the screen says about the queue (story 55) ---
+
+/** A waiting entry shows why it is still waiting after this many failed tries. */
+export const SHOW_REASON_AFTER_ATTEMPTS = 3;
+
+export type QueueEntryState = 'pending' | 'sending' | 'rejected' | 'deleting';
+
+/** The badge of a queued entry: its state, and the reason when it was refused or kept failing. */
+export function queueEntryState(item: OutboxItem): { state: QueueEntryState; reason: string | null } {
+  const state: QueueEntryState = item.deleteOnServer ? 'deleting' : item.status;
+  if (state === 'rejected') return { state, reason: item.lastError };
+  // A delete the server refused (its own text, not a connection failure) shows why at once.
+  if (state === 'deleting' && item.lastError && item.lastError !== 'background upload' && queueErrorKind(item.lastError) === 'other') return { state, reason: item.lastError };
+  return { state, reason: item.attempts >= SHOW_REASON_AFTER_ATTEMPTS ? item.lastError : null };
+}
+
+/** Kind of a failed attempt's `lastError`: no connection, no answer in time, server error, other text. */
+export function queueErrorKind(reason: string): 'network' | 'timeout' | 'server' | 'other' {
+  if (reason === 'network') return 'network';
+  if (reason === 'timeout') return 'timeout';
+  if (/^HTTP \d{3}$/.test(reason)) return 'server';
+  return 'other';
+}
+
+export type UnsentNotice = 'offline' | 'server' | 'queued' | 'rate-limited' | 'unauthorized';
+
+/**
+ * What the form says when a just saved entry got no answer in this flush. «No connection» only when
+ * there is none (the device is offline or the request failed on the network); a busy queue (an older
+ * entry waits out its pause, another sender is at work) — «queued for sending».
+ */
+export function unsentNotice(result: { stopped?: 'unauthorized' | 'rate-limited' | 'offline'; retryReason?: string }, online: boolean): UnsentNotice {
+  if (result.stopped === 'rate-limited') return 'rate-limited';
+  if (result.stopped === 'unauthorized') return 'unauthorized';
+  if (!online) return 'offline';
+  if (result.stopped !== 'offline') return 'queued';
+  const kind = queueErrorKind(result.retryReason ?? 'network');
+  if (kind === 'network') return 'offline';
+  return kind === 'other' ? 'queued' : 'server';
+}
+
+// --- Editing a queued entry ---
+
+/** Values of the edit form; `time` is `HH:MM` on the user's wall clock of `date`. */
+export type QueueEditForm = {
+  exerciseType: string;
+  date: DayKey;
+  time: string;
+  reps: number;
+  repsLeft: number;
+  repsRight: number;
+  loadKg: number | null;
+  /** Distance exercises: metres and duration from the form. */
+  distance: { reps: number; durationSeconds: number | null } | null;
+};
+
+/**
+ * The patch of a queued entry from the edit form. Day and time are read in the user's zone (the zone
+ * the server counts days in), like a new entry — not in the zone of the device.
+ */
+export function buildQueueEditPatch(form: QueueEditForm, timeZone: string): OutboxPayloadPatch {
+  const exercise = getExercise(form.exerciseType);
+  return {
+    exerciseType: form.exerciseType,
+    date: form.date,
+    time: zonedTimeToInstant(form.date, form.time, timeZone).toISOString(),
+    reps: form.distance ? form.distance.reps : exercise.unilateral ? form.repsLeft + form.repsRight : form.reps,
+    repsLeft: exercise.unilateral ? form.repsLeft : null,
+    repsRight: exercise.unilateral ? form.repsRight : null,
+    durationSeconds: form.distance ? form.distance.durationSeconds : null,
+    loadKg: exercise.load ? form.loadKg ?? exercise.load.referenceKg : null,
+  };
 }

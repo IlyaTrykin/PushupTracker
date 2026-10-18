@@ -5,10 +5,12 @@ import UIKit
 
 /// Apple Health: workouts of the tracker as `HKWorkout` (HKWorkoutBuilder) with distance samples for
 /// run / bike / row. Every record is tagged in its metadata with the workout's key and fingerprint,
-/// so the app finds, rewrites and deletes only its own records.
+/// so the app finds, rewrites and deletes only its own records. `pushup.owner` — the short tag of the
+/// tracker account the record belongs to: with an owner given, records of another account on this
+/// phone are never touched (records without an owner, from an older version, count as the caller's).
 /// JS (`src/lib/health/health.ts`): `isAvailable() → {available, reason?}`,
 /// `requestPermissions() → {granted}`, `saveWorkout(HealthWorkoutInput) → {saved, skipped?}`,
-/// `deleteWorkout({externalId}) → {deleted}`, `listOwn({since}) → {records: [{externalId, fingerprint}]}`,
+/// `deleteWorkout({externalId, owner?}) → {deleted}`, `listOwn({since}) → {records: [{externalId, fingerprint, owner?}]}`,
 /// `querySessions({since}) → {sessions: [HealthSession]}` (run / bike / row only), `openSettings()`.
 @objc(HealthBridgePlugin)
 public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -28,6 +30,7 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
     static let fingerprintKey = "pushup.fingerprint"
     static let repsKey = "pushup.reps"
     static let exerciseKey = "pushup.exerciseType"
+    static let ownerKey = "pushup.owner"
 
     private static let activities: [String: HKWorkoutActivityType] = [
         "running": .running,
@@ -93,6 +96,21 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         return isoFormatter.date(from: value) ?? isoFormatterNoFraction.date(from: value)
     }
 
+    /// The account's tag from the call; nil — no owner given (an older JS): every record of the key counts.
+    private static func owner(of call: CAPPluginCall) -> String? {
+        guard let owner = call.getString("owner"), !owner.isEmpty else { return nil }
+        return owner
+    }
+
+    /// Records of `owner` and records without an owner; all of them when no owner is given.
+    static func mineOrUnowned<T: HKSample>(_ samples: [T], owner: String?) -> [T] {
+        guard let owner = owner else { return samples }
+        return samples.filter { sample in
+            guard let tag = sample.metadata?[ownerKey] as? String else { return true }
+            return tag == owner
+        }
+    }
+
     private func notAuthorized() -> Bool {
         return store.authorizationStatus(for: HKObjectType.workoutType()) != .sharingAuthorized
     }
@@ -132,6 +150,7 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let activity = HealthBridgePlugin.activities[call.getString("activity") ?? ""] ?? .functionalStrengthTraining
+        let owner = HealthBridgePlugin.owner(of: call)
         var metadata: [String: Any] = [
             HealthBridgePlugin.externalIdKey: externalId,
             HealthBridgePlugin.fingerprintKey: fingerprint,
@@ -139,16 +158,21 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         ]
         if let exerciseType = call.getString("exerciseType") { metadata[HealthBridgePlugin.exerciseKey] = exerciseType }
         if let reps = call.getInt("reps") { metadata[HealthBridgePlugin.repsKey] = reps }
+        if let owner = owner { metadata[HealthBridgePlugin.ownerKey] = owner }
         let distance = call.getDouble("distanceMeters")
 
         serially { done in
-            self.findOwnWorkouts(externalId: externalId) { existing in
-                if existing.count == 1, existing[0].metadata?[HealthBridgePlugin.fingerprintKey] as? String == fingerprint {
+            self.findOwnWorkouts(externalId: externalId, owner: owner) { existing in
+                // Same key, fingerprint and owner — already there. A record without an owner is
+                // rewritten once to carry it.
+                if existing.count == 1,
+                   existing[0].metadata?[HealthBridgePlugin.fingerprintKey] as? String == fingerprint,
+                   existing[0].metadata?[HealthBridgePlugin.ownerKey] as? String == owner {
                     call.resolve(["saved": false, "skipped": "exists"])
                     done()
                     return
                 }
-                self.deleteOwn(externalId: externalId, workouts: existing) { _ in
+                self.deleteOwn(externalId: externalId, owner: owner, workouts: existing) { _ in
                     self.build(activity: activity, start: start, end: end, distance: distance, metadata: metadata) { error in
                         if let error = error {
                             call.reject("Could not save the workout: \(error.localizedDescription)", "save_failed")
@@ -167,9 +191,10 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("externalId is required", "invalid_request")
             return
         }
+        let owner = HealthBridgePlugin.owner(of: call)
         serially { done in
-            self.findOwnWorkouts(externalId: externalId) { existing in
-                self.deleteOwn(externalId: externalId, workouts: existing) { deleted in
+            self.findOwnWorkouts(externalId: externalId, owner: owner) { existing in
+                self.deleteOwn(externalId: externalId, owner: owner, workouts: existing) { deleted in
                     call.resolve(["deleted": deleted])
                     done()
                 }
@@ -192,7 +217,9 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             let records: [[String: String]] = (samples ?? []).compactMap { sample in
                 guard let externalId = sample.metadata?[HealthBridgePlugin.externalIdKey] as? String else { return nil }
                 let fingerprint = sample.metadata?[HealthBridgePlugin.fingerprintKey] as? String ?? ""
-                return ["externalId": externalId, "fingerprint": fingerprint]
+                var record = ["externalId": externalId, "fingerprint": fingerprint]
+                if let owner = sample.metadata?[HealthBridgePlugin.ownerKey] as? String { record["owner"] = owner }
+                return record
             }
             call.resolve(["records": records])
         }
@@ -275,15 +302,16 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         ])
     }
 
-    private func findOwnWorkouts(externalId: String, completion: @escaping ([HKWorkout]) -> Void) {
+    /// The app's workouts with this key of `owner` (and without an owner); another account's stay out.
+    private func findOwnWorkouts(externalId: String, owner: String?, completion: @escaping ([HKWorkout]) -> Void) {
         let query = HKSampleQuery(sampleType: HKObjectType.workoutType(), predicate: ownPredicate(externalId: externalId), limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
-            completion((samples as? [HKWorkout]) ?? [])
+            completion(HealthBridgePlugin.mineOrUnowned((samples as? [HKWorkout]) ?? [], owner: owner))
         }
         store.execute(query)
     }
 
-    /// Deletes the workouts and their distance samples (tagged with the same key).
-    private func deleteOwn(externalId: String, workouts: [HKWorkout], completion: @escaping (Bool) -> Void) {
+    /// Deletes the workouts and their distance samples (tagged with the same key and owner).
+    private func deleteOwn(externalId: String, owner: String?, workouts: [HKWorkout], completion: @escaping (Bool) -> Void) {
         let group = DispatchGroup()
         var deletedAny = false
         let lock = NSLock()
@@ -296,9 +324,13 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         }
         for type in HealthBridgePlugin.distanceTypes() {
             group.enter()
-            store.deleteObjects(of: type, predicate: ownPredicate(externalId: externalId)) { _, _, _ in
-                group.leave()
+            // Read, then delete what belongs to this owner: another account's sample keeps its distance.
+            let query = HKSampleQuery(sampleType: type, predicate: ownPredicate(externalId: externalId), limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
+                let mine = HealthBridgePlugin.mineOrUnowned(samples ?? [], owner: owner)
+                guard !mine.isEmpty else { group.leave(); return }
+                self.store.delete(mine) { _, _ in group.leave() }
             }
+            store.execute(query)
         }
         group.notify(queue: .global(qos: .userInitiated)) { completion(deletedAny) }
     }
@@ -329,8 +361,9 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             completion(nil)
             return
         }
-        // Only the key: the sample is found and deleted together with its workout.
-        let sampleMetadata: [String: Any] = [HealthBridgePlugin.externalIdKey: metadata[HealthBridgePlugin.externalIdKey] ?? ""]
+        // Only the key and the owner: the sample is found and deleted together with its workout.
+        var sampleMetadata: [String: Any] = [HealthBridgePlugin.externalIdKey: metadata[HealthBridgePlugin.externalIdKey] ?? ""]
+        if let owner = metadata[HealthBridgePlugin.ownerKey] { sampleMetadata[HealthBridgePlugin.ownerKey] = owner }
         let sample = HKQuantitySample(type: type, quantity: HKQuantity(unit: .meter(), doubleValue: meters), start: start, end: end, metadata: sampleMetadata)
         builder.add([sample]) { ok, error in
             completion(ok ? nil : error)

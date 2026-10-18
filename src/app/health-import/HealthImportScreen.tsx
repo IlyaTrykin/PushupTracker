@@ -207,7 +207,20 @@ export default function HealthImportScreen() {
         </section>
       ) : null}
 
-      {phase === 'ready' && candidates.length === 0 ? <div style={hint} data-testid="health-import-empty">{text.importEmpty}</div> : null}
+      {phase === 'ready' && candidates.length === 0 ? (
+        <div style={hint} data-testid="health-import-empty">
+          {text.importEmpty}
+          {/* iPhone never says that reading was denied: an empty list may mean no permission. */}
+          {platform === 'apple_health' ? (
+            <>
+              <p style={{ margin: '8px 0 0' }} data-testid="health-import-permissions-hint">{text.importEmptyPermissionsHint}</p>
+              <div style={{ ...actions, marginTop: 10 }}>
+                <button type="button" style={buttonSecondary} onClick={() => void openHealthSettings()}>{text.importOpenSettings}</button>
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
 
       {phase === 'ready' && candidates.length > 0 ? (
         <section style={card}>

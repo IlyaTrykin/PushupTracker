@@ -135,12 +135,19 @@ test('shared phone: B signs in with push on here — the token is re-registered 
   assert.deepEqual(state.released, []);
 });
 
-test('push wanted but registration denied or failing: the old token is still released', async () => {
-  for (const registerResult of ['denied', 'unavailable', 'throw'] as const) {
+test('push wanted but registration denied or unavailable: the old token is released', async () => {
+  for (const registerResult of ['denied', 'unavailable'] as const) {
     const { state, deps } = fakePhone({ token: DEVICE, wanted: ['userB'], registerResult });
     await restoreNativePush('userB', deps);
     assert.deepEqual(state.released, [DEVICE], registerResult);
   }
+});
+
+test('push wanted and the registration failed for a moment (no network, server error): push stays on, the token is kept', async () => {
+  const { state, deps } = fakePhone({ token: DEVICE, wanted: ['userB'], registerResult: 'throw' });
+  await restoreNativePush('userB', deps);
+  assert.deepEqual(state.released, [], 'a temporary failure does not switch push off');
+  assert.equal(state.token, DEVICE);
 });
 
 test('no stored token or no user: nothing is sent; a failed release keeps the token for the next start', async () => {

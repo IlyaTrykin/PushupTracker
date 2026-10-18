@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EXERCISE_IDS } from '@/lib/exercises';
 import { createHash } from 'node:crypto';
-import { estimateDurationSeconds, healthClientRequestId, toHealthWorkout, toImportCandidate, type HealthSession } from './mapping';
+import { programSetWorkoutInput } from '@/lib/program-plan';
+import { estimateDurationSeconds, healthClientRequestId, programSetHealthSource, toHealthWorkout, toImportCandidate, type HealthSession } from './mapping';
 import { workoutFingerprint } from './reconcile';
 
 const END = '2026-10-17T10:00:00.000Z';
@@ -163,4 +164,17 @@ test('a session of zero length is not importable (the server needs a duration of
   const c = toImportCandidate(session({ end: '2026-10-17T06:00:00.000Z' }), 'UTC');
   assert.equal(c.workout, null);
   assert.equal(c.reason, 'no_duration');
+});
+
+test('a program set written to Health at once is the very record the server made (same key and fingerprint)', () => {
+  const completedAt = '2026-10-17T07:12:40.123Z';
+  const server = programSetWorkoutInput({ setId: 'set-3', setNumber: 3, exerciseType: 'squats', actualReps: 18, doneAt: new Date(completedAt), timeZone: 'Europe/Moscow' });
+  const source = programSetHealthSource({ id: 'set-3', setNumber: 3, actualReps: 18, completedAt }, 'squats');
+  assert.ok(source);
+  assert.equal(source.clientRequestId, server.clientRequestId);
+  assert.equal(
+    workoutFingerprint(source),
+    workoutFingerprint({ exerciseType: server.exerciseType, reps: server.reps, durationSeconds: null, time: server.time }),
+  );
+  assert.equal(programSetHealthSource({ id: 'set-4', setNumber: 4, actualReps: null, completedAt: null }, 'squats'), null);
 });

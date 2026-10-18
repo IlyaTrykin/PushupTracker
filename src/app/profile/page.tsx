@@ -8,7 +8,7 @@ import HealthSettings from './HealthSettings';
 import TelegramConnect from '@/components/TelegramConnect';
 import { useI18n } from '@/i18n/provider';
 import { useRouter } from 'next/navigation';
-import { clearToken } from '@/lib/native-auth';
+import { forgetAccountOnDevice } from '@/lib/offline/forget-account';
 import { hardNavigate, isNativeApp, mediaUrl, openExternal, publicLink } from '@/lib/platform';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { DAILY_GOAL_MAX_POINTS, DAILY_GOAL_MIN_POINTS, DEFAULT_REMINDER_TIME } from '@/lib/daily-goal';
@@ -288,10 +288,10 @@ export default function ProfilePage() {
       if (!res.ok) {
         setError(data.error || messages.profile.errors.delete);
       } else {
-        if (isNativeApp()) {
-          await clearToken();
-          setUser(null);
-        }
+        // The account is gone: its token, caches, queue and background copies go from the device too.
+        await forgetAccountOnDevice(user?.id);
+        setUser(null);
+        window.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
         hardNavigate('/login', router);
       }
     } catch {

@@ -187,6 +187,8 @@ const defaultHandover: PushHandoverDeps = {
 /**
  * At start and after every sign-in (`userId` changes) on this device:
  * - the user turned push on here → re-register (tokens rotate; the server moves the token to them);
+ *   only a refusal (`denied` / `unavailable`) lets the token go — a failure for a moment (no
+ *   network, server error, timeout) keeps push on, the next start tries again;
  * - otherwise a token left by an earlier registration (another account on a shared phone, or a
  *   sign-out without connection) is released, so the previous owner's pushes stop coming here.
  * Errors are ignored: the next start tries again.
@@ -196,7 +198,9 @@ export async function restoreNativePush(userId: string | null | undefined, deps:
   if (deps.wanted(userId)) {
     try {
       if ((await deps.register(userId)) === 'registered') return;
-    } catch {}
+    } catch {
+      return;
+    }
   }
   const token = deps.storedToken();
   if (!token) return;

@@ -10,9 +10,16 @@
  *   `installHealthSync` runs it at start, on resume and after the outbox went out (`outboxFlushed`).
  * - `listImportableCardio` / `importHealthSessions` — the «Импорт из Health» screen: runs, rides and
  *   rows of the last 30 days that are not in the tracker yet, and sending the chosen ones.
+ *
+ * Per account (story 52): the switch is kept per user, every record is tagged with
+ * `healthOwnerTag(userId)` and the reconcile looks only at the signed-in account's records, so
+ * another account on the same phone never deletes or rewrites them. The account is the one passed
+ * in, else the signed-in user of the app (`readCachedUser`). Records and the switch of an older
+ * version (no owner) are taken over by the first account that reconciles.
  */
 
 import { registerPlugin } from '@capacitor/core';
+import { readCachedUser } from '@/lib/native-auth';
 import { nativePlatform } from '@/lib/platform';
 import { outboxStore } from '@/lib/offline/outbox-store';
 import { OUTBOX_FLUSHED_EVENT } from '@/lib/offline/sync';
@@ -28,6 +35,7 @@ import {
 } from './mapping';
 import {
   healthExternalId,
+  healthOwnerTag,
   isImportedFromHealth,
   planHealthReconcile,
   reconcileSince,
@@ -44,7 +52,8 @@ type HealthBridgePlugin = {
   isAvailable(): Promise<HealthAvailability>;
   requestPermissions(): Promise<{ granted: boolean }>;
   saveWorkout(input: HealthWorkoutInput): Promise<{ saved: boolean; skipped?: 'exists' }>;
-  deleteWorkout(options: { externalId: string }): Promise<{ deleted: boolean }>;
+  /** Deletes the records of `externalId` of `owner` and those without an owner; never another account's. */
+  deleteWorkout(options: { externalId: string; owner?: string }): Promise<{ deleted: boolean }>;
   listOwn(options: { since: string }): Promise<{ records: OwnHealthRecord[] }>;
   querySessions(options: { since: string }): Promise<{ sessions: HealthSession[] }>;
   openSettings(): Promise<void>;
@@ -52,8 +61,12 @@ type HealthBridgePlugin = {
 
 export const HEALTH_RECONCILE_PROGRESS_EVENT = 'healthReconcileProgress';
 export const HEALTH_RECONCILE_BATCH_SIZE = 100;
-const ENABLED_KEY = 'health-write-enabled:v1';
+/** Before accounts were told apart: one switch for the phone. Taken over by the first account. */
+const LEGACY_ENABLED_KEY = 'health-write-enabled:v1';
+const ENABLED_KEY = 'health-write-enabled:v2';
 const FULL_DONE_KEY = 'health-full-sync:v1';
+/** Set once records without an owner were taken over (by the first account that reconciled). */
+const LEGACY_CLAIMED_KEY = 'health-owner-claimed:v1';
 /** Since when the first pass after switching on looks: the whole history. */
 const FULL_SINCE = '1970-01-01T00:00:00.000Z';
 const PROGRESS_STEP = 10;
@@ -89,21 +102,49 @@ function writeFlag(key: string, on: boolean): void {
   }
 }
 
-export function isHealthWriteEnabled(): boolean {
-  return healthPlatform() !== null && readFlag(ENABLED_KEY);
+/** The account Health works for: the given one, else the signed-in user of the app. */
+function healthUserId(userId?: string | null): string | null {
+  return userId || readCachedUser()?.id || null;
+}
+
+/** Another account is signed in now (not just «nobody yet»: the cache is written after sign-in). */
+function anotherUserSignedIn(userId: string): boolean {
+  const current = readCachedUser()?.id;
+  return Boolean(current && current !== userId);
+}
+
+function enabledKey(userId: string): string {
+  return `${ENABLED_KEY}:${userId}`;
+}
+
+/** The phone-wide switch of an older version becomes the switch of the first account that asks. */
+function claimLegacySwitch(userId: string): void {
+  if (!readFlag(LEGACY_ENABLED_KEY)) return;
+  writeFlag(enabledKey(userId), true);
+  writeFlag(LEGACY_ENABLED_KEY, false);
+}
+
+/** Writing to Health is on for this account (`userId`, else the signed-in user). */
+export function isHealthWriteEnabled(userId?: string | null): boolean {
+  if (healthPlatform() === null) return false;
+  const user = healthUserId(userId);
+  if (!user) return false;
+  claimLegacySwitch(user);
+  return readFlag(enabledKey(user));
 }
 
 /** Switching off also forgets the first full pass: switching on again re-checks the whole history. */
-export function setHealthWriteEnabled(on: boolean): void {
-  writeFlag(ENABLED_KEY, on);
-  if (on) return;
-  try {
-    const storage = window.localStorage;
-    const keys = Array.from({ length: storage.length }, (_, i) => storage.key(i));
-    for (const key of keys) if (key?.startsWith(`${FULL_DONE_KEY}:`)) storage.removeItem(key);
-  } catch {
-    // nothing stored
-  }
+export function setHealthWriteEnabled(on: boolean, userId?: string | null): void {
+  const user = healthUserId(userId);
+  if (!user) return;
+  writeFlag(enabledKey(user), on);
+  if (!on) writeFlag(fullDoneKey(user), false);
+}
+
+/** Account deleted on this phone: its switch and passes are forgotten (its records stay in Health). */
+export function forgetHealthUser(userId: string): void {
+  writeFlag(enabledKey(userId), false);
+  writeFlag(fullDoneKey(userId), false);
 }
 
 function locale(): 'ru' | 'en' {
@@ -137,19 +178,21 @@ export async function openHealthSettings(): Promise<void> {
   }
 }
 
-function toInput(w: HealthWorkoutSource): HealthWorkoutInput | null {
+function toInput(w: HealthWorkoutSource, owner: string): HealthWorkoutInput | null {
   const platform = healthPlatform();
   if (!platform) return null;
-  return toHealthWorkout(w, platform, locale());
+  return { ...toHealthWorkout(w, platform, locale()), owner };
 }
 
 /**
- * Writes (or, when it changed, rewrites) one workout; `clientRequestId` is its Health key —
- * `healthExternalId` for a server record. Workouts imported from Health are not written back.
+ * Writes (or, when it changed, rewrites) one workout of `userId` (else the signed-in user);
+ * `clientRequestId` is its Health key — `healthExternalId` for a server record. Workouts imported
+ * from Health are not written back.
  */
-export async function syncWorkoutToHealth(w: HealthWorkoutSource): Promise<void> {
-  if (!isHealthWriteEnabled() || isImportedFromHealth(w.clientRequestId)) return;
-  const input = toInput(w);
+export async function syncWorkoutToHealth(w: HealthWorkoutSource, userId?: string | null): Promise<void> {
+  const user = healthUserId(userId);
+  if (!user || !isHealthWriteEnabled(user) || isImportedFromHealth(w.clientRequestId)) return;
+  const input = toInput(w, healthOwnerTag(user));
   if (!input) return;
   try {
     await bridge().saveWorkout(input);
@@ -158,10 +201,11 @@ export async function syncWorkoutToHealth(w: HealthWorkoutSource): Promise<void>
   }
 }
 
-export async function removeWorkoutFromHealth(clientRequestId: string): Promise<void> {
-  if (!isHealthWriteEnabled() || !clientRequestId) return;
+export async function removeWorkoutFromHealth(clientRequestId: string, userId?: string | null): Promise<void> {
+  const user = healthUserId(userId);
+  if (!user || !isHealthWriteEnabled(user) || !clientRequestId) return;
   try {
-    await bridge().deleteWorkout({ externalId: clientRequestId });
+    await bridge().deleteWorkout({ externalId: clientRequestId, owner: healthOwnerTag(user) });
   } catch (error) {
     console.error('Could not delete the workout from Health', error);
   }
@@ -171,8 +215,8 @@ function emitProgress(progress: HealthReconcileProgress): void {
   window.dispatchEvent(new CustomEvent<HealthReconcileProgress>(HEALTH_RECONCILE_PROGRESS_EVENT, { detail: progress }));
 }
 
-function fullDoneKey(userId: string | undefined): string {
-  return `${FULL_DONE_KEY}:${userId || 'anon'}`;
+function fullDoneKey(userId: string): string {
+  return `${FULL_DONE_KEY}:${userId}`;
 }
 
 async function loadServerWorkouts(): Promise<ServerWorkoutForHealth[]> {
@@ -193,10 +237,10 @@ async function loadServerWorkouts(): Promise<ServerWorkoutForHealth[]> {
   });
 }
 
-async function pendingOutboxIds(userId: string | undefined): Promise<string[]> {
-  if (!userId) return [];
+/** Entries still waiting on this device (their records stay); «будет удалена» ones do not count. */
+async function pendingOutboxIds(userId: string): Promise<string[]> {
   try {
-    return (await outboxStore.list(userId)).map((item) => item.id);
+    return (await outboxStore.list(userId)).filter((item) => !item.deleteOnServer).map((item) => item.id);
   } catch {
     return [];
   }
@@ -205,15 +249,21 @@ async function pendingOutboxIds(userId: string | undefined): Promise<string[]> {
 type ReconcileOptions = { full?: boolean; userId?: string };
 
 async function runReconcile(options: ReconcileOptions): Promise<HealthReconcileResult | null> {
-  if (!isHealthWriteEnabled()) return null;
-  const full = Boolean(options.full) || !readFlag(fullDoneKey(options.userId));
+  const userId = healthUserId(options.userId);
+  if (!userId || !isHealthWriteEnabled(userId)) return null;
+  const owner = healthOwnerTag(userId);
+  // Records of an older version (no owner) are taken over once, over the whole history.
+  const claimLegacy = !readFlag(LEGACY_CLAIMED_KEY);
+  const full = Boolean(options.full) || claimLegacy || !readFlag(fullDoneKey(userId));
   const since = full ? FULL_SINCE : reconcileSince(new Date());
   const [server, own, pendingIds] = await Promise.all([
     loadServerWorkouts(),
     bridge().listOwn({ since }).then((r) => r.records),
-    pendingOutboxIds(options.userId),
+    pendingOutboxIds(userId),
   ]);
-  const plan = planHealthReconcile(server, own, { since, pendingIds });
+  // Another account signed in meanwhile: its workouts must not be matched against these records.
+  if (anotherUserSignedIn(userId)) return null;
+  const plan = planHealthReconcile(server, own, { since, pendingIds, owner, claimLegacy });
   // Newest first: the recent days appear in Health before the old history.
   const byNewest = (a: ServerWorkoutForHealth, b: ServerWorkoutForHealth) => b.time.localeCompare(a.time);
   type Step = { kind: 'delete'; externalId: string } | { kind: 'rewrite' | 'save'; workout: ServerWorkoutForHealth };
@@ -227,16 +277,16 @@ async function runReconcile(options: ReconcileOptions): Promise<HealthReconcileR
   if (full) emitProgress({ done: 0, total });
 
   for (let start = 0; start < total; start += HEALTH_RECONCILE_BATCH_SIZE) {
-    if (!isHealthWriteEnabled()) return result; // switched off mid-way
+    if (!isHealthWriteEnabled(userId) || anotherUserSignedIn(userId)) return result; // switched off or signed out mid-way
     const batch = steps.slice(start, start + HEALTH_RECONCILE_BATCH_SIZE);
     for (let i = 0; i < batch.length; i += 1) {
       const step = batch[i];
       try {
         if (step.kind === 'delete') {
-          await bridge().deleteWorkout({ externalId: step.externalId });
+          await bridge().deleteWorkout({ externalId: step.externalId, owner });
           result.deleted += 1;
         } else {
-          const input = toInput({ ...step.workout, clientRequestId: healthExternalId(step.workout) });
+          const input = toInput({ ...step.workout, clientRequestId: healthExternalId(step.workout) }, owner);
           if (input) await bridge().saveWorkout(input);
           if (step.kind === 'rewrite') result.rewritten += 1;
           else result.saved += 1;
@@ -252,7 +302,10 @@ async function runReconcile(options: ReconcileOptions): Promise<HealthReconcileR
       if (full && (done % PROGRESS_STEP === 0 || i === batch.length - 1)) emitProgress({ done, total });
     }
   }
-  if (full && result.failed === 0) writeFlag(fullDoneKey(options.userId), true);
+  if (full && result.failed === 0) {
+    writeFlag(fullDoneKey(userId), true);
+    if (claimLegacy) writeFlag(LEGACY_CLAIMED_KEY, true);
+  }
   return result;
 }
 
@@ -264,7 +317,7 @@ let next: { options: ReconcileOptions; promise: Promise<HealthReconcileResult | 
  * Resolves `null` when writing is off; rejects when Health or the server can't be read.
  */
 export function reconcileHealth(options: ReconcileOptions = {}): Promise<HealthReconcileResult | null> {
-  if (!isHealthWriteEnabled()) return Promise.resolve(null);
+  if (!isHealthWriteEnabled(options.userId)) return Promise.resolve(null);
   if (!running) {
     running = runReconcile(options).finally(() => {
       running = null;
@@ -273,7 +326,7 @@ export function reconcileHealth(options: ReconcileOptions = {}): Promise<HealthR
   }
   if (next) {
     next.options.full = Boolean(next.options.full || options.full);
-    next.options.userId = next.options.userId ?? options.userId;
+    next.options.userId = options.userId ?? next.options.userId; // the newest sign-in wins
     return next.promise;
   }
   const merged: ReconcileOptions = { ...options };

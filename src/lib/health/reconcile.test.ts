@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   healthExternalId,
+  healthOwnerTag,
   planHealthReconcile,
   reconcileSince,
   workoutFingerprint,
@@ -128,4 +129,34 @@ test('a second pass after applying the first finds nothing to do — no duplicat
 
 test('the regular pass looks 30 days back', () => {
   assert.equal(reconcileSince(new Date('2026-10-17T12:00:00.000Z')), '2026-09-17T12:00:00.000Z');
+});
+
+test('another account on the same phone: its records in Health are never deleted or rewritten', () => {
+  const tagA = healthOwnerTag('user-a');
+  const tagB = healthOwnerTag('user-b');
+  assert.match(tagA, /^[0-9a-f]{8}$/);
+  assert.notEqual(tagA, tagB);
+  const ofA = workout('a-1');
+  const ofB = workout('b-1');
+  const recordsOfA = [{ ...own(ofA), owner: tagA }, { ...own(workout('a-2')), owner: tagA }];
+  // B signs in on A's phone: B's server has only B's workouts.
+  const plan = planHealthReconcile([ofB], recordsOfA, { since: SINCE, owner: tagB });
+  assert.deepEqual(plan.toDelete, []);
+  assert.deepEqual(plan.toRewrite, []);
+  assert.deepEqual(plan.toSave.map((w) => w.id), ['b-1']);
+  // A signs in again: A's records are A's.
+  const back = planHealthReconcile([ofA], [...recordsOfA, { ...own(ofB), owner: tagB }], { since: SINCE, owner: tagA });
+  assert.deepEqual(back.toDelete, ['req-a-2']);
+  assert.deepEqual(back.toSave, []);
+});
+
+test('records without an owner are taken over by the account of the first pass, then left alone', () => {
+  const tag = healthOwnerTag('user-a');
+  const kept = workout('kept');
+  const legacy = [own(kept), own(workout('gone'))];
+  const first = planHealthReconcile([kept], legacy, { since: SINCE, owner: tag, claimLegacy: true });
+  assert.deepEqual(first.toRewrite, [kept], 'rewritten with the owner tag');
+  assert.deepEqual(first.toDelete, ['req-gone']);
+  const later = planHealthReconcile([], legacy, { since: SINCE, owner: healthOwnerTag('user-b') });
+  assert.deepEqual(later, { toSave: [], toDelete: [], toRewrite: [] });
 });

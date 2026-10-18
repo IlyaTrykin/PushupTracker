@@ -117,7 +117,8 @@ export function planBackgroundReconcile(
   const byId = new Map(native.map((record) => [record.id, record]));
   const mirror: string[] = [];
   for (const item of items) {
-    if (item.status === 'rejected') continue;
+    // A tombstone («будет удалена») is deleted on the server by the JS sender, never sent again.
+    if (item.status === 'rejected' || item.deleteOnServer) continue;
     const record = byId.get(item.id);
     if (record ? record.state === 'failed' : !mirrored.has(item.id)) mirror.push(item.id);
   }
@@ -128,7 +129,7 @@ export function planBackgroundReconcile(
 
 /** Hands the item to the native background sender. False on the site, without a token or on failure. */
 export async function mirrorToBackground(item: OutboxItem): Promise<boolean> {
-  if (!isNativeApp() || item.status === 'rejected') return false;
+  if (!isNativeApp() || item.status === 'rejected' || item.deleteOnServer) return false;
   try {
     const request = buildBackgroundRequest(item, {
       apiBase: apiBase(),
@@ -154,12 +155,27 @@ export async function cancelBackground(id: string): Promise<CancelResult> {
   try {
     ({ cancelled } = await backgroundUpload().cancel({ id }));
   } catch (error) {
+    // Unknown fate of a handed-over copy: it may be on the server.
     console.error('background upload: cannot cancel', error);
-    return 'none';
+    return cancelVerdict(wasMirrored, false);
   }
   const verdict = cancelVerdict(wasMirrored, cancelled);
   if (verdict === 'cancelled') updateMirrored((ids) => ids.delete(id));
   return verdict;
+}
+
+/**
+ * The native copy of `id` is still queued or being sent: a delete by `clientRequestId` must wait,
+ * or the copy would land after it and re-create the workout. False on the site or when unknown.
+ */
+export async function isBackgroundUploadActive(id: string): Promise<boolean> {
+  if (!isNativeApp()) return false;
+  try {
+    const { items } = await backgroundUpload().list();
+    return items.some((record) => record.id === id && (record.state === 'queued' || record.state === 'running'));
+  } catch {
+    return false;
+  }
 }
 
 /** After the JS sender got the server's answer: the native copy is no longer needed. */

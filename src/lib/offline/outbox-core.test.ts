@@ -3,14 +3,20 @@ import test from 'node:test';
 import {
   applyOutcome,
   backoffSeconds,
+  buildQueueEditPatch,
   classifyResponse,
   createOutboxItem,
   editOutboxItem,
+  markForServerDelete,
   markSending,
   needsFollowUpEdit,
   nextSendable,
   pendingPoints,
+  planQueuedRemoval,
+  queueEntryState,
+  queueErrorKind,
   resolveEntryMoment,
+  unsentNotice,
   toRequestBody,
   type OutboxItem,
   type OutboxPayload,
@@ -276,4 +282,100 @@ test('Health fingerprint of a counted workout written at once equals the one of 
   const queued = createOutboxItem('u1', payload({ exerciseType: 'pullups', reps: 8, durationSeconds: 30 }), NOW).payload;
   const server = { id: 'w1', clientRequestId: queued.clientRequestId, exerciseType: 'pullups', reps: 8, durationSeconds: null, time: queued.time };
   assert.equal(workoutFingerprint(queued), workoutFingerprint(server));
+});
+
+// ---------- delete of an entry that may be on the server (story 50) ----------
+
+test('an entry that never left the device is simply dropped on delete', () => {
+  const fresh = item('a', '2026-10-17T09:00:00.000Z');
+  assert.equal(planQueuedRemoval(fresh, 'none'), 'drop');
+  assert.equal(planQueuedRemoval(fresh, 'cancelled'), 'drop');
+});
+
+test('an entry that may be on the server becomes «будет удалена»: it was attempted, taken by a sender, or its native copy went out', () => {
+  const fresh = item('a', '2026-10-17T09:00:00.000Z');
+  // A network failure: the request may have reached the server before the answer was lost.
+  const failedOnce = applyOutcome(markSending(fresh, NOW), { kind: 'retry', reason: 'timeout' }, NOW).item!;
+  assert.equal(planQueuedRemoval(failedOnce, 'none'), 'tombstone');
+  // An edit restarts the attempts, but the earlier request may still be on the server.
+  const editedAfter = editOutboxItem(failedOnce, { reps: 30 }, NOW)!;
+  assert.equal(editedAfter.attempts, 0);
+  assert.equal(planQueuedRemoval(editedAfter, 'cancelled'), 'tombstone');
+  // The native background copy could not be taken back: on the server or on its way.
+  assert.equal(planQueuedRemoval(fresh, 'sent'), 'tombstone');
+});
+
+test('a tombstone is not counted, is sent as a delete and leaves the queue only on the server’s confirmation', () => {
+  const tomb = markForServerDelete(applyOutcome(markSending(item('a', '2026-10-17T09:00:00.000Z'), NOW), { kind: 'retry', reason: 'network' }, NOW).item!);
+  assert.equal(tomb.deleteOnServer, true);
+  assert.equal(pendingPoints([tomb], '2026-10-17'), 0);
+  assert.equal(nextSendable([tomb], NOW)?.id, 'a');
+  // No connection: stays a tombstone with the usual pause.
+  const offline = applyOutcome(markSending(tomb, NOW), { kind: 'retry', reason: 'network' }, NOW).item!;
+  assert.equal(offline.deleteOnServer, true);
+  assert.equal(offline.status, 'pending');
+  assert.equal(secondsAfter(NOW, offline.nextAttemptAt), 5);
+  // A refusal does not turn it into a «not accepted» workout: retried later, reason kept.
+  const refused = applyOutcome(markSending(tomb, NOW), { kind: 'rejected', status: 400, message: 'bad' }, NOW).item!;
+  assert.equal(refused.deleteOnServer, true);
+  assert.equal(refused.status, 'pending');
+  assert.equal(refused.lastError, 'bad');
+  // Confirmed: gone.
+  assert.equal(applyOutcome(markSending(tomb, NOW), { kind: 'deleted' }, NOW).item, null);
+  // Edits of a tombstone are refused.
+  assert.equal(editOutboxItem(tomb, { reps: 5 }, NOW), null);
+});
+
+// ---------- honest queue messages (story 55) ----------
+
+test('a busy queue with a live network says «queued for sending», not «no connection»', () => {
+  // Nothing was sent because an older entry waits out its pause or another sender holds it.
+  assert.equal(unsentNotice({}, true), 'queued');
+  assert.equal(unsentNotice({ stopped: 'offline', retryReason: 'background upload' }, true), 'queued');
+  // Really no connection.
+  assert.equal(unsentNotice({}, false), 'offline');
+  assert.equal(unsentNotice({ stopped: 'offline', retryReason: 'network' }, true), 'offline');
+  // The server is there but failed or did not answer in time.
+  assert.equal(unsentNotice({ stopped: 'offline', retryReason: 'HTTP 503' }, true), 'server');
+  assert.equal(unsentNotice({ stopped: 'offline', retryReason: 'timeout' }, true), 'server');
+  assert.equal(unsentNotice({ stopped: 'rate-limited' }, true), 'rate-limited');
+  assert.equal(unsentNotice({ stopped: 'unauthorized' }, false), 'unauthorized');
+});
+
+test('after 3 failed tries the badge of a waiting entry shows the reason', () => {
+  let entry = item('a', '2026-10-17T09:00:00.000Z');
+  const reasons: Array<string | null> = [];
+  for (const reason of ['network', 'timeout', 'HTTP 503']) {
+    entry = applyOutcome(markSending(entry, NOW), { kind: 'retry', reason }, NOW).item!;
+    reasons.push(queueEntryState(entry).reason);
+  }
+  assert.deepEqual(reasons, [null, null, 'HTTP 503']);
+  assert.equal(queueEntryState(entry).state, 'pending');
+  assert.deepEqual(queueEntryState({ ...entry, status: 'rejected', lastError: 'Некорректное значение' }), { state: 'rejected', reason: 'Некорректное значение' });
+  assert.equal(queueEntryState(markForServerDelete(entry)).state, 'deleting');
+  assert.deepEqual(['network', 'timeout', 'HTTP 503', 'HTTP 500', 'Запись не найдена'].map(queueErrorKind), ['network', 'timeout', 'server', 'server', 'other']);
+});
+
+// ---------- editing a queued entry (story 54) ----------
+
+test('an edited queued entry gets its time on the user’s wall clock, whatever the device zone', () => {
+  const form = { exerciseType: 'pushups', date: '2026-10-17', time: '08:30', reps: 25, repsLeft: 0, repsRight: 0, loadKg: null, distance: null };
+  // 08:30 in Tokyo (UTC+9) is 23:30 UTC the day before; in New York (EDT, UTC−4) — 12:30 UTC.
+  assert.equal(buildQueueEditPatch(form, 'Asia/Tokyo').time, '2026-10-16T23:30:00.000Z');
+  assert.equal(buildQueueEditPatch(form, 'America/New_York').time, '2026-10-17T12:30:00.000Z');
+  const patch = buildQueueEditPatch(form, 'Europe/Moscow');
+  assert.deepEqual(
+    { date: patch.date, reps: patch.reps, time: patch.time, loadKg: patch.loadKg, durationSeconds: patch.durationSeconds },
+    { date: '2026-10-17', reps: 25, time: '2026-10-17T05:30:00.000Z', loadKg: null, durationSeconds: null },
+  );
+});
+
+test('a delete the server keeps refusing stays visible with the reason but does not hold back newer entries', () => {
+  const tomb = markForServerDelete(item('old', '2026-10-17T08:00:00.000Z'));
+  const refused = applyOutcome(markSending(tomb, NOW), { kind: 'rejected', status: 400, message: 'Некорректный clientRequestId' }, NOW).item!;
+  const newer = item('new', '2026-10-17T09:00:00.000Z');
+  assert.equal(nextSendable([refused, newer], NOW)?.id, 'new');
+  assert.deepEqual(queueEntryState(refused), { state: 'deleting', reason: 'Некорректный clientRequestId' });
+  // Its pause over, it is tried again.
+  assert.equal(nextSendable([refused], new Date(NOW.getTime() + 3600_000))?.id, 'old');
 });

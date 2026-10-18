@@ -75,3 +75,10 @@ test('reconcile clears finished native records whose item left the outbox, keeps
   assert.deepEqual(plan.cancel, ['sent-by-js', 'deleted-after-4xx']);
   assert.deepEqual(plan.forget.sort(), ['deleted-after-4xx', 'gone', 'sent-by-js']);
 });
+
+test('an entry «будет удалена» is never handed to the background sender again (it would re-create the workout)', () => {
+  const items = [item('tomb-new', { deleteOnServer: true }), item('tomb-failed', { deleteOnServer: true })];
+  const native: BackgroundUploadRecord[] = [{ id: 'tomb-failed', state: 'failed', httpStatus: 503 }];
+  const plan = planBackgroundReconcile(items, native, new Set(['tomb-failed']));
+  assert.deepEqual(plan.mirror, []);
+});

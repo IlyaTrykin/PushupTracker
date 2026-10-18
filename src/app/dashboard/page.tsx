@@ -19,7 +19,16 @@ import RepCounterButtons from './RepCounterButtons';
 import { repCounterMessages } from '@/i18n/messages/features/rep-counter';
 import { useStopwatch } from '@/lib/use-stopwatch';
 import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
-import { resolveEntryMoment, type OutboxItem, type OutboxPayloadPatch, type OutboxStatus } from '@/lib/offline/outbox-core';
+import {
+  buildQueueEditPatch,
+  queueEntryState,
+  queueErrorKind,
+  resolveEntryMoment,
+  unsentNotice,
+  type OutboxItem,
+  type QueueEntryState,
+} from '@/lib/offline/outbox-core';
+import { localHHMM, zonedTimeToInstant } from '@/lib/calendar-day';
 import { OUTBOX_FLUSHED_EVENT, OUTBOX_ITEM_SENT_EVENT, outboxPausedUntil, type FlushResult, type OutboxFlushedDetail, type OutboxItemSentDetail } from '@/lib/offline/sync';
 import { OutboxBusyError, useOutbox } from '@/lib/offline/use-outbox';
 import { offlineOutboxMessages } from '@/i18n/messages/features/offline-outbox';
@@ -44,8 +53,9 @@ type Workout = {
   time?: string;
   exerciseType?: string;
   clientRequestId?: string | null;
-  /** Set for an entry of the offline outbox that is not on the server yet. */
-  queueStatus?: OutboxStatus;
+  /** Set for an entry of the offline outbox that is not on the server yet (or «будет удалена»). */
+  queueStatus?: QueueEntryState;
+  /** Why it is not accepted, or why it keeps waiting after several failed tries. */
   queueError?: string | null;
 };
 
@@ -97,8 +107,9 @@ type CachedWorkoutsPayload = {
 const REACTION_OPTIONS = ['👍', '🔥', '👎', '💩'] as const;
 const WORKOUTS_CACHE_VERSION = '20260327-1';
 
-function toIsoTime(date: string, time: string) {
-  return new Date(`${date}T${time}:00`).toISOString();
+/** `HH:MM` of `date` on the user's wall clock (`timeZone`) as an ISO instant. */
+function zonedIsoTime(date: string, time: string, timeZone: string) {
+  return zonedTimeToInstant(date, time, timeZone).toISOString();
 }
 
 function browserTimeZone(): string {
@@ -122,6 +133,7 @@ function entryTimeZone(saved: string | null | undefined): string {
 /** An outbox entry shown in the lists and counted in the day like a server record. */
 function queuedWorkout(item: OutboxItem): Workout {
   const p = item.payload;
+  const { state, reason } = queueEntryState(item);
   return {
     id: item.id,
     reps: p.reps,
@@ -133,9 +145,14 @@ function queuedWorkout(item: OutboxItem): Workout {
     time: p.time,
     exerciseType: p.exerciseType,
     clientRequestId: p.clientRequestId,
-    queueStatus: item.status,
-    queueError: item.lastError,
+    queueStatus: state,
+    queueError: reason,
   };
+}
+
+/** Not part of the day's numbers: refused by the server, or deleted and waiting to be deleted there. */
+function isUncounted(w: Workout): boolean {
+  return w.queueStatus === 'rejected' || w.queueStatus === 'deleting';
 }
 
 function isOffline(): boolean {
@@ -183,11 +200,15 @@ function formatMonthTitle(d: Date, locale: string) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
-function formatTimeHHMM(iso: string | undefined, locale: string) {
+function formatTimeHHMM(iso: string | undefined, locale: string, timeZone?: string) {
   if (!iso) return '';
   const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return '';
-  return dt.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  try {
+    return dt.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', ...(timeZone ? { timeZone } : {}) });
+  } catch {
+    return dt.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  }
 }
 
 function formatDateWithWeekday(dayKey: string, locale: string) {
@@ -376,6 +397,14 @@ export default function DashboardPage() {
   const addingRef = useRef(false);
   const outbox = useOutbox();
   const queueText = offlineOutboxMessages[locale];
+  // `lastError` of a failed try in words: no connection, no answer in time, server error, or the server's text.
+  const queueReasonText = (reason: string) => {
+    const kind = queueErrorKind(reason);
+    if (kind === 'network') return queueText.reasonNetwork;
+    if (kind === 'timeout') return queueText.reasonTimeout;
+    if (kind === 'server') return queueText.reasonServer.replace('{status}', reason.replace(/^HTTP /, ''));
+    return reason;
+  };
   // The entry just saved from the form: its answer from the server shows the reward and records.
   const awaitingSendRef = useRef<string | null>(null);
   // Older queued entries sent along with it: one «Workouts sent: N» after the flush.
@@ -483,14 +512,17 @@ export default function DashboardPage() {
 
   // Server records + entries still on the device (story 17). An entry that already reached the
   // server but is still in the queue (answer lost) is shown once, by its clientRequestId.
+  // An entry «будет удалена» stands for its server record too (it is deleted there once online).
   const allWorkouts = useMemo(() => {
-    const onServer = new Set(workouts.map((w) => w.clientRequestId).filter(Boolean));
+    const deleting = new Set(outbox.items.filter((item) => item.deleteOnServer).map((item) => item.id));
+    const server = deleting.size ? workouts.filter((w) => !w.clientRequestId || !deleting.has(w.clientRequestId)) : workouts;
+    const onServer = new Set(server.map((w) => w.clientRequestId).filter(Boolean));
     const queued = outbox.items.filter((item) => !onServer.has(item.id)).map(queuedWorkout);
-    return queued.length ? [...workouts, ...queued] : workouts;
+    return queued.length ? [...server, ...queued] : server;
   }, [outbox.items, workouts]);
-  // Rejected entries are listed for fixing but are not part of the day's numbers.
-  const countedWorkouts = useMemo(() => allWorkouts.filter((w) => w.queueStatus !== 'rejected'), [allWorkouts]);
-  const firstRejected = useMemo(() => outbox.items.find((item) => item.status === 'rejected') ?? null, [outbox.items]);
+  // Rejected entries are listed for fixing, deleted ones until the server confirms; neither counts.
+  const countedWorkouts = useMemo(() => allWorkouts.filter((w) => !isUncounted(w)), [allWorkouts]);
+  const firstRejected = useMemo(() => outbox.items.find((item) => item.status === 'rejected' && !item.deleteOnServer) ?? null, [outbox.items]);
 
   const stats = useMemo(() => computePeriodStats(countedWorkouts, todayKey), [countedWorkouts, todayKey]);
 
@@ -529,7 +561,7 @@ export default function DashboardPage() {
       const key = workoutDayKey(w);
       const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalPoints: 0 };
       row.items.push(w);
-      if (w.queueStatus !== 'rejected') {
+      if (!isUncounted(w)) {
         const t = normalizeExerciseType(w.exerciseType);
         row.byExercise.set(t, (row.byExercise.get(t) ?? 0) + (w.reps || 0));
       }
@@ -537,7 +569,7 @@ export default function DashboardPage() {
     });
 
     for (const row of map.values()) {
-      row.totalPoints = dayPointsTotal(row.items.filter((w) => w.queueStatus !== 'rejected'));
+      row.totalPoints = dayPointsTotal(row.items.filter((w) => !isUncounted(w)));
       row.items.sort((a, b) => new Date(b.time || b.date).getTime() - new Date(a.time || a.date).getTime());
     }
 
@@ -600,10 +632,14 @@ export default function DashboardPage() {
     return queueText.rateLimited.replace('{time}', until ? until.toLocaleTimeString(localeTag, { hour: '2-digit', minute: '2-digit' }) : '—');
   }, [localeTag, queueText, user?.id]);
 
-  // What the form says when its entry did not get an answer in this flush.
-  const reportUnsent = useCallback((result: FlushResult) => {
-    if (result.stopped === 'rate-limited') setInfo(rateLimitedText());
-    else if (result.stopped === 'unauthorized') setError(queueText.unauthorized);
+  // What the form says when its entry did not get an answer in this flush: «no connection» only
+  // when there is none; a busy queue with a live network — «queued for sending» (story 55).
+  const reportUnsent = useCallback((result: Pick<FlushResult, 'stopped' | 'retryReason'>) => {
+    const notice = unsentNotice(result, !isOffline());
+    if (notice === 'rate-limited') setInfo(rateLimitedText());
+    else if (notice === 'unauthorized') setError(queueText.unauthorized);
+    else if (notice === 'queued') setInfo(queueText.savedQueued);
+    else if (notice === 'server') setInfo(queueText.serverUnavailable);
     else setInfo(queueText.savedOffline);
   }, [queueText, rateLimitedText]);
 
@@ -618,7 +654,7 @@ export default function DashboardPage() {
     const item = await outbox.enqueue({ reps: value, ...extra, date: moment.date, time: moment.time, exerciseType: selectedType });
     awaitingSendRef.current = item.id;
     // Apple Health / Health Connect: written at once, also offline (app only, when switched on).
-    void syncWorkoutToHealth(item.payload);
+    void syncWorkoutToHealth(item.payload, user?.id);
     setTime(normalizeTime(new Date()));
     setTimeTouched(false);
     setReps(0);
@@ -632,7 +668,7 @@ export default function DashboardPage() {
       awaitingSendRef.current = null;
       reportUnsent(result);
     });
-  }, [date, dateTouched, entryZone, outbox, reportUnsent, time, timeTouched]);
+  }, [date, dateTouched, entryZone, outbox, reportUnsent, time, timeTouched, user?.id]);
 
   // Health reconcile at app start, on resume and after the queue went out (app only, when on).
   useEffect(() => {
@@ -670,8 +706,8 @@ export default function DashboardPage() {
         setInfo(rateLimitedText());
       } else if (outcome.kind === 'unauthorized') {
         setError(queueText.unauthorized);
-      } else {
-        setInfo(queueText.savedOffline);
+      } else if (outcome.kind === 'retry') {
+        reportUnsent({ stopped: 'offline', retryReason: outcome.reason });
       }
     };
     const onFlushed = (event: Event) => {
@@ -688,7 +724,7 @@ export default function DashboardPage() {
       window.removeEventListener(OUTBOX_ITEM_SENT_EVENT, onSent);
       window.removeEventListener(OUTBOX_FLUSHED_EVENT, onFlushed);
     };
-  }, [loadWorkouts, queueText, rateLimitedText, tt, user?.id]);
+  }, [loadWorkouts, queueText, rateLimitedText, reportUnsent, tt, user?.id]);
 
   // Один запрос за раз: повторное нажатие, пока запрос в пути, игнорируется.
   const runAdd = async (task: () => Promise<void>) => {
@@ -767,7 +803,8 @@ export default function DashboardPage() {
   const startEdit = (w: Workout) => {
     setEditingId(w.id);
     setEditDate(workoutDayKey(w));
-    setEditTime(normalizeTime(new Date(w.time || w.date)));
+    // The form shows the user's wall clock (the zone days are counted in), and saves in it.
+    setEditTime(localHHMM(new Date(w.time || w.date), entryZone));
     setEditReps(w.reps || 0);
     setEditRepsLeft(w.repsLeft ?? 0);
     setEditRepsRight(w.repsRight ?? 0);
@@ -822,17 +859,19 @@ export default function DashboardPage() {
 
     // An entry still on the device: the change goes into the queue (story 19).
     if (allWorkouts.some((w) => w.id === editingId && w.queueStatus)) {
-      const exercise = getExercise(editExerciseType);
-      const patch: OutboxPayloadPatch = {
-        exerciseType: editExerciseType,
-        date: editDate,
-        time: toIsoTime(editDate, editTime),
-        reps: distancePatch ? distancePatch.reps : exercise.unilateral ? editRepsLeft + editRepsRight : editReps,
-        repsLeft: exercise.unilateral ? editRepsLeft : null,
-        repsRight: exercise.unilateral ? editRepsRight : null,
-        durationSeconds: distancePatch ? distancePatch.durationSeconds : null,
-        loadKg: exercise.load ? editLoadKg ?? exercise.load.referenceKg : null,
-      };
+      const patch = buildQueueEditPatch(
+        {
+          exerciseType: editExerciseType,
+          date: editDate,
+          time: editTime,
+          reps: editReps,
+          repsLeft: editRepsLeft,
+          repsRight: editRepsRight,
+          loadKg: editLoadKg,
+          distance: distancePatch,
+        },
+        entryZone,
+      );
       try {
         await outbox.update(editingId, patch);
         void syncWorkoutToHealth({
@@ -840,8 +879,8 @@ export default function DashboardPage() {
           exerciseType: editExerciseType,
           reps: patch.reps ?? 0,
           durationSeconds: patch.durationSeconds ?? null,
-          time: patch.time ?? toIsoTime(editDate, editTime),
-        });
+          time: patch.time ?? zonedIsoTime(editDate, editTime, entryZone),
+        }, user?.id);
         setEditingId(null);
         setInfo(queueText.queueUpdated);
         void outbox.flush();
@@ -870,7 +909,7 @@ export default function DashboardPage() {
               : { reps: editReps }),
           ...(editLoadKg != null && getExercise(editExerciseType).load ? { loadKg: editLoadKg } : {}),
           date: editDate,
-          time: toIsoTime(editDate, editTime),
+          time: zonedIsoTime(editDate, editTime, entryZone),
           exerciseType: editExerciseType,
         }),
       });
@@ -881,8 +920,8 @@ export default function DashboardPage() {
           exerciseType: record.exerciseType ?? editExerciseType,
           reps: record.reps,
           durationSeconds: record.durationSeconds ?? null,
-          time: record.time ?? toIsoTime(editDate, editTime),
-        });
+          time: record.time ?? zonedIsoTime(editDate, editTime, entryZone),
+        }, user?.id);
       }
       setEditingId(null);
       setInfo(tt('Изменения сохранены'));
@@ -899,9 +938,10 @@ export default function DashboardPage() {
 
     if (allWorkouts.some((w) => w.id === id && w.queueStatus)) {
       try {
-        await outbox.remove(id);
-        void removeWorkoutFromHealth(id);
-        setInfo(queueText.queueRemoved);
+        // It may already be on the server: then «будет удалена» until the server deletes it (story 50).
+        const removed = await outbox.remove(id);
+        void removeWorkoutFromHealth(id, user?.id);
+        setInfo(removed === 'deleting' ? queueText.queueDeleting : queueText.queueRemoved);
       } catch (error: unknown) {
         setError(error instanceof OutboxBusyError ? queueText.inFlight : getErrorMessage(error));
       }
@@ -919,7 +959,7 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
       });
-      void removeWorkoutFromHealth(healthExternalId({ id, clientRequestId: deletedRecord?.clientRequestId ?? null }));
+      void removeWorkoutFromHealth(healthExternalId({ id, clientRequestId: deletedRecord?.clientRequestId ?? null }), user?.id);
       setInfo(tt('Запись удалена'));
       await loadWorkouts();
     } catch (error: unknown) {
@@ -970,10 +1010,13 @@ export default function DashboardPage() {
 
       <section className={styles.hero}>
         <div className={styles.entryCard}>
-          {outbox.pendingCount > 0 || firstRejected ? (
+          {outbox.pendingCount > 0 || outbox.deletingCount > 0 || firstRejected ? (
             <div style={queueRow} role="status">
               {outbox.pendingCount > 0 ? (
                 <span style={queuePill}>⏳ {queueText.pendingCounter.replace('{count}', String(outbox.pendingCount))}</span>
+              ) : null}
+              {outbox.deletingCount > 0 ? (
+                <span style={queuePill}>🗑 {queueText.deletingCounter.replace('{count}', String(outbox.deletingCount))}</span>
               ) : null}
               {firstRejected ? (
                 <button
@@ -1555,19 +1598,21 @@ export default function DashboardPage() {
                                 <div style={w.queueStatus === 'rejected' ? queueBadgeRejected : queueBadge}>
                                   {w.queueStatus === 'rejected'
                                     ? `${queueText.rejectedBadge}${w.queueError ? `: ${w.queueError}` : ''}. ${queueText.rejectedHint}`
-                                    : w.queueStatus === 'sending'
-                                      ? queueText.sendingBadge
-                                      : queueText.pendingBadge}
+                                    : w.queueStatus === 'deleting'
+                                      ? `${queueText.deletingBadge}${w.queueError ? `: ${queueReasonText(w.queueError)}` : ''}`
+                                      : `${w.queueStatus === 'sending' ? queueText.sendingBadge : queueText.pendingBadge}${w.queueError ? `: ${queueReasonText(w.queueError)}` : ''}`}
                                 </div>
                               ) : null}
-                              <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag)}</b></div>
+                              <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag, entryZone)}</b></div>
                               <div>{getExercise(w.exerciseType).unit === 'distance' ? cardioMessages[locale].valueLabel : tt(exerciseValueLabel(w.exerciseType))}: <b>{formatWorkoutValue(w, locale)}</b></div>
                             </div>
 
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                              <button type="button" onClick={() => startEdit(w)} style={btnSecondary}>{tt('Редактировать')}</button>
-                              <button type="button" onClick={() => deleteWorkout(w.id)} style={btnDanger}>{tt('Удалить')}</button>
-                            </div>
+                            {w.queueStatus === 'deleting' ? null : (
+                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                <button type="button" onClick={() => startEdit(w)} style={btnSecondary}>{tt('Редактировать')}</button>
+                                <button type="button" onClick={() => deleteWorkout(w.id)} style={btnDanger}>{tt('Удалить')}</button>
+                              </div>
+                            )}
                           </div>
 
                           {reaction?.summary?.length ? (

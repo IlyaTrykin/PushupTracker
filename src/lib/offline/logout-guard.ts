@@ -10,23 +10,34 @@ import { useCallback } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { offlineOutboxMessages } from '@/i18n/messages/features/offline-outbox';
+import type { OutboxItem } from './outbox-core';
 import { outboxStore } from './outbox-store';
-import { flushOutbox } from './sync';
+import { flushOutbox, type FlushDeps } from './sync';
 
 export type LogoutDecision = 'proceed' | 'stay';
 
-/** `ask(count)` resolves true for «sign out and delete». */
+/** Workouts not on the server yet; entries «будет удалена» are not workouts to lose. */
+function unsentWorkouts(items: OutboxItem[]): OutboxItem[] {
+  return items.filter((item) => !item.deleteOnServer);
+}
+
+/**
+ * `ask(count)` resolves true for «sign out and delete». Entries «будет удалена» are neither counted
+ * nor deleted: they stay on the device under their user and go to the server at the next sign-in of
+ * the same user (otherwise a workout the user deleted would stay on the server).
+ */
 export async function confirmLogoutWithOutbox(
   userId: string,
   ask: (unsentCount: number) => boolean | Promise<boolean>,
+  deps: FlushDeps = {},
 ): Promise<LogoutDecision> {
   let items = await outboxStore.list(userId);
   if (!items.length) return 'proceed';
-  await flushOutbox(userId, { ignoreBackoff: true });
-  items = await outboxStore.list(userId);
+  await flushOutbox(userId, { ...deps, ignoreBackoff: true });
+  items = unsentWorkouts(await outboxStore.list(userId));
   if (!items.length) return 'proceed';
   if (!(await ask(items.length))) return 'stay';
-  await outboxStore.clear(userId);
+  for (const item of items) await outboxStore.remove(item.id);
   return 'proceed';
 }
 

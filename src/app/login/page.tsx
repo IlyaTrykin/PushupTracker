@@ -9,7 +9,7 @@ import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
 import { nativeAppMessages } from '@/i18n/messages/features/native-app';
-import { saveToken } from '@/lib/native-auth';
+import { releaseUnsavedSession, saveToken } from '@/lib/native-auth';
 import { isNativeApp } from '@/lib/platform';
 import styles from './login.module.css';
 
@@ -62,6 +62,9 @@ export default function LoginPage() {
             if (!data.token) throw new Error('no token');
             await saveToken(data.token);
           } catch {
+            // The session was opened on the server but the phone could not keep its token: close it
+            // (best effort), so no live 180-day session is left behind that nobody can sign out of.
+            if (data.token) void releaseUnsavedSession(data.token);
             setError(nativeAppMessages[locale === 'en' ? 'en' : 'ru'].tokenSaveError);
             return;
           }

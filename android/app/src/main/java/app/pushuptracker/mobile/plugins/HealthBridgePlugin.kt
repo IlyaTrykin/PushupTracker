@@ -37,10 +37,12 @@ import kotlin.reflect.KClass
  * Health Connect: workouts of the tracker as `ExerciseSessionRecord` (+ `DistanceRecord` for
  * run / bike / row). `clientRecordId` = the workout's key (`externalId`, distance — `<key>:distance`),
  * `clientRecordVersion` = its fingerprint (8 hex digits as a number). Only the app's own records
- * are read, rewritten and deleted.
+ * are read, rewritten and deleted. With the tracker account's tag (`owner`) the key is prefixed:
+ * `<owner>|<externalId>`, so another account on this phone never touches the record; a key without
+ * the prefix (an older version) counts as the caller's.
  * JS (`src/lib/health/health.ts`): `isAvailable() → {available, reason?}`,
  * `requestPermissions() → {granted}`, `saveWorkout(HealthWorkoutInput) → {saved, skipped?}`,
- * `deleteWorkout({externalId}) → {deleted}`, `listOwn({since}) → {records: [{externalId, fingerprint}]}`,
+ * `deleteWorkout({externalId, owner?}) → {deleted}`, `listOwn({since}) → {records: [{externalId, fingerprint, owner?}]}`,
  * `querySessions({since}) → {sessions: [HealthSession]}` (run / bike / row of any app), `openSettings()`.
  */
 @CapacitorPlugin(name = "HealthBridge")
@@ -48,6 +50,7 @@ class HealthBridgePlugin : Plugin() {
     companion object {
         private const val PROVIDER = "com.google.android.apps.healthdata"
         private const val DISTANCE_SUFFIX = ":distance"
+        private const val OWNER_SEPARATOR = '|'
         private const val PAGE_SIZE = 1000
 
         private val ACTIVITIES = mapOf(
@@ -86,6 +89,16 @@ class HealthBridgePlugin : Plugin() {
             if (Regex("^[0-9a-f]{1,15}$").matches(fingerprint)) fingerprint.toLong(16) else null
 
         fun versionToFingerprint(version: Long): String = String.format("%08x", version)
+
+        /** `clientRecordId` of a workout of `owner` (a `clientRequestId` never contains `|`). */
+        fun recordKey(externalId: String, owner: String?): String =
+            if (owner.isNullOrEmpty()) externalId else "$owner$OWNER_SEPARATOR$externalId"
+
+        /** `clientRecordId` → (owner or null, externalId). */
+        fun parseRecordKey(key: String): Pair<String?, String> {
+            val at = key.indexOf(OWNER_SEPARATOR)
+            return if (at > 0) key.substring(0, at) to key.substring(at + 1) else null to key
+        }
     }
 
     private fun client(): HealthConnectClient = HealthConnectClient.getOrCreate(context)
@@ -178,6 +191,8 @@ class HealthBridgePlugin : Plugin() {
             return
         }
         val activity = ACTIVITIES[call.getString("activity")] ?: ExerciseSessionRecord.EXERCISE_TYPE_CALISTHENICS
+        val owner = call.getString("owner")?.takeIf { it.isNotEmpty() }
+        val key = recordKey(externalId, owner)
         val title = call.getString("title")
         val distance = call.getDouble("distanceMeters")
         val zone = ZoneId.systemDefault().rules
@@ -185,15 +200,16 @@ class HealthBridgePlugin : Plugin() {
 
         launch(call, {
             val client = client()
-            // Same key and same fingerprint — already there (a repeated save, a second pass).
+            // Same key (with the owner) and same fingerprint — already there (a repeated save, a second
+            // pass). A record of an older version (key without the owner) is rewritten once.
             val existing = client.readRecords(
                 ReadRecordsRequest(
                     recordType = ExerciseSessionRecord::class,
                     timeRangeFilter = TimeRangeFilter.between(start.minusSeconds(1), end.plusSeconds(1)),
                     dataOriginFilter = ownOrigin(),
                 ),
-            ).records.filter { it.metadata.clientRecordId == externalId }
-            if (existing.size == 1 && existing[0].metadata.clientRecordVersion == version) {
+            ).records.filter { it.metadata.clientRecordId == key || it.metadata.clientRecordId == externalId }
+            if (existing.size == 1 && existing[0].metadata.clientRecordId == key && existing[0].metadata.clientRecordVersion == version) {
                 false
             } else {
                 val records = mutableListOf<Record>(
@@ -202,7 +218,7 @@ class HealthBridgePlugin : Plugin() {
                         startZoneOffset = zone.getOffset(start),
                         endTime = end,
                         endZoneOffset = zone.getOffset(end),
-                        metadata = Metadata.manualEntry(externalId, version, device),
+                        metadata = Metadata.manualEntry(key, version, device),
                         exerciseType = activity,
                         title = title,
                     ),
@@ -216,11 +232,11 @@ class HealthBridgePlugin : Plugin() {
                             endTime = end,
                             endZoneOffset = zone.getOffset(end),
                             distance = Length.meters(distance),
-                            metadata = Metadata.manualEntry(externalId + DISTANCE_SUFFIX, version, device),
+                            metadata = Metadata.manualEntry(key + DISTANCE_SUFFIX, version, device),
                         ),
                     )
                 }
-                deleteOwn(client, externalId, granted.contains(WRITE_DISTANCE))
+                deleteOwn(client, externalId, owner, granted.contains(WRITE_DISTANCE))
                 client.insertRecords(records)
                 true
             }
@@ -238,9 +254,10 @@ class HealthBridgePlugin : Plugin() {
             call.reject("externalId is required", "invalid_request")
             return
         }
+        val owner = call.getString("owner")?.takeIf { it.isNotEmpty() }
         launch(call, {
             val client = client()
-            deleteOwn(client, externalId, client.permissionController.getGrantedPermissions().contains(WRITE_DISTANCE))
+            deleteOwn(client, externalId, owner, client.permissionController.getGrantedPermissions().contains(WRITE_DISTANCE))
         }) { deleted ->
             call.resolve(JSObject().put("deleted", deleted))
         }
@@ -264,12 +281,12 @@ class HealthBridgePlugin : Plugin() {
                     ),
                 )
                 for (record in response.records) {
-                    val externalId = record.metadata.clientRecordId ?: continue
-                    records.put(
-                        JSObject()
-                            .put("externalId", externalId)
-                            .put("fingerprint", versionToFingerprint(record.metadata.clientRecordVersion)),
-                    )
+                    val (owner, externalId) = parseRecordKey(record.metadata.clientRecordId ?: continue)
+                    val item = JSObject()
+                        .put("externalId", externalId)
+                        .put("fingerprint", versionToFingerprint(record.metadata.clientRecordVersion))
+                    if (owner != null) item.put("owner", owner)
+                    records.put(item)
                 }
                 pageToken = response.pageToken
             } while (!pageToken.isNullOrEmpty())
@@ -376,9 +393,11 @@ class HealthBridgePlugin : Plugin() {
      * touched: deleting it would throw SecurityException and fail the whole save (a distance written
      * before the permission was taken back stays — Health Connect does not let the app change it).
      */
-    private suspend fun deleteOwn(client: HealthConnectClient, externalId: String, canWriteDistance: Boolean): Boolean {
-        deleteByClientIds(client, ExerciseSessionRecord::class, listOf(externalId))
-        if (canWriteDistance) deleteByClientIds(client, DistanceRecord::class, listOf(externalId + DISTANCE_SUFFIX))
+    private suspend fun deleteOwn(client: HealthConnectClient, externalId: String, owner: String?, canWriteDistance: Boolean): Boolean {
+        // This owner's key and the key of an older version without an owner; never another owner's.
+        val keys = listOf(recordKey(externalId, owner), externalId).distinct()
+        deleteByClientIds(client, ExerciseSessionRecord::class, keys)
+        if (canWriteDistance) deleteByClientIds(client, DistanceRecord::class, keys.map { it + DISTANCE_SUFFIX })
         return true
     }
 

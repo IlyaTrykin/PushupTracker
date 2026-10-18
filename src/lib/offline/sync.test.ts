@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { OutboxBusyError, removeQueuedItem, updateQueuedItem } from './outbox-actions';
-import { SENDING_LEASE_SECONDS, createOutboxItem, type OutboxPayload, type SendOutcome } from './outbox-core';
+import { confirmLogoutWithOutbox } from './logout-guard';
+import { SENDING_LEASE_SECONDS, createOutboxItem, markForServerDelete, type OutboxPayload, type SendOutcome } from './outbox-core';
 import { outboxStore } from './outbox-store';
 import { flushOutbox } from './sync';
 
@@ -112,4 +113,80 @@ test('edit and delete of a waiting item still work', async () => {
   assert.equal((await outboxStore.list(userId))[0].payload.reps, 22);
   await removeQueuedItem(userId, item.id, { now: () => T0, cancelBackground: async () => 'cancelled' });
   assert.deepEqual(await outboxStore.list(userId), []);
+});
+
+test('deleting an entry whose answer was lost deletes it on the server: «будет удалена» is stored, then DELETE {clientRequestId} goes out', async () => {
+  const userId = 'tomb-lost-answer';
+  const item = await queued(userId, 20);
+  // The request reached the server, the answer did not come back.
+  const posted: string[] = [];
+  await flushOutbox(userId, {
+    now: () => T0,
+    send: async (p) => (posted.push(p.clientRequestId), { kind: 'retry', reason: 'timeout' }),
+    sendDelete: async () => ({ kind: 'retry', reason: 'network' }),
+  });
+  assert.deepEqual(posted, [item.id]);
+
+  await removeQueuedItem(userId, item.id, { now: () => T0, cancelBackground: async () => 'none' });
+  const stored = await outboxStore.list(userId);
+  assert.equal(stored.length, 1, 'kept on the device until the server confirms');
+  assert.equal(stored[0].deleteOnServer, true);
+
+  // Offline: the tombstone stays.
+  const deletes: string[] = [];
+  const later = new Date(T0.getTime() + 3600_000);
+  await flushOutbox(userId, {
+    now: () => later,
+    send: async (p) => (posted.push(p.clientRequestId), { kind: 'retry', reason: 'network' }),
+    sendDelete: async (id) => (deletes.push(id), { kind: 'retry', reason: 'network' }),
+  });
+  assert.equal((await outboxStore.list(userId))[0]?.deleteOnServer, true);
+
+  // Back online: the server gets the delete, never the workout again.
+  const result = await flushOutbox(userId, {
+    now: () => new Date(later.getTime() + 3600_000),
+    send: async (p) => (posted.push(p.clientRequestId), { kind: 'created', workoutId: 'w1' }),
+    sendDelete: async (id) => (deletes.push(id), { kind: 'deleted' }),
+  });
+  assert.deepEqual(deletes, [item.id, item.id]);
+  assert.deepEqual(posted, [item.id], 'the workout itself is not sent again');
+  assert.equal(result.deleted, 1);
+  assert.deepEqual(await outboxStore.list(userId), []);
+});
+
+test('deleting an entry whose native copy already went out is no longer refused: it becomes «будет удалена»', async () => {
+  const userId = 'tomb-native-sent';
+  const item = await queued(userId, 20);
+  await removeQueuedItem(userId, item.id, { now: () => T0, cancelBackground: async () => 'sent' });
+  const stored = await outboxStore.list(userId);
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].deleteOnServer, true);
+  await outboxStore.clear(userId);
+});
+
+test('deleting an entry that never left the device removes it at once, nothing goes to the server', async () => {
+  const userId = 'tomb-never-sent';
+  const item = await queued(userId, 20);
+  await removeQueuedItem(userId, item.id, { now: () => T0, cancelBackground: async () => 'cancelled' });
+  assert.deepEqual(await outboxStore.list(userId), []);
+});
+
+test('«sign out and delete» keeps entries «будет удалена»: they stay with their user and are not counted as unsent', async () => {
+  const userId = 'tomb-logout';
+  const unsent = await queued(userId, 20);
+  const deleted = markForServerDelete(createOutboxItem(userId, { exerciseType: 'pushups', reps: 30, date: '2026-10-17', time: '2026-10-17T09:56:00.000Z' }, T0));
+  await outboxStore.put(deleted);
+  const asked: number[] = [];
+  const offline = { send: async () => ({ kind: 'retry', reason: 'network' }) as SendOutcome, sendDelete: async () => ({ kind: 'retry', reason: 'network' }) as SendOutcome };
+  const decision = await confirmLogoutWithOutbox(userId, (count) => (asked.push(count), true), offline);
+  assert.equal(decision, 'proceed');
+  assert.deepEqual(asked, [1], 'only the unsent workout is asked about');
+  assert.deepEqual((await outboxStore.list(userId)).map((i) => i.id), [deleted.id], 'the tombstone waits for the next sign-in');
+  assert.deepEqual(await outboxStore.list('someone-else'), []);
+  // Only tombstones left: nothing to ask, still kept.
+  const again = await confirmLogoutWithOutbox(userId, () => { throw new Error('must not ask'); }, offline);
+  assert.equal(again, 'proceed');
+  assert.equal((await outboxStore.list(userId)).length, 1);
+  void unsent;
+  await outboxStore.clear(userId);
 });
