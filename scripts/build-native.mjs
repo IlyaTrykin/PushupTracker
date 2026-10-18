@@ -9,7 +9,7 @@
 // getBuildDistDir). Чтобы не затереть сборку сайта и его .next/types, файлы сайта на
 // время сборки откладываются в tmp/ и возвращаются; .next/dev и кэш не трогаются.
 // Не запускать параллельно с `npm run build`.
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
@@ -40,17 +40,44 @@ function restoreWebBuild() {
   rmSync(stashDir, { recursive: true, force: true });
 }
 
-stashWebBuild();
-let status;
-try {
-  const build = spawnSync('npx', ['next', 'build'], {
-    stdio: 'inherit',
-    env: { ...process.env, BUILD_TARGET: 'native' },
-  });
-  status = build.status ?? 1;
-} finally {
+// Сборка идёт дочерним процессом асинхронно, чтобы SIGINT/SIGTERM (Ctrl+C, kill, остановка CI)
+// можно было перехватить: сначала останавливаем сборку, затем возвращаем .next сайта на место.
+let restored = false;
+function restoreOnce() {
+  if (restored) return;
+  restored = true;
   restoreWebBuild();
 }
+
+stashWebBuild();
+let interruptedBy = null;
+const status = await new Promise((resolve) => {
+  let child;
+  try {
+    child = spawn('npx', ['next', 'build'], {
+      stdio: 'inherit',
+      env: { ...process.env, BUILD_TARGET: 'native' },
+    });
+  } catch {
+    resolve(1);
+    return;
+  }
+  const forward = (signal) => {
+    interruptedBy = signal;
+    child.kill(signal);
+  };
+  const onInt = () => forward('SIGINT');
+  const onTerm = () => forward('SIGTERM');
+  process.on('SIGINT', onInt);
+  process.on('SIGTERM', onTerm);
+  child.on('error', () => resolve(1));
+  child.on('close', (code, signal) => {
+    process.off('SIGINT', onInt);
+    process.off('SIGTERM', onTerm);
+    resolve(signal ? 1 : (code ?? 1));
+  });
+}).finally(restoreOnce);
+if (interruptedBy) process.exit(interruptedBy === 'SIGINT' ? 130 : 143);
 if (status !== 0) process.exit(status);
 
 if (!existsSync(path.join(exportDir, 'index.html'))) {

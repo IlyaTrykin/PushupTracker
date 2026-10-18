@@ -19,6 +19,7 @@ import LanguageSelect from '@/components/LanguageSelect';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
 import { growthMessages } from '@/i18n/messages/features/growth';
+import { nativeHealthMessages } from '@/i18n/messages/features/native-health';
 import styles from './AppNavClient.module.css';
 
 type PageTitleOverrideDetail = string | { title?: string | null } | null;
@@ -54,8 +55,9 @@ async function unsubscribeThisDeviceFromPush(): Promise<void> {
   } catch {}
 }
 
-function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles']) {
+function resolvePageTitle(pathname: string | null, titles: ReturnType<typeof useI18n>['messages']['nav']['pageTitles'], locale: Locale) {
   if (!pathname || pathname === '/') return titles.home;
+  if (pathname.startsWith('/health-import')) return nativeHealthMessages[locale === 'en' ? 'en' : 'ru'].importTitle;
   if (pathname.startsWith('/dashboard')) return titles.dashboard;
   if (pathname.startsWith('/program/session')) return titles.programSession;
   if (pathname.startsWith('/program')) return titles.program;
@@ -128,8 +130,8 @@ export default function AppNavClient() {
   useOutboxSync();
   const { checkBeforeLogout } = useOutboxLogoutGuard();
   const pageTitle = useMemo(
-    () => pageTitleOverride || resolvePageTitle(pathname, messages.nav.pageTitles),
-    [messages.nav.pageTitles, pageTitleOverride, pathname],
+    () => pageTitleOverride || resolvePageTitle(pathname, messages.nav.pageTitles, locale),
+    [locale, messages.nav.pageTitles, pageTitleOverride, pathname],
   );
 
   const navActive = (href: string) => pathname === href || (href !== '/' && pathname?.startsWith(href));

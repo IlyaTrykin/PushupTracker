@@ -6,8 +6,6 @@ import type { CapacitorConfig } from '@capacitor/cli';
  * (в git не попадает). Origin страницы — `capacitor://localhost` (iOS) и `https://localhost`
  * (Android): они же разрешены в CORS сервера (`NATIVE_APP_ORIGINS`).
  */
-const apiBase = (process.env.NATIVE_API_BASE || '').trim();
-
 const config: CapacitorConfig = {
   appId: 'app.pushuptracker.mobile',
   appName: 'Pushup Tracker',
@@ -21,11 +19,10 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
     hostname: 'localhost',
   },
-  android: {
-    // Отладка против локального сервера по http (эмулятор → 10.0.2.2): страница на
-    // https://localhost иначе не пустит запросы к http. Для https-сервера выключено.
-    allowMixedContent: apiBase.startsWith('http://'),
-  },
+  // Смешанный контент (https-страница → http-сервер) нужен только отладке на эмуляторе
+  // (NATIVE_API_BASE=http://10.0.2.2:...). В конфиг, который уходит в релиз, он не попадает ни при
+  // каком NATIVE_API_BASE: отладочная копия конфига с allowMixedContent собирается в
+  // android/app/build.gradle (задача debugCapacitorConfig) только для debug.
   plugins: {
     SplashScreen: {
       launchShowDuration: 600,

@@ -870,3 +870,44 @@ button.app-drawer__btn--danger {
     padding-top: 0;
   }
 }
+
+/* ---- Приложения для iPhone/Android (html[data-native-app] ставит только layout.native.tsx;
+   на сайте этого атрибута нет, поэтому правила ниже его не затрагивают) ---- */
+
+/* Поле даты в WKWebView имеет собственную минимальную ширину и вылезает за край карточки:
+   ограничиваем ширину контейнером. */
+html[data-native-app] input[type="date"],
+html[data-native-app] input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  text-align: center;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Контейнер поля — grid с автоматической колонкой: она растягивается до собственной ширины
+   поля даты/времени и выталкивает его за карточку. Колонка ограничивается шириной контейнера. */
+html[data-native-app] :is(label, div):has(> input[type="date"]),
+html[data-native-app] :is(label, div):has(> input[type="time"]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Нижняя панель плавает с зазором (bottom: 8px) и полупрозрачна: под ней и в зазоре
+   просвечивает содержимое страницы. Подложка закрывает зазор под панелью, сама панель
+   становится непрозрачной. */
+html[data-native-app] .bottom-nav {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+html[data-native-app] body::after {
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 59;
+  height: 8px;
+  background: #f4f5f9;
+  pointer-events: none;
+}

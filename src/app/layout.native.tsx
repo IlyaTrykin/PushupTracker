@@ -233,7 +233,7 @@ export default function NativeRootLayout({ children }: Readonly<{ children: Reac
   const locale = mounted ? detectLocale() : DEFAULT_LOCALE;
 
   return (
-    <html lang={locale}>
+    <html lang={locale} data-native-app="true">
       <head>
         <title>Pushup Tracker</title>
         <meta name="viewport" content={VIEWPORT} />

@@ -23,11 +23,11 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Pushup Tracker считает повторения по положению тела в кадре. Видео обрабатывается на телефоне, не сохраняется и никуда не отправляется.</string>
+	<string>Pushup Tracker counts your reps by the position of your body in the frame. Video is processed on your phone, is not saved and is never sent anywhere.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Pushup Tracker читает тренировки из «Здоровья», чтобы не записывать их дважды и импортировать бег, велосипед и греблю.</string>
+	<string>Pushup Tracker reads workouts from Health so they are not logged twice, and imports running, cycling and rowing.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Pushup Tracker записывает ваши тренировки в «Здоровье»: тип, время, длительность и дистанцию.</string>
+	<string>Pushup Tracker saves your workouts to Health: type, time, duration and distance.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

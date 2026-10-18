@@ -30,6 +30,26 @@ kotlin {
     jvmToolchain(21)
 }
 
+// Отладка против локального сервера по http (эмулятор → 10.0.2.2): страница на https://localhost
+// иначе не пустит запросы к http. allowMixedContent включается ТОЛЬКО в debug-копии
+// capacitor.config.json (она перекрывает конфиг из main в отладочной сборке); релизный конфиг,
+// который пишет `cap sync`, смешанный контент не разрешает при любом NATIVE_API_BASE.
+def debugCapacitorAssets = layout.buildDirectory.dir("generated/debugCapacitorAssets")
+tasks.register('debugCapacitorConfig') {
+    def source = file('src/main/assets/capacitor.config.json')
+    def target = debugCapacitorAssets.get().file('capacitor.config.json').asFile
+    inputs.file(source)
+    outputs.file(target)
+    doLast {
+        def config = new groovy.json.JsonSlurper().parse(source)
+        config.android = (config.android ?: [:]) + [allowMixedContent: true]
+        target.parentFile.mkdirs()
+        target.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(config))
+    }
+}
+android.sourceSets.debug.assets.srcDir(debugCapacitorAssets)
+tasks.matching { it.name == 'mergeDebugAssets' }.configureEach { dependsOn 'debugCapacitorConfig' }
+
 repositories {
     flatDir{
         dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
