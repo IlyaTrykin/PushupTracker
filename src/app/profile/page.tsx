@@ -15,6 +15,7 @@ import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/
 import { DAILY_GOAL_MAX_POINTS, DAILY_GOAL_MIN_POINTS, DEFAULT_REMINDER_TIME } from '@/lib/daily-goal';
 import { dailyGoalMessages } from '@/i18n/messages/features/daily-goal';
 import { privacyMessages } from '@/i18n/messages/features/privacy';
+import { legalMessages } from '@/i18n/messages/features/legal';
 
 type Profile = {
   id: string;
@@ -100,7 +101,13 @@ export default function ProfilePage() {
   const router = useRouter();
   const { locale, messages } = useI18n();
   const goalText = dailyGoalMessages[locale];
-  const privacyText = privacyMessages[locale];
+  const legalText = legalMessages[locale];
+  const legalLinks = [
+    { path: '/privacy', label: privacyMessages[locale].profileLink },
+    { path: '/terms', label: legalText.navTerms },
+    { path: '/support', label: legalText.navSupport },
+    { path: '/account-deletion', label: legalText.navDeletion },
+  ];
   const cacheKey = useMemo(() => getUserScopedCacheKey('profile', user?.id, user?.username), [user?.id, user?.username]);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -594,17 +601,19 @@ export default function ProfilePage() {
       <BlockedUsers />
 
       <section style={panelCard}>
-        <div style={sectionTitle}>{privacyText.profileLink}</div>
-        <div style={fieldHint}>{privacyText.profileHint}</div>
-        <div>
-          {isNativeApp() ? (
-            <button type="button" onClick={() => openExternal(publicLink('/privacy'))} style={buttonSecondary}>
-              {privacyText.profileLink}
-            </button>
-          ) : (
-            <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ ...buttonSecondary, display: 'inline-block', textDecoration: 'none' }}>
-              {privacyText.profileLink}
-            </a>
+        <div style={sectionTitle}>{legalText.navTitle}</div>
+        <div style={fieldHint}>{legalText.profileHint}</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          {legalLinks.map((link) =>
+            isNativeApp() ? (
+              <button key={link.path} type="button" onClick={() => openExternal(publicLink(link.path))} style={buttonSecondary}>
+                {link.label}
+              </button>
+            ) : (
+              <a key={link.path} href={link.path} target="_blank" rel="noopener noreferrer" style={{ ...buttonSecondary, display: 'inline-block', textDecoration: 'none' }}>
+                {link.label}
+              </a>
+            ),
           )}
         </div>
       </section>
