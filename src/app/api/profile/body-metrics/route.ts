@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AuthError, requireUser } from '@/lib/auth';
 import { PROFILE_SELECT, pickBodyMetricUpdates, type BodySex, type HealthBodyMetrics } from '@/lib/body-metrics';
+import { backfillWorkoutEnergy, weightAppeared } from '@/lib/workout-energy';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,10 +112,14 @@ export async function POST(request: Request) {
       if (Object.keys(changes).length) {
         await tx.userProfileHistory.create({ data: { userId: me.id, changedById: me.id, changes } });
       }
-      return { user, changed: Object.keys(changes) };
+      return { user, changed: Object.keys(changes), weightAppeared: weightAppeared(current.weightKg, user.weightKg) };
     });
 
     if (!result) return jsonError('UNAUTHORIZED', 401);
+    // R01.7: первый вес (из Health) — досчитать калории тренировок без них; ошибка не мешает ответу.
+    if (result.weightAppeared) {
+      await backfillWorkoutEnergy(me.id).catch((e) => console.error('ENERGY BACKFILL ERROR:', e));
+    }
     return NextResponse.json({ ok: true, changed: result.changed, user: result.user });
   } catch (e) {
     if (e instanceof AuthError) return jsonError(e.message, e.status);

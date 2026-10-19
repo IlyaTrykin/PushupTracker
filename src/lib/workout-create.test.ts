@@ -70,7 +70,13 @@ test('friend notification: catalog name in the recipient language, cardio in km,
 
 /** An in-memory workout table with the (userId, clientRequestId) unique index, a counting limiter and recorders. */
 function fakeDeps(overrides: Partial<WorkoutCreateDeps> = {}) {
-  const rows: Array<CreatedWorkout & { userId: string; clientRequestId: string | null }> = [];
+  const rows: Array<CreatedWorkout & { userId: string; clientRequestId: string | null; activeKcal: number | null }> = [];
+  const body: { weightKg: number | null; heightCm: number | null; birthDate: Date | null; gender: string | null } = {
+    weightKg: null,
+    heightCm: null,
+    birthDate: null,
+    gender: null,
+  };
   const notified: string[][] = [];
   const hooked: string[] = [];
   const buckets = new Map<string, number>();
@@ -97,6 +103,7 @@ function fakeDeps(overrides: Partial<WorkoutCreateDeps> = {}) {
         time: data.time,
         exerciseType: data.exerciseType,
         trainingSessionId: data.trainingSessionId,
+        activeKcal: data.activeKcal,
       };
       rows.push(row);
       return row;
@@ -105,6 +112,7 @@ function fakeDeps(overrides: Partial<WorkoutCreateDeps> = {}) {
     challengeRanks: async () => new Map(),
     findFollowerIds: async () => ['friend'],
     findReward: async () => null,
+    findBodyMetrics: async () => ({ ...body }),
     notifyUsers: async (userIds) => {
       notified.push(userIds);
     },
@@ -114,7 +122,7 @@ function fakeDeps(overrides: Partial<WorkoutCreateDeps> = {}) {
     },
     ...overrides,
   };
-  return { deps, rows, notified, hooked };
+  return { deps, rows, notified, hooked, body };
 }
 
 const ann = { id: 'u1', username: 'ann', timeZone: 'Europe/Moscow' };
@@ -300,4 +308,36 @@ test('health import: one request gives each friend at most one friend_achievemen
 test('records from the site or the app still tell friends (the health rule does not leak)', async () => {
   const { perFriend } = await importWithAchievements('web').run();
   assert.ok(perFriend('f1') >= 1, 'a web record is news for friends');
+});
+
+test('R01.5: a new workout stores active calories by the owner\'s body at that moment; a later weight change leaves it as is', async () => {
+  const { deps, rows, body } = fakeDeps();
+  const create = createWorkoutCreator(deps);
+
+  // Без веса калорий нет.
+  await create(ann, { exerciseType: 'pushups', reps: 60 }, { source: 'web', now });
+  assert.equal(rows[0].activeKcal, null);
+
+  // 60 отжиманий = 120 с, MET 7.5: (7.5 − 1) × 80 × 120/3600 = 17.3.
+  body.weightKg = 80;
+  const second = await create(ann, { exerciseType: 'pushups', reps: 60 }, { source: 'web', now });
+  assert.equal(rows[1].activeKcal, 17.3);
+  assert.equal((second.workout as { activeKcal?: number | null }).activeKcal, 17.3);
+
+  // Вес сменился — новая тренировка по новому весу, прежняя не меняется.
+  body.weightKg = 90;
+  await create(ann, { exerciseType: 'pushups', reps: 60 }, { source: 'web', now });
+  assert.equal(rows[1].activeKcal, 17.3);
+  assert.equal(rows[2].activeKcal, 19.5);
+});
+
+test('R01.5: calories of a set count its kettlebell, both sides and the run time', async () => {
+  const { deps, rows, body } = fakeDeps();
+  body.weightKg = 80;
+  const create = createWorkoutCreator(deps);
+  await create(ann, { exerciseType: 'kettlebell_press', repsLeft: 10, repsRight: 10, loadKg: 24 }, { source: 'web', now });
+  await create(ann, { exerciseType: 'run', reps: 5000, durationSeconds: 1800 }, { source: 'web', now });
+  // Жим 20 повторов × 3 с = 60 с, гиря ×1.5: (9 − 1) × 80 / 60 = 10.7.
+  assert.equal(rows[0].activeKcal, 10.7);
+  assert.ok(rows[1].activeKcal !== null && rows[1].activeKcal >= 350 && rows[1].activeKcal <= 450);
 });

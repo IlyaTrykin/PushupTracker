@@ -27,6 +27,7 @@ import {
   parseWorkoutTime,
 } from './workout-input';
 import { getWorkoutPoints, matchWorkoutReward } from './workout-rewards';
+import { ENERGY_BODY_SELECT, toBodyMetrics, workoutActiveKcal, type EnergyBodyRow } from './workout-energy';
 
 export const WORKOUT_SELECT = {
   id: true,
@@ -35,6 +36,8 @@ export const WORKOUT_SELECT = {
   repsLeft: true,
   repsRight: true,
   durationSeconds: true,
+  // Видны только владельцу: чужим ответам поле снимает hideForeignEnergy (workout-energy.ts).
+  activeKcal: true,
   date: true,
   time: true,
   exerciseType: true,
@@ -193,6 +196,8 @@ export type WorkoutInsert = {
   repsLeft: number | null;
   repsRight: number | null;
   durationSeconds: number | null;
+  /** Активные ккал по телу владельца на момент записи; null — веса нет. */
+  activeKcal: number | null;
   exerciseType: string;
   date: Date;
   time: Date;
@@ -212,6 +217,8 @@ export type WorkoutCreateDeps = {
   challengeRanks(challengeId: string): Promise<Map<string, number>>;
   findFollowerIds(userId: string): Promise<string[]>;
   findReward(reps: number, exerciseType: string, loadKg: number | null): Promise<WorkoutReward>;
+  /** Вес, рост, дата рождения и пол владельца — для калорий. */
+  findBodyMetrics(userId: string): Promise<EnergyBodyRow | null>;
   notifyUsers: typeof notifyUsersFn;
   onWorkoutCreated: typeof onWorkoutCreated;
 };
@@ -301,6 +308,10 @@ export function createWorkoutCreator(deps: WorkoutCreateDeps): CreateWorkout {
       beforeRanks.set(c.challengeId, await deps.challengeRanks(c.challengeId).catch(() => new Map<string, number>()));
     }
 
+    // Калории считаются один раз, здесь, и хранятся (R01.5).
+    const body = toBodyMetrics(await deps.findBodyMetrics(user.id));
+    const activeKcal = workoutActiveKcal({ exerciseType, reps, repsLeft, repsRight, loadKg, durationSeconds, date }, body);
+
     let workout: CreatedWorkout;
     try {
       workout = await deps.insertWorkout({
@@ -310,6 +321,7 @@ export function createWorkoutCreator(deps: WorkoutCreateDeps): CreateWorkout {
         repsLeft,
         repsRight,
         durationSeconds,
+        activeKcal,
         exerciseType,
         date,
         time,
@@ -378,6 +390,7 @@ const prismaDeps: WorkoutCreateDeps = {
       earnedPoints,
     );
   },
+  findBodyMetrics: async (userId) => (await db()).user.findUnique({ where: { id: userId }, select: ENERGY_BODY_SELECT }),
   notifyUsers,
   onWorkoutCreated,
 };

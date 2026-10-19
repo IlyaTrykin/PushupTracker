@@ -8,6 +8,7 @@ import { dailyGoalMessages } from '@/i18n/messages/features/daily-goal';
 import { normalizeLocale } from '@/i18n/locale';
 import { setPreferredLocaleCookie } from '@/i18n/server';
 import { HEIGHT_RANGE_CM, PROFILE_SELECT, WEIGHT_RANGE_KG, parseBodyMetricInput } from '@/lib/body-metrics';
+import { backfillWorkoutEnergy, weightAppeared } from '@/lib/workout-energy';
 
 type ProfileHistoryChanges = Record<string, Prisma.InputJsonValue | null>;
 
@@ -205,6 +206,11 @@ export async function PATCH(request: Request) {
       });
       return u;
     });
+
+    // R01.7: вес появился впервые — досчитать калории тренировок без них (ошибка не мешает сохранению).
+    if (data.weightKg !== undefined && weightAppeared(current.weightKg, nextWeightKg)) {
+      await backfillWorkoutEnergy(me.id).catch((e) => console.error('ENERGY BACKFILL ERROR:', e));
+    }
 
     const res = NextResponse.json({ ok: true, user: updated });
     setPreferredLocaleCookie(res, normalizeLocale(updated.language), request);

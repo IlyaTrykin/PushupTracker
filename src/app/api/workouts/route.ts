@@ -7,6 +7,7 @@ import { WORKOUT_SELECT, WorkoutCreateError, createWorkoutForUser } from '@/lib/
 import { parseWorkoutDay, parseWorkoutDuration, parseWorkoutExerciseType, parseWorkoutLoadFields, parseWorkoutTime } from '@/lib/workout-input';
 import { GroupError, recordGroupAuditLog, requireManagedGroupMemberAccess } from '@/lib/groups';
 import { deleteOwnWorkoutByRequestId, parseWorkoutDeleteBody } from '@/lib/workout-delete';
+import { ENERGY_BODY_SELECT, editedWorkoutEnergy, hideForeignEnergy, toBodyMetrics } from '@/lib/workout-energy';
 
 export const dynamic = 'force-dynamic';
 
@@ -109,7 +110,9 @@ export async function GET(request: Request) {
       select: { ...WORKOUT_SELECT, clientRequestId: true },
     });
 
-    return NextResponse.json(workouts);
+    // Калории — только свои: владелец группы и админ получают тренировки без activeKcal.
+    const own = targetUserId === actor.id;
+    return NextResponse.json(workouts.map((w) => hideForeignEnergy(w, own)));
   } catch (e) {
     if (e instanceof GroupError) return jsonError(e.message, e.status, e.code, e.details);
     console.error('WORKOUTS GET ERROR:', e);
@@ -155,7 +158,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
-      workout,
+      workout: hideForeignEnergy(workout as typeof workout & { activeKcal?: number | null }, owner.id === actor.id),
       reward: result.reward,
       records: result.records,
       achievements: result.achievements,
@@ -192,7 +195,8 @@ export async function PUT(request: Request) {
       where: { id },
       select: {
         id: true, userId: true, date: true, time: true, reps: true, loadKg: true, repsLeft: true, repsRight: true, durationSeconds: true, exerciseType: true,
-        user: { select: { timeZone: true } },
+        activeKcal: true,
+        user: { select: { timeZone: true, ...ENERGY_BODY_SELECT } },
       },
     });
     if (!existing) return jsonError('Запись не найдена', 404);
@@ -219,6 +223,7 @@ export async function PUT(request: Request) {
 
     const data: {
       exerciseType?: string; reps?: number; loadKg?: number | null; repsLeft?: number | null; repsRight?: number | null; durationSeconds?: number | null; date?: Date; time?: Date;
+      activeKcal?: number | null;
     } = {};
 
     const parsedLoad = parseWorkoutLoadFields(exerciseType, body, existing);
@@ -246,6 +251,10 @@ export async function PUT(request: Request) {
       // Moved to another day: keep the wall-clock time of the set.
       data.time = zonedTimeToInstant(day, localHHMM(existing.time, timeZone), timeZone);
     }
+
+    // R01.5: правка повторов/сторон/гири/времени пересчитывает калории по телу владельца сейчас.
+    const activeKcal = editedWorkoutEnergy(existing, { ...existing, ...data, exerciseType }, toBodyMetrics(existing.user));
+    if (activeKcal !== undefined && activeKcal !== existing.activeKcal) data.activeKcal = activeKcal;
 
     const updated = await prisma.workout.update({
       where: { id },
@@ -278,7 +287,7 @@ export async function PUT(request: Request) {
       });
     }
 
-    return NextResponse.json(updated);
+    return NextResponse.json(hideForeignEnergy(updated, existing.userId === actor.id));
   } catch (e) {
     if (e instanceof GroupError) return jsonError(e.message, e.status, e.code, e.details);
     console.error('WORKOUTS PUT ERROR:', e);
