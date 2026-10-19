@@ -6,19 +6,12 @@ import {
   ProgramError,
   createTrainingProgram,
   deriveAgeFromBirthDate,
-  isProgramExerciseType,
   getManagedProgramOverview,
-  suggestDurationWeeks,
-  suggestFrequencyPerWeek,
-  type ProgramCreateInput,
+  parseProgramCreateBody,
 } from '@/lib/program';
 
 function jsonError(message: string, status = 400, code?: string, details?: Record<string, unknown>) {
   return NextResponse.json(code ? { error: message, code, details } : { error: message, details }, { status });
-}
-
-function isExerciseType(value: string): value is ProgramCreateInput['exerciseType'] {
-  return isProgramExerciseType(value);
 }
 
 function getTargetUserId(request: NextRequest): string {
@@ -61,48 +54,12 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       select: { birthDate: true, gender: true, weightKg: true },
     });
 
-    const inferredAge = deriveAgeFromBirthDate(targetUser?.birthDate ?? null) ?? 25;
-    const inferredWeight = targetUser?.weightKg ?? 70;
-    const inferredSex = String(body.sex || targetUser?.gender || 'unknown').trim().toLowerCase();
-    const rawExerciseType = String(body.exerciseType || 'pushups');
-    const exerciseType: ProgramCreateInput['exerciseType'] = isExerciseType(rawExerciseType) ? rawExerciseType : 'pushups';
-    const baselineMaxReps = Number(body.baselineMaxReps || 1);
-    const targetReps = Number(body.targetReps || baselineMaxReps);
-    const ageYears = Number(body.ageYears || inferredAge);
-    const weightKg = Number(body.weightKg || inferredWeight);
-    const frequencyPerWeek =
-      body.frequencyPerWeek != null
-        ? Number(body.frequencyPerWeek)
-        : suggestFrequencyPerWeek({
-            exerciseType,
-            baselineMaxReps,
-            targetReps,
-            ageYears,
-            weightKg,
-          });
-    const durationWeeks =
-      body.durationWeeks != null
-        ? Number(body.durationWeeks)
-        : suggestDurationWeeks({
-            exerciseType,
-            baselineMaxReps,
-            targetReps,
-            ageYears,
-            weightKg,
-            frequencyPerWeek,
-          });
-
-    const payload: ProgramCreateInput = {
-      exerciseType,
-      baselineMaxReps,
-      targetReps,
-      durationWeeks,
-      frequencyPerWeek,
-      ageYears,
-      weightKg,
-      sex: inferredSex,
-      startDate: body.startDate ? String(body.startDate) : null,
-    };
+    // Неизвестное упражнение — 400 (PROGRAM_EXERCISE_INVALID), без подмены на отжимания.
+    const payload = parseProgramCreateBody(body, {
+      ageYears: deriveAgeFromBirthDate(targetUser?.birthDate ?? null) ?? 25,
+      weightKg: targetUser?.weightKg ?? 70,
+      sex: targetUser?.gender || 'unknown',
+    });
 
     const program = await createTrainingProgram(targetUserId, payload, {
       managedByGroupId: id,
@@ -119,11 +76,12 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       entityType: 'training_program',
       entityId: program.id,
       metadata: {
-        exerciseType,
-        baselineMaxReps,
-        targetReps,
-        durationWeeks,
-        frequencyPerWeek,
+        exerciseType: program.exerciseType,
+        loadKg: program.loadKg,
+        baselineMaxReps: program.baselineMaxReps,
+        targetReps: program.targetReps,
+        durationWeeks: program.durationWeeks,
+        frequencyPerWeek: program.frequencyPerWeek,
       },
     });
 

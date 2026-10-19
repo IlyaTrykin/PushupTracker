@@ -9,6 +9,7 @@ import type { NotificationEventType, ChannelPreference } from '@/lib/notificatio
 import type { PushPayload } from '@/lib/web-push';
 import { exerciseLabel, isTimedExercise } from '@/lib/exercises';
 import { formatWorkoutValue } from '@/lib/exercise-metrics';
+import { programLabel, type ProgramLabelSource } from '@/lib/program-plan';
 
 export type NotifyEvent = NotificationEventType;
 export type NotifyLocale = 'ru' | 'en';
@@ -303,21 +304,24 @@ export function groupJoinResolvedMessage(
     : { title: 'Заявка в группу отклонена', body: `Вступление в группу ${args.groupName} отклонено`, link };
 }
 
+/** What a program notice names: the program label (`programLabel`) — exercise, kettlebell weight, circuit plan. */
+export type ProgramNoticeSource = ProgramLabelSource;
+
 /** «Скоро тренировка»: one or several program sessions due around now. */
 export function programReminderMessage(
   locale: NotifyLocale,
-  sessions: Array<{ id: string; exerciseType: string; scheduledAt: Date }>,
+  sessions: Array<ProgramNoticeSource & { id: string; scheduledAt: Date }>,
   now: Date,
 ): LocalizedMessage {
   const first = sessions[0];
   if (sessions.length > 1) {
-    const names = Array.from(new Set(sessions.map((s) => exerciseName(s.exerciseType, locale)))).join(', ');
+    const names = Array.from(new Set(sessions.map((s) => programLabel(s, locale)))).join(', ');
     return locale === 'en'
       ? { title: 'Workout reminder', body: `Program workouts coming up: ${names}`, link: '/program' }
       : { title: 'Напоминание о тренировке', body: `Скоро тренировки по программе: ${names}`, link: '/program' };
   }
   const minutes = Math.round((first.scheduledAt.getTime() - now.getTime()) / 60000);
-  const name = exerciseName(first.exerciseType, locale);
+  const name = programLabel(first, locale);
   const link = `/program/session/${first.id}`;
   if (locale === 'en') {
     return {
@@ -338,10 +342,10 @@ export type MissedSessionKind = 'missed_1h' | 'missed_24h' | 'stop_warning';
 export function programMissedMessage(
   locale: NotifyLocale,
   kind: MissedSessionKind,
-  args: { sessionId: string; exerciseType: string },
+  args: ProgramNoticeSource & { sessionId: string },
 ): LocalizedMessage {
   const link = `/program/session/${args.sessionId}`;
-  const name = exerciseName(args.exerciseType, locale);
+  const name = programLabel(args, locale);
   if (locale === 'en') {
     if (kind === 'missed_1h') return { title: 'Missed program workout', body: `An hour has passed since your planned workout (${name}). You can still do it now.`, link };
     if (kind === 'missed_24h') return { title: 'Program workout not done', body: `A day has passed since your planned workout (${name}).`, link };
@@ -352,12 +356,12 @@ export function programMissedMessage(
   return { title: 'Программа будет прервана через неделю', body: 'Если пропуск плановой тренировки превысит 2 недели, программа автоматически прервётся.', link };
 }
 
-export function programStoppedMessage(locale: NotifyLocale, args: { programId: string; exerciseType: string }): LocalizedMessage {
+export function programStoppedMessage(locale: NotifyLocale, args: ProgramNoticeSource & { programId: string }): LocalizedMessage {
   const link = `/program?stoppedProgram=${encodeURIComponent(args.programId)}`;
-  const name = exerciseName(args.exerciseType, locale);
+  const name = programLabel(args, locale);
   return locale === 'en'
-    ? { title: 'Program stopped', body: `Your ${name} program was stopped after a break longer than 2 weeks. Create a new one when you are ready.`, link }
-    : { title: 'Программа прервана', body: `Программа по упражнению «${name}» прервана из-за пропуска более 2 недель. Создайте новую, когда будете готовы.`, link };
+    ? { title: 'Program stopped', body: `Your program «${name}» was stopped after a break longer than 2 weeks. Create a new one when you are ready.`, link }
+    : { title: 'Программа прервана', body: `Программа «${name}» прервана из-за пропуска более 2 недель. Создайте новую, когда будете готовы.`, link };
 }
 
 function errorText(error: unknown): string {

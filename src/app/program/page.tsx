@@ -8,13 +8,27 @@ import { useI18n } from '@/i18n/provider';
 import { programHref, programSessionHref } from '@/lib/app-routes';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
+import { formatExerciseValue } from '@/lib/exercise-metrics';
 import {
-  formatExerciseValue,
-  programBaselinePromptLabel,
-  programTargetPromptLabel,
-} from '@/lib/exercise-metrics';
-import type { ProgramExerciseType } from '@/lib/program';
-import { EXERCISES, PROGRAM_EXERCISE_ORDER, exerciseIcon, exerciseLabel as catalogExerciseLabel, isExerciseType as isCatalogExerciseType } from '@/lib/exercises';
+  PROGRAM_EXERCISE_TYPES,
+  programLabel,
+  programStartAlternatives,
+  suggestDurationWeeks,
+  suggestFrequencyPerWeek,
+  type DistanceSessionKind,
+} from '@/lib/program-plan';
+import {
+  EXERCISES,
+  exerciseIcon,
+  exerciseLabel as catalogExerciseLabel,
+  isExerciseType as isCatalogExerciseType,
+  isUnilateralExercise,
+  programKind,
+  type ExerciseType as CatalogExerciseType,
+  type ProgramKind,
+} from '@/lib/exercises';
+import { programsMessages } from '@/i18n/messages/features/programs';
+import { InfoButton, Sheet } from '@/components/ui';
 
 type TrainingSet = {
   id: string;
@@ -23,6 +37,7 @@ type TrainingSet = {
   actualReps: number | null;
   restSeconds: number;
   isKeySet: boolean;
+  loadKg?: number | null;
 };
 
 type TrainingSession = {
@@ -34,7 +49,15 @@ type TrainingSession = {
   completed: boolean;
   completedAt: string | null;
   isFinalTest?: boolean;
+  sessionKind?: DistanceSessionKind | null;
   sets: TrainingSet[];
+};
+
+/** Поля программы, по которым строится её название (`programLabel`). */
+type ProgramLabelFields = {
+  programType?: string | null;
+  loadKg?: number | null;
+  circuitPlanId?: string | null;
 };
 
 type ProgramStats = {
@@ -47,9 +70,10 @@ type ProgramStats = {
   nextSession: TrainingSession | null;
 };
 
-type ProgramDetail = {
+type ProgramDetail = ProgramLabelFields & {
   id: string;
   exerciseType: string;
+  nextLoadKg?: number | null;
   goalType: string;
   targetReps: number | null;
   durationWeeks: number;
@@ -66,9 +90,10 @@ type ProgramDetail = {
   warnings: string[];
 };
 
-type ProgramHistoryRow = {
+type ProgramHistoryRow = ProgramLabelFields & {
   id: string;
   exerciseType: string;
+  nextLoadKg?: number | null;
   goalType: string;
   status: string;
   createdAt: string;
@@ -96,7 +121,9 @@ type ProgramOverview = {
 };
 
 type CreateForm = {
-  exerciseType: ProgramExerciseType;
+  exerciseType: CatalogExerciseType;
+  /** Вес гири гиревой программы. */
+  loadKg: number | null;
   baselineMaxReps: number;
   targetReps: number;
   frequencyPerWeek: number;
@@ -127,7 +154,7 @@ function getErrorMessage(error: unknown) {
 }
 
 function isExerciseType(value: string): value is ExerciseType {
-  return EXERCISE_ORDER.includes(value as ExerciseType);
+  return (EXERCISE_ORDER as readonly string[]).includes(value);
 }
 
 function isSex(value: string): value is CreateForm['sex'] {
@@ -177,7 +204,7 @@ function exerciseFeedIcon(exerciseType: string) {
   return exerciseIcon(exerciseType);
 }
 
-const EXERCISE_ORDER = PROGRAM_EXERCISE_ORDER;
+const EXERCISE_ORDER = PROGRAM_EXERCISE_TYPES;
 
 function toDate(iso: string | null | undefined): Date | null {
   if (!iso) return null;
@@ -243,10 +270,11 @@ function formatDayTitle(dayKey: string, locale: string) {
 }
 
 function renderSessionSetPlan(session: TrainingSession, exerciseType: string | undefined, locale: string) {
+  const distance = programKind(exerciseType) === 'distance';
   return session.sets
     .slice()
     .sort((a, b) => a.setNumber - b.setNumber)
-    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true, locale)))
+    .map((set) => (set.isKeySet && !session.isFinalTest && !distance ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true, locale)))
     .join('-');
 }
 
@@ -259,72 +287,31 @@ function calendarDayBackground(upcoming: number, completed: number) {
   return '#fff';
 }
 
-function suggestedFrequencyPerWeek(args: {
-  exerciseType: ProgramExerciseType;
-  baselineMaxReps: number;
-  targetReps: number;
-  ageYears: number;
-  weightKg: number;
-}) {
-  const baseline = Math.max(1, Math.round(args.baselineMaxReps));
-  const target = Math.max(baseline, Math.round(args.targetReps));
-  const age = Math.max(8, Math.min(90, Math.round(args.ageYears)));
-  const weight = Math.max(30, Math.min(250, Math.round(args.weightKg)));
-  const gap = Math.max(0, target - baseline);
+type SessionRow = TrainingSession & ProgramLabelFields & { exerciseType: string; programId: string };
 
-  let freq = 3;
-  if (baseline <= 8) freq = 2;
-  if (baseline >= 32) freq = 4;
-  if (args.exerciseType === 'pullups') freq -= 1;
-  if (age >= 45) freq -= 1;
-  if (age >= 60) freq -= 1;
-  if (weight >= 110 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) freq -= 1;
-  if (gap >= Math.max(12, Math.round(baseline * 0.7))) freq += 1;
-
-  return Math.max(2, Math.min(6, Math.round(freq)));
+/** Поля мастера по умолчанию для упражнения: база и цель в его единицах, гиря — эталонная. */
+function exerciseDefaults(type: CatalogExerciseType): Pick<CreateForm, 'loadKg' | 'baselineMaxReps' | 'targetReps'> {
+  const kind = programKind(type);
+  const load = EXERCISES[type].load;
+  if (kind === 'distance') return { loadKg: null, baselineMaxReps: 3000, targetReps: 5000 };
+  if (kind === 'timed') return { loadKg: null, baselineMaxReps: 30, targetReps: 60 };
+  if (kind === 'loaded') return { loadKg: load?.referenceKg ?? null, baselineMaxReps: 10, targetReps: 20 };
+  if (type === 'muscle_ups') return { loadKg: null, baselineMaxReps: 1, targetReps: 5 };
+  return { loadKg: null, baselineMaxReps: 20, targetReps: 50 };
 }
 
-function suggestedDurationWeeks(args: {
-  exerciseType: ProgramExerciseType;
-  baselineMaxReps: number;
-  targetReps: number;
-  ageYears: number;
-  weightKg: number;
-  frequencyPerWeek: number;
-}) {
-  const baseline = Math.max(1, Math.round(args.baselineMaxReps));
-  const target = Math.max(baseline, Math.round(args.targetReps));
-  const age = Math.max(8, Math.min(90, Math.round(args.ageYears)));
-  const weight = Math.max(30, Math.min(250, Math.round(args.weightKg)));
-  const frequency = Math.max(1, Math.min(6, Math.round(args.frequencyPerWeek)));
+function metersToKmText(meters: number): string {
+  return String(Math.round(meters / 10) / 100);
+}
 
-  const coefs: Record<string, number> = {
-    pushups: 1,
-    pullups: 0.85,
-    crunches: 1.1,
-    squats: 1.05,
-    plank: 0.9,
-  };
+function kmTextToMeters(raw: string): number {
+  const n = Number(raw.trim().replace(',', '.'));
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 1000) : 0;
+}
 
-  const coef = coefs[args.exerciseType] ?? 1;
-  const gap = Math.max(0, target - baseline);
-  let readiness = 1;
-  if (baseline <= 8) readiness *= 0.8;
-  if (baseline >= 40) readiness *= 1.1;
-  if (age >= 40) readiness *= 0.9;
-  if (age >= 55) readiness *= 0.8;
-  if (weight >= 95 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) readiness *= 0.92;
-  if (weight >= 115 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) readiness *= 0.88;
-  if (args.exerciseType === 'pullups') readiness *= 0.88;
-
-  const progressPerSession = Math.max(0.35, baseline * 0.05 * coef * readiness);
-  const requiredSessions = Math.ceil(gap / progressPerSession) + frequency * 2;
-
-  let weeks = Math.ceil(requiredSessions / frequency);
-  if (age >= 55) weeks += 1;
-  if (frequency >= 5) weeks += 1;
-
-  return Math.max(4, Math.min(24, Math.round(weeks)));
+function formatKg(kg: number, locale: string): string {
+  const text = String(Math.round(kg * 10) / 10);
+  return locale === 'en' ? text : text.replace('.', ',');
 }
 
 export default function ProgramPage() {
@@ -332,6 +319,7 @@ export default function ProgramPage() {
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
+  const text = programsMessages[locale];
   const cacheKey = useMemo(() => getUserScopedCacheKey('program', user?.id, user?.username), [user?.id, user?.username]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -349,9 +337,12 @@ export default function ProgramPage() {
   const [formDrafts, setFormDrafts] = useState<Partial<Record<CreateNumericField, string>>>({});
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => monthStart(new Date()));
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
+  // Дистанция вводится в километрах; в форме — метры.
+  const [kmDrafts, setKmDrafts] = useState<{ baseline: string; target: string }>({ baseline: '3', target: '5' });
 
   const [form, setForm] = useState<CreateForm>({
     exerciseType: 'pushups',
+    loadKg: null,
     baselineMaxReps: 20,
     targetReps: 50,
     frequencyPerWeek: 3,
@@ -431,7 +422,7 @@ export default function ProgramPage() {
   };
 
   const recommendedFrequency = useMemo(() => {
-    return suggestedFrequencyPerWeek({
+    return suggestFrequencyPerWeek({
       exerciseType: resolvedForm.exerciseType,
       baselineMaxReps: resolvedForm.baselineMaxReps,
       targetReps: resolvedForm.targetReps,
@@ -441,7 +432,7 @@ export default function ProgramPage() {
   }, [resolvedForm.exerciseType, resolvedForm.baselineMaxReps, resolvedForm.targetReps, resolvedForm.ageYears, resolvedForm.weightKg]);
 
   const recommendedDuration = useMemo(() => {
-    return suggestedDurationWeeks({
+    return suggestDurationWeeks({
       exerciseType: resolvedForm.exerciseType,
       baselineMaxReps: resolvedForm.baselineMaxReps,
       targetReps: resolvedForm.targetReps,
@@ -469,9 +460,18 @@ export default function ProgramPage() {
     ));
   }, [recommendedDuration, durationManual]);
 
+  const formKind: ProgramKind = programKind(form.exerciseType) ?? 'reps';
+  const isDistanceForm = formKind === 'distance';
+  // Выходы силой с максимумом 0: программа не стартует, вместо неё — подтягивания и брусья.
+  const startAlternatives = step >= 2 ? programStartAlternatives(form.exerciseType, resolvedForm.baselineMaxReps) : [];
+
   const canNextStep = useMemo(() => {
     if (step === 1) return Boolean(form.exerciseType);
-    if (step === 2) return Number.isFinite(resolvedForm.baselineMaxReps) && resolvedForm.baselineMaxReps > 0;
+    if (step === 2) {
+      if (programStartAlternatives(form.exerciseType, resolvedForm.baselineMaxReps).length) return false;
+      if (programKind(form.exerciseType) === 'loaded' && !form.loadKg) return false;
+      return Number.isFinite(resolvedForm.baselineMaxReps) && resolvedForm.baselineMaxReps > 0;
+    }
     if (step === 3) {
       return (
         Number.isFinite(resolvedForm.targetReps) &&
@@ -480,6 +480,7 @@ export default function ProgramPage() {
       );
     }
     if (step === 4) {
+      if (programKind(form.exerciseType) === 'distance') return true;
       return (
         resolvedForm.frequencyPerWeek >= 1 &&
         resolvedForm.frequencyPerWeek <= 6 &&
@@ -492,11 +493,28 @@ export default function ProgramPage() {
       );
     }
     return false;
-  }, [form.exerciseType, resolvedForm, step]);
+  }, [form.exerciseType, form.loadKg, resolvedForm, step]);
+
+  /** Сменить упражнение мастера: база, цель и гиря — по умолчанию для его вида. */
+  const chooseExercise = useCallback((type: CatalogExerciseType, loadKg?: number | null) => {
+    const defaults = exerciseDefaults(type);
+    setForm((prev) => ({ ...prev, exerciseType: type, ...defaults, ...(loadKg != null ? { loadKg } : {}) }));
+    setKmDrafts({ baseline: metersToKmText(defaults.baselineMaxReps), target: metersToKmText(defaults.targetReps) });
+    setFormDrafts({});
+  }, []);
+
+  const openWizard = useCallback((startStep: number) => {
+    setShowCreate(true);
+    setStep(startStep);
+    setInfo(null);
+    setError(null);
+    setFrequencyManual(false);
+    setDurationManual(false);
+  }, []);
 
   const beginCreate = () => {
     const nextFreq = recommendedFrequency;
-    const nextDuration = suggestedDurationWeeks({
+    const nextDuration = suggestDurationWeeks({
       exerciseType: resolvedForm.exerciseType,
       baselineMaxReps: resolvedForm.baselineMaxReps,
       targetReps: resolvedForm.targetReps,
@@ -504,15 +522,26 @@ export default function ProgramPage() {
       weightKg: resolvedForm.weightKg,
       frequencyPerWeek: nextFreq,
     });
-    setShowCreate(true);
-    setStep(1);
-    setInfo(null);
-    setError(null);
-    setFrequencyManual(false);
-    setDurationManual(false);
+    openWizard(1);
     setFormDrafts({});
     setForm((prev) => ({ ...prev, frequencyPerWeek: nextFreq, durationWeeks: nextDuration }));
   };
+
+  /** Начать программу по другому упражнению (подводящие к выходам силой, следующая гиря) — со 2-го шага. */
+  const startProgramFor = useCallback((type: CatalogExerciseType, loadKg?: number | null) => {
+    chooseExercise(type, loadKg);
+    openWizard(2);
+  }, [chooseExercise, openWizard]);
+
+  // `/program?start=<упражнение>&loadKg=<кг>` — ссылка «следующая гиря» со страницы программы.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const start = params.get('start');
+    if (!start || !isExerciseType(start)) return;
+    const kg = Number(params.get('loadKg'));
+    startProgramFor(start, Number.isFinite(kg) && kg > 0 ? kg : null);
+  }, [startProgramFor]);
 
   const cancelCreate = () => {
     setShowCreate(false);
@@ -530,6 +559,7 @@ export default function ProgramPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           exerciseType: form.exerciseType,
+          loadKg: formKind === 'loaded' ? form.loadKg : undefined,
           baselineMaxReps: resolvedForm.baselineMaxReps,
           targetReps: resolvedForm.targetReps,
           frequencyPerWeek: resolvedForm.frequencyPerWeek,
@@ -570,11 +600,14 @@ export default function ProgramPage() {
   };
 
   const sessionRows = useMemo(() => {
-    const out: Array<TrainingSession & { exerciseType: string; programId: string }> = [];
+    const out: SessionRow[] = [];
     activePrograms.forEach((program) => {
       program.sessions.forEach((session) => out.push({
         ...session,
         exerciseType: program.exerciseType,
+        programType: program.programType,
+        loadKg: program.loadKg,
+        circuitPlanId: program.circuitPlanId,
         programId: program.id,
       }));
     });
@@ -597,7 +630,7 @@ export default function ProgramPage() {
   }, [sessionRows]);
 
   const sessionsByDay = useMemo(() => {
-    const map = new Map<string, { upcoming: number; completed: number; sessions: Array<TrainingSession & { exerciseType: string; programId: string }> }>();
+    const map = new Map<string, { upcoming: number; completed: number; sessions: SessionRow[] }>();
     sessionRows.forEach((session) => {
       const key = dayKeyFromIso(session.scheduledAt);
       if (!key) return;
@@ -644,6 +677,25 @@ export default function ProgramPage() {
     ? (sessionsByDay.get(selectedDayKey)?.sessions || []).filter((session) => !session.completed)
     : [];
 
+  // Гиревая программа пройдена, а новой по этому упражнению нет — предложить следующую гирю (R08.5).
+  const nextLoadOffer = useMemo(() => {
+    const activeTypes = new Set(activePrograms.map((p) => p.exerciseType));
+    const seen = new Set<string>();
+    for (const row of history) {
+      if (seen.has(row.exerciseType)) continue;
+      seen.add(row.exerciseType);
+      if (row.status !== 'completed' || row.nextLoadKg == null || activeTypes.has(row.exerciseType)) continue;
+      if (!isExerciseType(row.exerciseType)) continue;
+      return { row, exerciseType: row.exerciseType, nextLoadKg: row.nextLoadKg };
+    }
+    return null;
+  }, [activePrograms, history]);
+
+  const sessionTitle = (session: SessionRow) => {
+    const label = programLabel(session, locale);
+    return session.sessionKind ? `${label} · ${text.sessionKind[session.sessionKind]}` : label;
+  };
+
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -654,6 +706,19 @@ export default function ProgramPage() {
 
       {error ? <p style={{ color: '#dc2626' }}>{error}</p> : null}
       {info ? <p style={{ color: '#16a34a' }}>{info}</p> : null}
+      {nextLoadOffer && !loading ? (
+        <section style={{ ...card, borderColor: '#93c5fd', background: '#eff6ff' }} data-testid="program-next-load">
+          <div style={{ fontWeight: 900 }}>{text.nextLoad.done(programLabel(nextLoadOffer.row, locale))}</div>
+          <div style={{ marginTop: 4 }}>{text.nextLoad.offer(formatKg(nextLoadOffer.nextLoadKg, locale))}</div>
+          <button
+            type="button"
+            style={{ ...btnPrimary, marginTop: 8 }}
+            onClick={() => startProgramFor(nextLoadOffer.exerciseType, nextLoadOffer.nextLoadKg)}
+          >
+            {text.nextLoad.start}
+          </button>
+        </section>
+      ) : null}
       {loading ? <p>{tt('Загрузка…')}</p> : null}
 
       {!loading ? (
@@ -670,12 +735,12 @@ export default function ProgramPage() {
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <span
                       style={{ ...nextExerciseDot, background: exerciseLegendColor(nextSession.exerciseType) }}
-                      title={exerciseLabel(nextSession.exerciseType)}
+                      title={sessionTitle(nextSession)}
                     />
                     <span style={{ fontWeight: 900 }}>{renderSessionSetPlan(nextSession, nextSession.exerciseType, locale)}</span>
                   </div>
                   <div style={{ fontSize: 13, color: '#374151' }}>
-                    {formatSessionDate(nextSession.scheduledAt, localeTag)}
+                    {sessionTitle(nextSession)} · {formatSessionDate(nextSession.scheduledAt, localeTag)}
                   </div>
                 </div>
                 <Link href={programSessionHref(nextSession.id)} style={{ ...btnPrimaryLink, padding: '8px 10px' }}>
@@ -808,7 +873,7 @@ export default function ProgramPage() {
                           {exerciseCode(program.exerciseType)}
                         </span>
                         <div style={{ fontWeight: 900, fontSize: 18 }}>
-                          {tt(exerciseLabel(program.exerciseType))}
+                          {programLabel(program, locale)}
                         </div>
                       </div>
                       <div style={{ marginTop: 4, color: '#111827' }}>
@@ -862,7 +927,7 @@ export default function ProgramPage() {
               {history.map((row) => (
                 <div key={row.id} style={historyCard}>
                   <div style={{ fontWeight: 900 }}>
-                    {tt(exerciseLabel(row.exerciseType))} · {tt('цель')}: {formatExerciseValue(row.targetReps, row.exerciseType, true, locale)}
+                    {programLabel(row, locale)} · {tt('цель')}: {formatExerciseValue(row.targetReps, row.exerciseType, true, locale)}
                   </div>
                   <div style={{ fontSize: 13, color: '#374151', marginTop: 2 }}>
                     {new Date(row.createdAt).toLocaleDateString(localeTag)} · {tt('статус')}: {tt(row.status)}
@@ -882,219 +947,310 @@ export default function ProgramPage() {
         </section>
       ) : null}
 
-      {selectedDayKey ? (
-        <div style={modalBackdrop} onClick={() => setSelectedDayKey(null)}>
-          <section style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <h2 style={{ marginTop: 0, marginBottom: 0 }}>{formatDayTitle(selectedDayKey, localeTag)}</h2>
-              <button type="button" style={btnSecondary} onClick={() => setSelectedDayKey(null)}>{tt('Закрыть')}</button>
-            </div>
-            <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
-              {selectedDaySessions.length === 0 ? (
-                <div style={{ color: '#6b7280' }}>{tt('На эту дату нет запланированных тренировок.')}</div>
-              ) : null}
-              {selectedDaySessions
-                .slice()
-                .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
-                .map((session) => (
-                  <div key={session.id} style={programCard}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span
-                            style={{ ...exercisePictogram, background: exerciseColor(session.exerciseType) }}
-                            title={tt(exerciseLabel(session.exerciseType))}
-                          >
-                            {exerciseCode(session.exerciseType)}
-                          </span>
-                          <span style={{ fontWeight: 900 }}>{tt(exerciseLabel(session.exerciseType))}</span>
-                        </div>
-                        <div style={{ marginTop: 4, color: '#111827' }}>
-                          {formatSessionDateTime(session.scheduledAt, localeTag)} · {tt('тренировка')} #{session.sessionNumber}
-                          {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
-                        </div>
-                        <div style={{ marginTop: 4, color: '#111827' }}>
-                          {tt('План')}: <b>{renderSessionSetPlan(session, session.exerciseType, locale)}</b>
-                        </div>
-                      </div>
-                      {session.completed ? (
-                        <span style={doneBadge}>{tt('Выполнено')}</span>
-                      ) : (
-                        <Link href={programSessionHref(session.id)} style={btnPrimaryLink}>
-                          {tt('Приступить')}
-                        </Link>
-                      )}
+      <Sheet
+        open={Boolean(selectedDayKey)}
+        onClose={() => setSelectedDayKey(null)}
+        title={selectedDayKey ? formatDayTitle(selectedDayKey, localeTag) : ''}
+        wide
+        testId="program-day-sheet"
+      >
+        <div style={{ display: 'grid', gap: 10 }}>
+          {selectedDaySessions.length === 0 ? (
+            <div style={{ color: '#6b7280' }}>{tt('На эту дату нет запланированных тренировок.')}</div>
+          ) : null}
+          {selectedDaySessions
+            .slice()
+            .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime())
+            .map((session) => (
+              <div key={session.id} style={programCard}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span
+                        style={{ ...exercisePictogram, background: exerciseColor(session.exerciseType) }}
+                        title={tt(exerciseLabel(session.exerciseType))}
+                      >
+                        {exerciseCode(session.exerciseType)}
+                      </span>
+                      <span style={{ fontWeight: 900 }}>{sessionTitle(session)}</span>
+                    </div>
+                    <div style={{ marginTop: 4, color: '#111827' }}>
+                      {formatSessionDateTime(session.scheduledAt, localeTag)} · {tt('тренировка')} #{session.sessionNumber}
+                      {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
+                    </div>
+                    <div style={{ marginTop: 4, color: '#111827' }}>
+                      {tt('План')}: <b>{renderSessionSetPlan(session, session.exerciseType, locale)}</b>
                     </div>
                   </div>
-                ))}
-            </div>
-          </section>
+                  {session.completed ? (
+                    <span style={doneBadge}>{tt('Выполнено')}</span>
+                  ) : (
+                    <Link href={programSessionHref(session.id)} style={btnPrimaryLink}>
+                      {tt('Приступить')}
+                    </Link>
+                  )}
+                </div>
+              </div>
+            ))}
         </div>
-      ) : null}
+      </Sheet>
 
-      {showCreate ? (
-        <div style={modalBackdrop} onClick={cancelCreate}>
-          <section style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginTop: 0 }}>{tt('Новая программа тренировок')}</h2>
-            <div style={{ marginBottom: 10, color: '#4b5563' }}>{tt(`Шаг ${step} из 4`)}</div>
+      <Sheet
+        open={showCreate}
+        onClose={cancelCreate}
+        title={tt('Новая программа тренировок')}
+        testId="program-wizard"
+        footer={(
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" style={btnSecondary} onClick={cancelCreate} disabled={busy}>{tt('Отмена')}</button>
+            {step > 1 ? (
+              <button type="button" style={btnSecondary} onClick={() => setStep((s) => s - 1)} disabled={busy}>{tt('Назад')}</button>
+            ) : null}
+            {step < 4 ? (
+              <button type="button" style={btnPrimary} onClick={() => setStep((s) => s + 1)} disabled={!canNextStep || busy}>{tt('Далее')}</button>
+            ) : (
+              <button type="button" style={btnPrimary} onClick={submitCreate} disabled={!canNextStep || busy}>
+                {tt('Сгенерировать программу')}
+              </button>
+            )}
+          </div>
+        )}
+      >
+        <div style={{ marginBottom: 10, color: '#4b5563' }}>{tt(`Шаг ${step} из 4`)}</div>
 
-            {step === 1 ? (
-              <div style={{ display: 'grid', gap: 8 }}>
-                <label>{tt('1) Выберите упражнение')}</label>
+        {step === 1 ? (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={labelRow}>
+              <label htmlFor="program-exercise">{tt('1) Выберите упражнение')}</label>
+              <InfoButton title={tt('1) Выберите упражнение')}>{text.wizard.exerciseInfo}</InfoButton>
+            </div>
+            <select
+              id="program-exercise"
+              value={form.exerciseType}
+              onChange={(e) => {
+                const nextValue = e.target.value;
+                if (!isExerciseType(nextValue)) return;
+                chooseExercise(nextValue);
+              }}
+              style={inputStyle}
+            >
+              {EXERCISE_ORDER.map((type) => (
+                <option key={type} value={type}>{catalogExerciseLabel(type, locale)}</option>
+              ))}
+            </select>
+            <div style={hint}>
+              {text.wizard.kind[formKind]}
+              {isUnilateralExercise(form.exerciseType) ? ` (${text.wizard.perSide})` : ''}
+            </div>
+          </div>
+        ) : null}
+
+        {step === 2 ? (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {formKind === 'loaded' ? (
+              <>
+                <label htmlFor="program-load">{text.wizard.loadLabel}</label>
                 <select
-                  value={form.exerciseType}
-                  onChange={(e) => {
-                    const nextValue = e.target.value;
-                    if (!isExerciseType(nextValue)) return;
-                    setForm((f) => ({ ...f, exerciseType: nextValue }));
-                  }}
+                  id="program-load"
+                  value={form.loadKg ?? ''}
+                  onChange={(e) => setForm((f) => ({ ...f, loadKg: Number(e.target.value) || null }))}
                   style={inputStyle}
                 >
-                  {EXERCISE_ORDER.map((type) => (
-                    <option key={type} value={type}>{tt(exerciseLabel(type))}</option>
+                  {(EXERCISES[form.exerciseType].load?.presetsKg ?? []).map((kg) => (
+                    <option key={kg} value={kg}>{formatKg(kg, locale)} {locale === 'en' ? 'kg' : 'кг'}</option>
                   ))}
                 </select>
+              </>
+            ) : null}
+            <div style={labelRow}>
+              <label htmlFor="program-baseline">
+                {text.wizard.baseline[formKind]}
+                {isUnilateralExercise(form.exerciseType) ? `, ${text.wizard.perSide}` : ''}
+              </label>
+              <InfoButton title={text.wizard.baseline[formKind]}>{text.wizard.baselineInfo}</InfoButton>
+            </div>
+            {isDistanceForm ? (
+              <input
+                id="program-baseline"
+                type="text"
+                inputMode="decimal"
+                value={kmDrafts.baseline}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setKmDrafts((d) => ({ ...d, baseline: raw }));
+                  setForm((f) => ({ ...f, baselineMaxReps: kmTextToMeters(raw) }));
+                }}
+                style={inputStyle}
+              />
+            ) : (
+              <input
+                id="program-baseline"
+                type="number"
+                min={form.exerciseType === 'muscle_ups' ? 0 : 1}
+                max={500}
+                value={numericInputValue('baselineMaxReps')}
+                onChange={(e) => setNumericField('baselineMaxReps', e.target.value)}
+                style={inputStyle}
+              />
+            )}
+            {startAlternatives.length ? (
+              <div style={blockNote} role="status" data-testid="program-start-alternatives">
+                <div style={{ fontWeight: 900 }}>{text.muscleUps.title}</div>
+                <div style={{ marginTop: 4 }}>{text.muscleUps.body}</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  {startAlternatives.map((type) => (
+                    <button key={type} type="button" style={btnPrimary} onClick={() => startProgramFor(type)}>
+                      {type === 'pullups' ? text.muscleUps.pullups : type === 'dips' ? text.muscleUps.dips : catalogExerciseLabel(type, locale)}
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : null}
+          </div>
+        ) : null}
 
-            {step === 2 ? (
-              <div style={{ display: 'grid', gap: 8 }}>
-                <label>{tt(programBaselinePromptLabel(form.exerciseType))}</label>
+        {step === 3 ? (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <label htmlFor="program-target">
+              {text.wizard.target[formKind]}
+              {isUnilateralExercise(form.exerciseType) ? `, ${text.wizard.perSide}` : ''}
+            </label>
+            {isDistanceForm ? (
+              <input
+                id="program-target"
+                type="text"
+                inputMode="decimal"
+                value={kmDrafts.target}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setKmDrafts((d) => ({ ...d, target: raw }));
+                  setForm((f) => ({ ...f, targetReps: kmTextToMeters(raw) }));
+                }}
+                style={inputStyle}
+              />
+            ) : (
+              <input
+                id="program-target"
+                type="number"
+                min={Math.max(1, resolvedForm.baselineMaxReps)}
+                max={1000}
+                value={numericInputValue('targetReps')}
+                onChange={(e) => setNumericField('targetReps', e.target.value)}
+                style={inputStyle}
+              />
+            )}
+          </div>
+        ) : null}
+
+        {step === 4 && isDistanceForm ? (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <label>{tt('4) Настройки плана')}</label>
+            <div>{text.wizard.distancePlan}</div>
+            <div style={{ fontWeight: 900 }}>{text.wizard.distanceWeeks(recommendedDuration)}</div>
+          </div>
+        ) : null}
+
+        {step === 4 && !isDistanceForm ? (
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div style={labelRow}>
+              <label>{tt('4) Настройки плана')}</label>
+              <InfoButton title={tt('4) Настройки плана')}>{text.wizard.planInfo}</InfoButton>
+            </div>
+
+            <div style={grid2}>
+              <div>
+                <div style={{ marginBottom: 4 }}>{tt('Темп тренировок (в неделю)')}</div>
                 <input
                   type="number"
                   min={1}
-                  max={500}
-                  value={numericInputValue('baselineMaxReps')}
-                  onChange={(e) => setNumericField('baselineMaxReps', e.target.value)}
+                  max={6}
+                  value={numericInputValue('frequencyPerWeek')}
+                  onChange={(e) => {
+                    setFrequencyManual(true);
+                    setNumericField('frequencyPerWeek', e.target.value);
+                  }}
                   style={inputStyle}
                 />
+                <div style={hint}>{tt('Рекомендовано')}: {recommendedFrequency}/{tt('нед')}</div>
+                {form.frequencyPerWeek !== recommendedFrequency ? (
+                  <button
+                    type="button"
+                    style={{ ...btnText, marginTop: 4 }}
+                    onClick={() => {
+                      setFrequencyManual(false);
+                      applyNumericField('frequencyPerWeek', recommendedFrequency);
+                    }}
+                  >
+                    {tt('Вернуть рекомендованный темп')}
+                  </button>
+                ) : null}
               </div>
-            ) : null}
 
-            {step === 3 ? (
-              <div style={{ display: 'grid', gap: 8 }}>
-                <label>{tt(programTargetPromptLabel(form.exerciseType))}</label>
+              <div>
+                <div style={{ marginBottom: 4 }}>{tt('Длительность программы (недели)')}</div>
                 <input
                   type="number"
-                  min={Math.max(1, resolvedForm.baselineMaxReps)}
-                  max={1000}
-                  value={numericInputValue('targetReps')}
-                  onChange={(e) => setNumericField('targetReps', e.target.value)}
+                  min={4}
+                  max={24}
+                  value={numericInputValue('durationWeeks')}
+                  onChange={(e) => {
+                    setDurationManual(true);
+                    setNumericField('durationWeeks', e.target.value);
+                  }}
                   style={inputStyle}
                 />
+                <div style={hint}>{tt('Рекомендовано')}: {recommendedDuration} {tt('недель')}</div>
+                {form.durationWeeks !== recommendedDuration ? (
+                  <button
+                    type="button"
+                    style={{ ...btnText, marginTop: 4 }}
+                    onClick={() => {
+                      setDurationManual(false);
+                      applyNumericField('durationWeeks', recommendedDuration);
+                    }}
+                  >
+                    {tt('Вернуть рекомендованную длительность')}
+                  </button>
+                ) : null}
               </div>
-            ) : null}
-
-            {step === 4 ? (
-              <div style={{ display: 'grid', gap: 10 }}>
-                <label>{tt('4) Настройки плана')}</label>
-
-                <div style={grid2}>
-                  <div>
-                    <div style={{ marginBottom: 4 }}>{tt('Темп тренировок (в неделю)')}</div>
-                    <input
-                      type="number"
-                      min={1}
-                      max={6}
-                      value={numericInputValue('frequencyPerWeek')}
-                      onChange={(e) => {
-                        setFrequencyManual(true);
-                        setNumericField('frequencyPerWeek', e.target.value);
-                      }}
-                      style={inputStyle}
-                    />
-                    <div style={hint}>{tt('Рекомендовано')}: {recommendedFrequency}/{tt('нед')}</div>
-                    {form.frequencyPerWeek !== recommendedFrequency ? (
-                      <button
-                        type="button"
-                        style={{ ...btnText, marginTop: 4 }}
-                        onClick={() => {
-                          setFrequencyManual(false);
-                          applyNumericField('frequencyPerWeek', recommendedFrequency);
-                        }}
-                      >
-                        {tt('Вернуть рекомендованный темп')}
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <div>
-                    <div style={{ marginBottom: 4 }}>{tt('Длительность программы (недели)')}</div>
-                    <input
-                      type="number"
-                      min={4}
-                      max={24}
-                      value={numericInputValue('durationWeeks')}
-                      onChange={(e) => {
-                        setDurationManual(true);
-                        setNumericField('durationWeeks', e.target.value);
-                      }}
-                      style={inputStyle}
-                    />
-                    <div style={hint}>{tt('Рекомендовано')}: {recommendedDuration} {tt('недель')}</div>
-                    {form.durationWeeks !== recommendedDuration ? (
-                      <button
-                        type="button"
-                        style={{ ...btnText, marginTop: 4 }}
-                        onClick={() => {
-                          setDurationManual(false);
-                          applyNumericField('durationWeeks', recommendedDuration);
-                        }}
-                      >
-                        {tt('Вернуть рекомендованную длительность')}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div style={grid2}>
-                  <div>
-                    <div style={{ marginBottom: 4 }}>{tt('Возраст')}</div>
-                    <input
-                      type="number"
-                      min={12}
-                      max={90}
-                      value={numericInputValue('ageYears')}
-                      disabled={profileHints.ageYears != null}
-                      onChange={(e) => setNumericField('ageYears', e.target.value)}
-                      style={{ ...inputStyle, opacity: profileHints.ageYears != null ? 0.7 : 1 }}
-                    />
-                    {profileHints.ageYears != null ? <div style={hint}>{tt('Подставлено из профиля')}</div> : null}
-                  </div>
-
-                  <div>
-                    <div style={{ marginBottom: 4 }}>{tt('Вес (кг)')}</div>
-                    <input
-                      type="number"
-                      min={30}
-                      max={250}
-                      value={numericInputValue('weightKg')}
-                      disabled={profileHints.weightKg != null}
-                      onChange={(e) => setNumericField('weightKg', e.target.value)}
-                      style={{ ...inputStyle, opacity: profileHints.weightKg != null ? 0.7 : 1 }}
-                    />
-                    {profileHints.weightKg != null ? <div style={hint}>{tt('Подставлено из профиля')}</div> : null}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button type="button" style={btnSecondary} onClick={cancelCreate} disabled={busy}>{tt('Отмена')}</button>
-              {step > 1 ? (
-                <button type="button" style={btnSecondary} onClick={() => setStep((s) => s - 1)} disabled={busy}>{tt('Назад')}</button>
-              ) : null}
-              {step < 4 ? (
-                <button type="button" style={btnPrimary} onClick={() => setStep((s) => s + 1)} disabled={!canNextStep || busy}>{tt('Далее')}</button>
-              ) : (
-                <button type="button" style={btnPrimary} onClick={submitCreate} disabled={!canNextStep || busy}>
-                  {tt('Сгенерировать программу')}
-                </button>
-              )}
             </div>
-          </section>
-        </div>
-      ) : null}
+
+            <div style={grid2}>
+              <div>
+                <div style={{ ...labelRow, marginBottom: 4 }}>
+                  <span>{tt('Возраст')}</span>
+                  {profileHints.ageYears != null ? <InfoButton title={tt('Возраст')}>{text.wizard.profileInfo}</InfoButton> : null}
+                </div>
+                <input
+                  type="number"
+                  min={12}
+                  max={90}
+                  value={numericInputValue('ageYears')}
+                  disabled={profileHints.ageYears != null}
+                  onChange={(e) => setNumericField('ageYears', e.target.value)}
+                  style={{ ...inputStyle, opacity: profileHints.ageYears != null ? 0.7 : 1 }}
+                />
+              </div>
+
+              <div>
+                <div style={{ ...labelRow, marginBottom: 4 }}>
+                  <span>{tt('Вес (кг)')}</span>
+                  {profileHints.weightKg != null ? <InfoButton title={tt('Вес (кг)')}>{text.wizard.profileInfo}</InfoButton> : null}
+                </div>
+                <input
+                  type="number"
+                  min={30}
+                  max={250}
+                  value={numericInputValue('weightKg')}
+                  disabled={profileHints.weightKg != null}
+                  onChange={(e) => setNumericField('weightKg', e.target.value)}
+                  style={{ ...inputStyle, opacity: profileHints.weightKg != null ? 0.7 : 1 }}
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Sheet>
     </div>
   );
 }
@@ -1218,25 +1374,19 @@ const btnText: React.CSSProperties = {
   padding: 0,
 };
 
-const modalBackdrop: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(17, 24, 39, 0.45)',
+const labelRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  justifyContent: 'center',
-  padding: 14,
-  zIndex: 50,
+  gap: 4,
+  flexWrap: 'wrap',
 };
 
-const modalCard: React.CSSProperties = {
-  width: 'min(680px, 100%)',
-  maxHeight: '88vh',
-  overflowY: 'auto',
-  border: '1px solid #e5e7eb',
-  borderRadius: 12,
-  background: '#f9fafb',
-  padding: 14,
+const blockNote: React.CSSProperties = {
+  marginTop: 6,
+  padding: 10,
+  borderRadius: 10,
+  border: '1px solid #f59e0b',
+  background: '#fffbeb',
 };
 
 const calendarWrap: React.CSSProperties = {

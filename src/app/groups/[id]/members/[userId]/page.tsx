@@ -19,7 +19,9 @@ import { useRouteParam } from '@/lib/use-route-param';
 import { useAuth } from '@/auth/provider';
 import ModerationActions from '@/components/ModerationActions';
 import { InfoButton, Sheet } from '@/components/ui';
-import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, isLoadedExercise, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
+import { EXERCISES, EXERCISE_ORDER, exerciseIcon, exerciseLabel as catalogExerciseLabel, isExerciseType, isLoadedExercise, isUnilateralExercise, programKind, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
+import { PROGRAM_EXERCISE_TYPES, programLabel, programStartAlternatives } from '@/lib/program-plan';
+import { programsMessages } from '@/i18n/messages/features/programs';
 
 type MemberItem = {
   userId: string;
@@ -65,6 +67,9 @@ type ProgramOverview = {
   activePrograms: Array<{
     id: string;
     exerciseType: string;
+    programType?: string | null;
+    loadKg?: number | null;
+    circuitPlanId?: string | null;
     targetReps: number | null;
     isActive: boolean;
     status: string;
@@ -387,6 +392,13 @@ export default function GroupMemberDetailPage() {
   const [programTarget, setProgramTarget] = useState('30');
   const [programDuration, setProgramDuration] = useState('');
   const [programFrequency, setProgramFrequency] = useState('');
+  const [programLoadKg, setProgramLoadKg] = useState('');
+  const programText = programsMessages[locale];
+  const programFormKind = programKind(programExercise) ?? 'reps';
+  const programIsDistance = programFormKind === 'distance';
+  const programLoadPresets = isExerciseType(programExercise) ? EXERCISES[programExercise].load?.presetsKg ?? [] : [];
+  const programNeedsAlternatives = programStartAlternatives(programExercise, Number(programBaseline.replace(',', '.')) || 0).length > 0
+    && programBaseline.trim() !== '';
   const [feedPeriod, setFeedPeriod] = useState<PeriodKey>('30d');
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => monthStart(new Date()));
   const [calendarMonthInitialized, setCalendarMonthInitialized] = useState(false);
@@ -678,16 +690,22 @@ export default function GroupMemberDetailPage() {
     setError(null);
     setInfo(null);
     try {
+      // Дистанция вводится в км, в API — метры; у гиревой — вес гири.
+      const toValue = (raw: string) => {
+        const n = Number(raw.trim().replace(',', '.'));
+        return programIsDistance ? Math.round(n * 1000) : n;
+      };
       await fetchJsonSafe(`/api/groups/${groupId}/programs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: memberId,
           exerciseType: programExercise,
-          baselineMaxReps: Number(programBaseline),
-          targetReps: Number(programTarget),
-          durationWeeks: programDuration ? Number(programDuration) : undefined,
-          frequencyPerWeek: programFrequency ? Number(programFrequency) : undefined,
+          loadKg: programFormKind === 'loaded' ? Number(programLoadKg) || undefined : undefined,
+          baselineMaxReps: toValue(programBaseline),
+          targetReps: toValue(programTarget),
+          durationWeeks: !programIsDistance && programDuration ? Number(programDuration) : undefined,
+          frequencyPerWeek: !programIsDistance && programFrequency ? Number(programFrequency) : undefined,
         }),
       });
       setInfo(tt('Программа создана'));
@@ -1140,48 +1158,108 @@ export default function GroupMemberDetailPage() {
       {canManageMember ? (
         <section style={card}>
           <h2 style={sectionTitle}>{tt('Программы участников')}</h2>
-          <form onSubmit={createProgram} style={stack}>
+          <form onSubmit={createProgram} style={stack} data-testid="member-program-form">
             <div style={gridCompact}>
-              <label style={fieldGroup}>
-                <span style={fieldLabel}>{tt('Упражнение программы')}</span>
-                <select value={programExercise} onChange={(event) => setProgramExercise(event.target.value)} style={input}>
-                  {PROGRAM_EXERCISE_ORDER.map((type) => (
-                    <option key={type} value={type}>{type}</option>
+              <div style={fieldGroup}>
+                <label htmlFor="member-program-exercise" style={fieldLabel}>{programText.group.exercise}</label>
+                <select
+                  id="member-program-exercise"
+                  value={programExercise}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setProgramExercise(next);
+                    const load = isExerciseType(next) ? EXERCISES[next].load : undefined;
+                    setProgramLoadKg(load ? String(load.referenceKg) : '');
+                  }}
+                  style={input}
+                >
+                  {PROGRAM_EXERCISE_TYPES.map((type) => (
+                    <option key={type} value={type}>{catalogExerciseLabel(type, locale)}</option>
                   ))}
                 </select>
-              </label>
-              <label style={fieldGroup}>
-                <span style={fieldLabel}>{tt('Стартовый максимум')}</span>
-                <span style={fieldHint}>{tt('Текущий уровень участника в повторах или секундах.')}</span>
-                <input value={programBaseline} onChange={(event) => setProgramBaseline(event.target.value)} placeholder={tt('Например: 20')} style={input} />
-              </label>
+              </div>
+              {programFormKind === 'loaded' ? (
+                <div style={fieldGroup}>
+                  <div style={fieldLabelRow}>
+                    <label htmlFor="member-program-load" style={fieldLabel}>{programText.group.load}</label>
+                    <InfoButton title={programText.group.load}>{programText.group.loadInfo}</InfoButton>
+                  </div>
+                  <select id="member-program-load" value={programLoadKg} onChange={(event) => setProgramLoadKg(event.target.value)} style={input}>
+                    {programLoadPresets.map((kg) => (
+                      <option key={kg} value={String(kg)}>{kg} {locale === 'en' ? 'kg' : 'кг'}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
             </div>
             <div style={gridCompact}>
-              <label style={fieldGroup}>
-                <span style={fieldLabel}>{tt('Целевой результат')}</span>
-                <span style={fieldHint}>{tt('К какому максимуму программа должна привести участника.')}</span>
-                <input value={programTarget} onChange={(event) => setProgramTarget(event.target.value)} placeholder={tt('Например: 30')} style={input} />
-              </label>
-              <label style={fieldGroup}>
-                <span style={fieldLabel}>{tt('Длительность программы')}</span>
-                <span style={fieldHint}>{tt('Количество недель. Поле необязательное.')}</span>
-                <input value={programDuration} onChange={(event) => setProgramDuration(event.target.value)} placeholder={tt('Например: 8')} style={input} />
-              </label>
+              <div style={fieldGroup}>
+                <div style={fieldLabelRow}>
+                  <label htmlFor="member-program-baseline" style={fieldLabel}>
+                    {programIsDistance ? programText.group.baselineKm : programText.group.baseline}
+                    {isUnilateralExercise(programExercise) ? ` (${programText.wizard.perSide})` : ''}
+                  </label>
+                  <InfoButton title={programText.group.baseline}>{programText.group.baselineInfo}</InfoButton>
+                </div>
+                <input
+                  id="member-program-baseline"
+                  value={programBaseline}
+                  onChange={(event) => setProgramBaseline(event.target.value)}
+                  inputMode={programIsDistance ? 'decimal' : 'numeric'}
+                  placeholder={programIsDistance ? '3' : tt('Например: 20')}
+                  style={input}
+                />
+              </div>
+              <div style={fieldGroup}>
+                <div style={fieldLabelRow}>
+                  <label htmlFor="member-program-target" style={fieldLabel}>
+                    {programIsDistance ? programText.group.targetKm : programText.group.target}
+                    {isUnilateralExercise(programExercise) ? ` (${programText.wizard.perSide})` : ''}
+                  </label>
+                  <InfoButton title={programText.group.target}>{programText.group.targetInfo}</InfoButton>
+                </div>
+                <input
+                  id="member-program-target"
+                  value={programTarget}
+                  onChange={(event) => setProgramTarget(event.target.value)}
+                  inputMode={programIsDistance ? 'decimal' : 'numeric'}
+                  placeholder={programIsDistance ? '5' : tt('Например: 30')}
+                  style={input}
+                />
+              </div>
             </div>
-            <label style={fieldGroup}>
-              <span style={fieldLabel}>{tt('Тренировок в неделю')}</span>
-              <span style={fieldHint}>{tt('Сколько тренировочных дней в неделю планируется. Поле необязательное.')}</span>
-              <input value={programFrequency} onChange={(event) => setProgramFrequency(event.target.value)} placeholder={tt('Например: 3')} style={input} />
-            </label>
-            <button type="submit" style={btnPrimary}>{tt('Назначить программу')}</button>
+            {programNeedsAlternatives ? (
+              <div style={{ ...fieldHint, color: '#92400e' }} role="status">{programText.group.muscleUpsZero}</div>
+            ) : null}
+            {programIsDistance ? (
+              <div style={fieldHint}>{programText.group.distanceInfo}</div>
+            ) : (
+              <div style={gridCompact}>
+                <div style={fieldGroup}>
+                  <div style={fieldLabelRow}>
+                    <label htmlFor="member-program-duration" style={fieldLabel}>{programText.group.duration}</label>
+                    <InfoButton title={programText.group.duration}>{programText.group.durationInfo}</InfoButton>
+                  </div>
+                  <input id="member-program-duration" value={programDuration} onChange={(event) => setProgramDuration(event.target.value)} placeholder={tt('Например: 8')} style={input} />
+                </div>
+                <div style={fieldGroup}>
+                  <div style={fieldLabelRow}>
+                    <label htmlFor="member-program-frequency" style={fieldLabel}>{programText.group.frequency}</label>
+                    <InfoButton title={programText.group.frequency}>{programText.group.frequencyInfo}</InfoButton>
+                  </div>
+                  <input id="member-program-frequency" value={programFrequency} onChange={(event) => setProgramFrequency(event.target.value)} placeholder={tt('Например: 3')} style={input} />
+                </div>
+              </div>
+            )}
+            <button type="submit" style={btnPrimary} disabled={programNeedsAlternatives}>{tt('Назначить программу')}</button>
           </form>
 
           <div style={stack}>
             {(programOverview?.activePrograms || []).map((program) => (
               <div key={program.id} style={rowCard}>
                 <div style={{ display: 'grid', gap: 4 }}>
-                  <strong>{program.exerciseType}</strong>
-                  <span style={metaLine}>{tt('Статус')}: {program.status} · {tt('Прогресс')}: {program.stats?.completionPercent ?? 0}%</span>
+                  <strong>{programLabel(program, locale)}</strong>
+                  <span style={metaLine}>{tt('Статус')}: {tt(program.status)} · {tt('Прогресс')}: {program.stats?.completionPercent ?? 0}%</span>
                 </div>
                 <button type="button" style={btnSecondary} onClick={() => void deactivateProgram(program.id)}>{tt('Прервать')}</button>
               </div>
@@ -1411,6 +1489,13 @@ const fieldLabel: CSSProperties = {
   fontSize: 13,
   fontWeight: 800,
   color: '#0f172a',
+};
+
+const fieldLabelRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 2,
+  minHeight: 44,
 };
 
 const fieldHint: CSSProperties = {

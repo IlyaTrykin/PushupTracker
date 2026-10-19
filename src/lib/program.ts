@@ -3,10 +3,19 @@ import { prisma } from '@/lib/prisma';
 import { notifyUsers, programStoppedMessage } from '@/lib/notify';
 import { WorkoutCreateError, createWorkoutForUser, type WorkoutCreateResult } from '@/lib/workout-create';
 import { addDays, dayKeyToDbDate, dbDateToDayKey, diffDays, normalizeTimeZone, type DayKey } from '@/lib/calendar-day';
+import { programKind } from '@/lib/exercises';
+import { ENERGY_BODY_SELECT, toBodyMetrics } from '@/lib/workout-energy';
 import {
+  type SetResult,
   ProgramError,
   autofilledDays,
   buildProgramDraft,
+  canAutofillProgram,
+  nextKettlebellLoad,
+  planDistanceExtension,
+  resolveSetResult,
+  restoredSetWorkoutRows,
+  type SetResultInput,
   recordClaimedSet,
   computeSetTarget,
   evaluateProgramOutcome,
@@ -15,10 +24,7 @@ import {
   planProgramExtension,
   programDayOf,
   programReplacementWhere,
-  programSetClientRequestId,
   programSetWorkoutInput,
-  programSetWorkoutTime,
-  programWorkoutDate,
   setsMissingWorkouts,
   shiftInstantByDays,
   type ProgramClock,
@@ -29,6 +35,8 @@ import {
 export {
   ProgramError,
   isProgramExerciseType,
+  parseProgramCreateBody,
+  programLabel,
   suggestDurationWeeks,
   suggestFrequencyPerWeek,
 } from '@/lib/program-plan';
@@ -145,10 +153,14 @@ async function autofillOverdueSessionsFromExternalWorkouts(programId: string, cl
     select: {
       userId: true,
       exerciseType: true,
+      programType: true,
+      loadKg: true,
       sessions: { where: { completed: false, isFinalTest: false }, select: { scheduledAt: true } },
     },
   });
   if (!head) return;
+  // Гиревые, дистанционные, «на сторону» и круговые пропущенные занятия сдвигаются (R08.10).
+  if (!canAutofillProgram(head)) return;
   if (!head.sessions.some((s) => diffDays(programDayOf(s.scheduledAt, clock.timeZone), today) < 0)) return;
 
   await prisma.$transaction(async (tx) => {
@@ -257,6 +269,8 @@ async function getProgramByWhere(where: Prisma.TrainingProgramWhereInput) {
 
   return {
     ...program,
+    // Гиревая программа пройдена: следующий вес гири из пресетов (R08.5).
+    nextLoadKg: program.status === 'completed' ? nextKettlebellLoad(program.exerciseType, program.loadKg) : null,
     stats: {
       totalSessions: program.sessions.length,
       completedSessions: completedSessions.length,
@@ -293,6 +307,8 @@ export async function createTrainingProgram(
       data: {
         userId,
         exerciseType: draft.clean.exerciseType,
+        programType: 'single',
+        loadKg: draft.clean.loadKg,
         goalType: 'reach_target',
         targetReps: draft.clean.targetReps,
         durationWeeks: draft.clean.durationWeeks,
@@ -318,12 +334,14 @@ export async function createTrainingProgram(
           sessionNumber: s.sessionNumber,
           scheduledAt: s.scheduledAt,
           isFinalTest: s.isFinalTest,
+          sessionKind: s.sessionKind ?? null,
           sets: {
             create: s.sets.map((st) => ({
               setNumber: st.setNumber,
               targetReps: st.targetReps,
               restSeconds: st.restSeconds,
               isKeySet: st.isKeySet,
+              loadKg: st.loadKg ?? null,
             })),
           },
         },
@@ -381,6 +399,9 @@ export async function syncProgramSchedule(
       isActive: true,
       needsRetest: true,
       exerciseType: true,
+      programType: true,
+      loadKg: true,
+      circuitPlanId: true,
       sessions: {
         where: { completed: false },
         orderBy: { scheduledAt: 'asc' },
@@ -411,7 +432,13 @@ export async function syncProgramSchedule(
     await notifyUsers(
       [program.userId],
       'program_reminder',
-      (locale) => programStoppedMessage(locale, { programId: program.id, exerciseType: program.exerciseType }),
+      (locale) => programStoppedMessage(locale, {
+        programId: program.id,
+        exerciseType: program.exerciseType,
+        programType: program.programType,
+        loadKg: program.loadKg,
+        circuitPlanId: program.circuitPlanId,
+      }),
       { type: 'program_stopped', tag: `program-stopped-${program.id}`, dedupeKey: () => `program-stopped:${program.id}` },
     );
 
@@ -460,10 +487,14 @@ async function getExternalPerformanceRatios(
   program: {
     userId: string;
     exerciseType: string;
+    programType: string;
+    loadKg: number | null;
     sessions: Array<{ scheduledAt: Date; completed: boolean; sets: Array<{ targetReps: number }> }>;
   },
   clock: ProgramClock,
 ) {
+  // Обычные тренировки дня сравнимы с планом только там, где ими можно закрыть занятие.
+  if (!canAutofillProgram(program)) return [] as number[];
   const today = programDayOf(clock.now, clock.timeZone);
   const candidates = program.sessions
     .filter((s) => !s.completed)
@@ -538,10 +569,12 @@ export async function recalculateUpcomingSessions(programId: string, now: Date =
 
   const future = program.sessions.filter((s) => !s.completed);
   const outcome = evaluateProgramOutcome(program.sessions, targetReps);
+  // Дистанция идёт по своему плану «+10% в неделю»: цели подходов не пересчитываются.
+  const isDistance = programKind(program.exerciseType) === 'distance';
 
   try {
     await prisma.$transaction(async (tx) => {
-      for (const s of future) {
+      for (const s of isDistance ? [] : future) {
         const order = trainingOrder.get(s.id);
         if (!s.isFinalTest && order == null) continue;
         for (const st of s.sets) {
@@ -579,16 +612,22 @@ export async function recalculateUpcomingSessions(programId: string, now: Date =
       }
 
       if (outcome.kind === 'extend') {
-        const extension = planProgramExtension({
-          targetReps,
+        const extensionArgs = {
           finalTestActual: outcome.finalTestActual,
           frequencyPerWeek: program.frequencyPerWeek,
           startDay: dbDateToDayKey(program.startDate),
           lastTestDay: programDayOf(outcome.finalTest.completedAt ?? outcome.finalTest.scheduledAt, clock.timeZone),
-          existingDays: program.sessions.map((s) => programDayOf(s.scheduledAt, clock.timeZone)),
           nextSessionNumber: Math.max(...program.sessions.map((x) => x.sessionNumber)) + 1,
           clock,
-        });
+        };
+        const extension = isDistance
+          ? planDistanceExtension({ ...extensionArgs, targetMeters: targetReps })
+          : planProgramExtension({
+            ...extensionArgs,
+            targetReps,
+            existingDays: program.sessions.map((s) => programDayOf(s.scheduledAt, clock.timeZone)),
+            loadKg: program.loadKg,
+          });
 
         for (const s of extension) {
           await tx.trainingSession.create({
@@ -598,7 +637,16 @@ export async function recalculateUpcomingSessions(programId: string, now: Date =
               sessionNumber: s.sessionNumber,
               scheduledAt: s.scheduledAt,
               isFinalTest: s.isFinalTest,
-              sets: { create: s.sets },
+              sessionKind: s.sessionKind ?? null,
+              sets: {
+                create: s.sets.map((st) => ({
+                  setNumber: st.setNumber,
+                  targetReps: st.targetReps,
+                  restSeconds: st.restSeconds,
+                  isKeySet: st.isKeySet,
+                  loadKg: st.loadKg ?? null,
+                })),
+              },
             },
           });
         }
@@ -684,6 +732,9 @@ export async function getProgramOverview(userId: string) {
       frequencyPerWeek: true,
       baselineMaxReps: true,
       targetReps: true,
+      programType: true,
+      loadKg: true,
+      circuitPlanId: true,
       sessions: {
         select: { id: true, completed: true, completedAt: true },
       },
@@ -718,6 +769,10 @@ export async function getProgramOverview(userId: string) {
       frequencyPerWeek: h.frequencyPerWeek,
       baselineMaxReps: h.baselineMaxReps,
       targetReps: h.targetReps,
+      programType: h.programType,
+      loadKg: h.loadKg,
+      circuitPlanId: h.circuitPlanId,
+      nextLoadKg: h.status === 'completed' ? nextKettlebellLoad(h.exerciseType, h.loadKg) : null,
       totalSessions: total,
       completedSessions: completed,
       completionPercent: total ? Math.round((completed / total) * 100) : 0,
@@ -773,6 +828,9 @@ export async function getManagedProgramOverview(userId: string, groupId: string)
       frequencyPerWeek: true,
       baselineMaxReps: true,
       targetReps: true,
+      programType: true,
+      loadKg: true,
+      circuitPlanId: true,
       sessions: {
         select: { id: true, completed: true, completedAt: true },
       },
@@ -803,6 +861,10 @@ export async function getManagedProgramOverview(userId: string, groupId: string)
       frequencyPerWeek: h.frequencyPerWeek,
       baselineMaxReps: h.baselineMaxReps,
       targetReps: h.targetReps,
+      programType: h.programType,
+      loadKg: h.loadKg,
+      circuitPlanId: h.circuitPlanId,
+      nextLoadKg: h.status === 'completed' ? nextKettlebellLoad(h.exerciseType, h.loadKg) : null,
       totalSessions: total,
       completedSessions: completed,
       completionPercent: total ? Math.round((completed / total) * 100) : 0,
@@ -879,13 +941,36 @@ export async function startTrainingSession(
 
 type ProgramSetOwner = { id: string; username: string; timeZone: string };
 
+type RecordedSetFields = {
+  id: string;
+  setNumber: number;
+  actualReps: number | null;
+  actualLeft: number | null;
+  actualRight: number | null;
+  actualSeconds: number | null;
+  loadKg: number | null;
+  completedAt: Date | null;
+};
+
+const RECORDED_SET_SELECT = {
+  id: true,
+  setNumber: true,
+  actualReps: true,
+  actualLeft: true,
+  actualRight: true,
+  actualSeconds: true,
+  loadKg: true,
+  completedAt: true,
+} as const;
+
 /**
  * The workout of a recorded set, through the common creation path (records, badges, the daily
- * limit, notifications to friends — as for any workout). Idempotent by the set's own key.
+ * limit, notifications to friends, active calories — as for any workout). Idempotent by the set's
+ * own key. A kettlebell set carries its weight, a one-side set both sides, a distance set its time.
  */
 async function recordProgramSetWorkout(
   owner: ProgramSetOwner,
-  set: { id: string; setNumber: number; actualReps: number; doneAt: Date },
+  set: { id: string; setNumber: number; doneAt: Date; loadKg: number | null } & SetResult,
   session: { id: string; exerciseType: string },
   now: Date,
 ): Promise<WorkoutCreateResult> {
@@ -894,6 +979,10 @@ async function recordProgramSetWorkout(
     setNumber: set.setNumber,
     exerciseType: session.exerciseType,
     actualReps: set.actualReps,
+    actualLeft: set.actualLeft,
+    actualRight: set.actualRight,
+    actualSeconds: set.actualSeconds,
+    loadKg: set.loadKg,
     doneAt: set.doneAt,
     timeZone: owner.timeZone,
   });
@@ -906,18 +995,16 @@ async function recordProgramSetWorkout(
 }
 
 /**
- * Records one set. Idempotent: a set that is already recorded answers with the stored
- * value; the set's workout has its own idempotency key (`programSetClientRequestId`), so a
- * repeated or parallel request never creates a second one.
+ * Records one set: `actualReps` (повторы/секунды/метры), for a one-side exercise `actualLeft` /
+ * `actualRight`, for a distance optional `actualSeconds`. Idempotent: a set that is already recorded
+ * answers with the stored value; the set's workout has its own idempotency key
+ * (`programSetClientRequestId`), so a repeated or parallel request never creates a second one.
  */
 export async function submitTrainingSet(args: {
   userId: string;
   sessionId: string;
   setId: string;
-  actualReps: number;
-}) {
-  const actualReps = Math.min(5000, Math.max(1, Math.round(args.actualReps)));
-
+} & SetResultInput) {
   const row = await prisma.trainingSet.findFirst({
     where: {
       id: args.setId,
@@ -927,10 +1014,8 @@ export async function submitTrainingSet(args: {
       },
     },
     select: {
-      id: true,
-      setNumber: true,
-      actualReps: true,
-      completedAt: true,
+      ...RECORDED_SET_SELECT,
+      exerciseType: true,
       session: {
         select: {
           completed: true,
@@ -941,6 +1026,7 @@ export async function submitTrainingSet(args: {
               needsRetest: true,
               isActive: true,
               exerciseType: true,
+              loadKg: true,
               user: { select: { username: true, timeZone: true } },
             },
           },
@@ -951,12 +1037,25 @@ export async function submitTrainingSet(args: {
 
   if (!row) throw new ProgramError('Подход не найден', 404);
 
-  const recordedSet = (set: { id: string; setNumber: number; actualReps: number | null; completedAt: Date | null }) => ({
+  const recordedSet = (set: RecordedSetFields) => ({
     ok: true as const,
-    set: { id: set.id, setNumber: set.setNumber, actualReps: set.actualReps, completedAt: set.completedAt },
+    set: {
+      id: set.id,
+      setNumber: set.setNumber,
+      actualReps: set.actualReps,
+      actualLeft: set.actualLeft,
+      actualRight: set.actualRight,
+      actualSeconds: set.actualSeconds,
+      loadKg: set.loadKg,
+      completedAt: set.completedAt,
+    },
   });
 
   if (row.actualReps != null) return recordedSet(row);
+
+  const exerciseType = row.exerciseType || row.session.program.exerciseType;
+  const result = resolveSetResult(exerciseType, args);
+  const loadKg = row.loadKg ?? row.session.program.loadKg ?? null;
 
   assertProgramUsable(row.session.program);
   if (row.session.completed) throw new ProgramError('Сессия уже завершена', 400);
@@ -975,28 +1074,30 @@ export async function submitTrainingSet(args: {
   // daily limit (or on any failure) the set is emptied again, so nothing is recorded.
   const created = await recordClaimedSet({
     claim: async () =>
-      (await prisma.trainingSet.updateMany({ where: { id: row.id, actualReps: null }, data: { actualReps, completedAt: now } }))
-        .count === 1,
+      (await prisma.trainingSet.updateMany({
+        where: { id: row.id, actualReps: null },
+        data: { ...result, completedAt: now },
+      })).count === 1,
     create: () =>
       recordProgramSetWorkout(
         { id: args.userId, username: row.session.program.user?.username ?? '', timeZone: clock.timeZone },
-        { id: row.id, setNumber: row.setNumber, actualReps, doneAt: now },
-        { id: args.sessionId, exerciseType: row.session.program.exerciseType },
+        { id: row.id, setNumber: row.setNumber, doneAt: now, loadKg, ...result },
+        { id: args.sessionId, exerciseType },
         now,
       ),
     release: async () => {
       await prisma.trainingSet
-        .updateMany({ where: { id: row.id, actualReps, completedAt: now }, data: { actualReps: null, completedAt: null } })
+        .updateMany({
+          where: { id: row.id, actualReps: result.actualReps, completedAt: now },
+          data: { actualReps: null, actualLeft: null, actualRight: null, actualSeconds: null, completedAt: null },
+        })
         .catch((e) => console.error('PROGRAM SET RELEASE ERROR:', e));
     },
   });
 
-  const stored = await prisma.trainingSet.findUnique({
-    where: { id: row.id },
-    select: { id: true, setNumber: true, actualReps: true, completedAt: true },
-  });
+  const stored = await prisma.trainingSet.findUnique({ where: { id: row.id }, select: RECORDED_SET_SELECT });
   return {
-    ...recordedSet(stored ?? { ...row, actualReps, completedAt: now }),
+    ...recordedSet(stored ?? { ...row, ...result, completedAt: now }),
     records: created?.records ?? [],
     achievements: created?.achievements ?? [],
   };
@@ -1019,9 +1120,10 @@ export async function completeTrainingSession(userId: string, sessionId: string)
             id: true,
             userId: true,
             exerciseType: true,
+            loadKg: true,
             needsRetest: true,
             isActive: true,
-            user: { select: { username: true, timeZone: true } },
+            user: { select: { username: true, timeZone: true, ...ENERGY_BODY_SELECT } },
           },
         },
         sets: { orderBy: { setNumber: 'asc' } },
@@ -1058,17 +1160,14 @@ export async function completeTrainingSession(userId: string, sessionId: string)
     const missingSets = setsMissingWorkouts(session.sets, workouts);
     if (missingSets.length) {
       await tx.workout.createMany({
-        data: missingSets.map((st) => {
-          const doneAt = st.completedAt ?? now;
-          return {
-            userId: session.program.userId,
-            reps: st.actualReps || 0,
-            date: programWorkoutDate(doneAt, timeZone),
-            time: programSetWorkoutTime(doneAt, st.setNumber),
-            exerciseType: session.program.exerciseType,
-            trainingSessionId: session.id,
-            clientRequestId: programSetClientRequestId(st.id),
-          };
+        // С весом гири, сторонами, временем и активными калориями — как у записанной тренировки.
+        data: restoredSetWorkoutRows({
+          sets: missingSets,
+          program: session.program,
+          sessionId: session.id,
+          timeZone,
+          now,
+          body: toBodyMetrics(session.program.user),
         }),
         // A workout of that set that exists under its key but did not match by time/reps stays as is.
         skipDuplicates: true,

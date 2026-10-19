@@ -5,21 +5,14 @@ import {
   ProgramError,
   createTrainingProgram,
   deriveAgeFromBirthDate,
-  isProgramExerciseType,
   getProgramOverview,
-  suggestDurationWeeks,
-  suggestFrequencyPerWeek,
-  type ProgramCreateInput,
+  parseProgramCreateBody,
 } from '@/lib/program';
 
 export const dynamic = 'force-dynamic';
 
 function jsonError(message: string, status = 400, code?: string) {
   return NextResponse.json(code ? { error: message, code } : { error: message }, { status });
-}
-
-function isExerciseType(value: string): value is ProgramCreateInput['exerciseType'] {
-  return isProgramExerciseType(value);
 }
 
 export async function GET(request: Request) {
@@ -46,48 +39,12 @@ export async function POST(request: Request) {
       select: { birthDate: true, gender: true, weightKg: true },
     });
 
-    const inferredAge = deriveAgeFromBirthDate(me?.birthDate ?? null) ?? 25;
-    const inferredWeight = me?.weightKg ?? 70;
-    const inferredSex = String(body.sex || me?.gender || 'unknown').trim().toLowerCase();
-    const rawExerciseType = String(body.exerciseType || 'pushups');
-    const exerciseType: ProgramCreateInput['exerciseType'] = isExerciseType(rawExerciseType) ? rawExerciseType : 'pushups';
-    const baselineMaxReps = Number(body.baselineMaxReps || 1);
-    const targetReps = Number(body.targetReps || baselineMaxReps);
-    const ageYears = Number(body.ageYears || inferredAge);
-    const weightKg = Number(body.weightKg || inferredWeight);
-    const frequencyPerWeek =
-      body.frequencyPerWeek != null
-        ? Number(body.frequencyPerWeek)
-        : suggestFrequencyPerWeek({
-            exerciseType,
-            baselineMaxReps,
-            targetReps,
-            ageYears,
-            weightKg,
-          });
-    const durationWeeks =
-      body.durationWeeks != null
-        ? Number(body.durationWeeks)
-        : suggestDurationWeeks({
-            exerciseType,
-            baselineMaxReps,
-            targetReps,
-            ageYears,
-            weightKg,
-            frequencyPerWeek,
-          });
-
-    const payload: ProgramCreateInput = {
-      exerciseType,
-      baselineMaxReps,
-      targetReps,
-      durationWeeks,
-      frequencyPerWeek,
-      ageYears,
-      weightKg,
-      sex: inferredSex,
-      startDate: body.startDate ? String(body.startDate) : null,
-    };
+    // Неизвестное упражнение — 400 (PROGRAM_EXERCISE_INVALID), без подмены на отжимания.
+    const payload = parseProgramCreateBody(body, {
+      ageYears: deriveAgeFromBirthDate(me?.birthDate ?? null) ?? 25,
+      weightKg: me?.weightKg ?? 70,
+      sex: me?.gender || 'unknown',
+    });
 
     const program = await createTrainingProgram(user.id, payload);
 

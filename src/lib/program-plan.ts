@@ -4,7 +4,17 @@
  * Every calendar decision ("which day", "19:00") is made in the user's time zone
  * through `calendar-day.ts`; the server time zone never matters.
  */
-import { EXERCISES, isExerciseType } from './exercises';
+import {
+  EXERCISES,
+  EXERCISE_IDS,
+  exerciseLabel,
+  isExerciseType,
+  isLoadedExercise,
+  isUnilateralExercise,
+  programKind,
+  type ExerciseType,
+  type ProgramKind,
+} from './exercises';
 import {
   addDays,
   dayKeyInZone,
@@ -16,11 +26,18 @@ import {
   zonedTimeToInstant,
   type DayKey,
 } from './calendar-day';
+import { MAX_DISTANCE_METERS, MAX_DURATION_SECONDS, normalizeLoadKg } from './workout-input';
+import { workoutActiveKcal } from './workout-energy';
+import type { BodyMetrics } from './health/energy';
 
-// Генератор программ рассчитан на упражнения с собственным весом: у каждого типа
-// здесь свой коэффициент готовности, поэтому список задан явно, а не из каталога.
-export type ProgramExerciseType = 'pushups' | 'pullups' | 'crunches' | 'squats' | 'plank';
+// Программа строится по любому упражнению каталога, у которого есть вид программы
+// (`programKind`): повторы, время, гиря с весом, дистанция. Вид определяет единицы цели
+// (повторы / секунды / метры) и форму занятия; у упражнений «на сторону» цель — на одну сторону.
+export type ProgramExerciseType = ExerciseType;
 export type ProgramGoalType = 'reach_target';
+
+/** Упражнения, по которым можно взять программу, в порядке каталога. */
+export const PROGRAM_EXERCISE_TYPES: readonly ExerciseType[] = EXERCISE_IDS.filter((id) => programKind(id) != null);
 
 /** Local wall time of every scheduled program session. */
 export const PROGRAM_SESSION_TIME = '19:00';
@@ -33,18 +50,70 @@ type GoalTemplate = {
   keySet: number;
 };
 
-const EXERCISE_COEFFICIENTS: Record<ProgramExerciseType, number> = {
+// Коэффициент прироста: насколько быстро растёт максимум в подходе от занятия к занятию
+// (1 — как у отжиманий). Тяжёлые и технически сложные упражнения растут медленнее.
+const EXERCISE_COEFFICIENTS: Record<ExerciseType, number> = {
   pushups: 1.0,
   pullups: 0.85,
   crunches: 1.1,
   squats: 1.05,
   plank: 0.9,
+  dips: 0.9,
+  hanging_leg_raises: 0.85,
+  muscle_ups: 0.6,
+  lunges: 1.0,
+  burpees: 0.95,
+  jump_rope: 1.1,
+  wall_sit: 0.95,
+  kettlebell_press: 0.8,
+  kettlebell_jerk: 0.85,
+  kettlebell_swing: 1.0,
+  run: 1.0,
+  bike: 1.0,
+  row: 1.0,
+  australian_pullups: 0.95,
+  glute_bridge: 1.1,
+  superman: 1.05,
+  side_plank: 0.9,
+  mountain_climbers: 1.1,
+  kettlebell_row: 0.85,
 };
 
-export function isProgramExerciseType(value: unknown): value is ProgramExerciseType {
-  return isExerciseType(value)
-    && EXERCISES[value].programSupported
-    && Object.prototype.hasOwnProperty.call(EXERCISE_COEFFICIENTS, value);
+// Тяжёлые тяги собственного веса: реже занятия, медленнее прирост (как раньше у подтягиваний).
+const HARD_PULL_EXERCISES: ReadonlySet<string> = new Set(['pullups', 'muscle_ups']);
+// Упражнения, где большой вес тела мешает: жимы и тяги собственного веса.
+const BODYWEIGHT_HEAVY_EXERCISES: ReadonlySet<string> = new Set(['pushups', 'pullups', 'dips', 'muscle_ups']);
+
+export function isProgramExerciseType(value: unknown): value is ExerciseType {
+  return isExerciseType(value) && programKind(value) != null;
+}
+
+/** Коэффициент прироста упражнения в программе (0 — программы по нему нет). */
+export function programCoefficient(type: string): number {
+  return isProgramExerciseType(type) ? EXERCISE_COEFFICIENTS[type] : 0;
+}
+
+/** Вид программы по упражнению (`programKind`), для неизвестного — `reps`. */
+function kindOf(type: string): ProgramKind {
+  return programKind(type) ?? 'reps';
+}
+
+// Стартовое условие: при максимуме 0 программа не начинается, вместо неё — подводящие.
+const PROGRAM_START_ALTERNATIVES: Partial<Record<ExerciseType, ExerciseType[]>> = {
+  muscle_ups: ['pullups', 'dips'],
+};
+
+/** С каких программ начать, если по упражнению пока нет ни одного повтора; [] — стартовать можно. */
+export function programStartAlternatives(type: string, baselineMaxReps: number): ExerciseType[] {
+  if (!isExerciseType(type)) return [];
+  const alternatives = PROGRAM_START_ALTERNATIVES[type];
+  if (!alternatives) return [];
+  return Number(baselineMaxReps) >= 1 ? [] : [...alternatives];
+}
+
+/** Допустимые база и цель в единицах упражнения: повторы/секунды или метры. */
+export function programValueRange(type: string): { min: number; max: number } {
+  return kindOf(type) === 'distance' ? { min: 200, max: MAX_DISTANCE_METERS } : { min: 1, max: 1000 };
 }
 
 const GOAL_TEMPLATE: GoalTemplate = {
@@ -55,9 +124,12 @@ const GOAL_TEMPLATE: GoalTemplate = {
 };
 
 export type ProgramCreateInput = {
-  exerciseType: ProgramExerciseType;
+  exerciseType: ExerciseType;
+  /** В единицах упражнения: повторы (на сторону), секунды, метры. */
   baselineMaxReps: number;
   targetReps: number;
+  /** Вес гири — обязателен у гиревых программ, у остальных отбрасывается. */
+  loadKg?: number | null;
   durationWeeks?: number | null;
   frequencyPerWeek?: number | null;
   ageYears?: number | null;
@@ -67,9 +139,11 @@ export type ProgramCreateInput = {
 };
 
 type NormalizedCreateInput = {
-  exerciseType: ProgramExerciseType;
+  exerciseType: ExerciseType;
+  programKind: ProgramKind;
   baselineMaxReps: number;
   targetReps: number;
+  loadKg: number | null;
   durationWeeks: number;
   frequencyPerWeek: number;
   ageYears: number;
@@ -200,14 +274,32 @@ export function normalizeScheduledTrainingDay(args: {
 // Targets
 // ---------------------------------------------------------------------------
 
-export function suggestDurationWeeks(args: {
-  exerciseType: ProgramExerciseType;
+export type ProgramSuggestionArgs = {
+  exerciseType: string;
   baselineMaxReps: number;
   targetReps: number;
   ageYears: number;
   weightKg: number;
   frequencyPerWeek?: number | null;
-}): number {
+};
+
+/**
+ * Рекомендуемая длительность программы, недели. Одна формула для сервера и мастера на клиенте.
+ * Дистанция — по плану «+10% в неделю» (`buildDistancePlan`): столько недель, сколько нужно
+ * длинной тренировке дорасти до цели, плюс неделя финального теста.
+ */
+export function suggestDurationWeeks(args: ProgramSuggestionArgs): number {
+  if (kindOf(args.exerciseType) === 'distance') {
+    const range = programValueRange(args.exerciseType);
+    const baseline = clampInt(args.baselineMaxReps, range.min, range.max);
+    const plan = buildDistancePlan({
+      baselineMeters: baseline,
+      targetMeters: clampInt(args.targetReps, baseline, range.max),
+      frequencyPerWeek: DISTANCE_FREQUENCY,
+    });
+    return clampInt(plan.weeks.length + 1, 4, 24);
+  }
+
   const baseline = clampInt(args.baselineMaxReps, 1, 500);
   const target = clampInt(args.targetReps, baseline, 1000);
   const age = clampInt(args.ageYears, 8, 90);
@@ -217,7 +309,7 @@ export function suggestDurationWeeks(args: {
     1,
     6,
   );
-  const coef = EXERCISE_COEFFICIENTS[args.exerciseType] ?? 1;
+  const coef = programCoefficient(args.exerciseType) || 1;
 
   const gap = Math.max(0, target - baseline);
   let readiness = 1;
@@ -225,9 +317,9 @@ export function suggestDurationWeeks(args: {
   if (baseline >= 40) readiness *= 1.1;
   if (age >= 40) readiness *= 0.9;
   if (age >= 55) readiness *= 0.8;
-  if (weight >= 95 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) readiness *= 0.92;
-  if (weight >= 115 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) readiness *= 0.88;
-  if (args.exerciseType === 'pullups') readiness *= 0.88;
+  if (weight >= 95 && BODYWEIGHT_HEAVY_EXERCISES.has(args.exerciseType)) readiness *= 0.92;
+  if (weight >= 115 && BODYWEIGHT_HEAVY_EXERCISES.has(args.exerciseType)) readiness *= 0.88;
+  if (HARD_PULL_EXERCISES.has(args.exerciseType)) readiness *= 0.88;
 
   const progressPerSession = Math.max(0.35, baseline * 0.05 * coef * readiness);
   const requiredSessions = Math.ceil(gap / progressPerSession) + frequency * 2;
@@ -240,13 +332,10 @@ export function suggestDurationWeeks(args: {
   return clampInt(weeks, 4, 24);
 }
 
-export function suggestFrequencyPerWeek(args: {
-  exerciseType: ProgramExerciseType;
-  baselineMaxReps: number;
-  targetReps: number;
-  ageYears: number;
-  weightKg: number;
-}): number {
+/** Рекомендуемое число занятий в неделю; у дистанции всегда 3 (лёгкое, интервалы, длинное). */
+export function suggestFrequencyPerWeek(args: Omit<ProgramSuggestionArgs, 'frequencyPerWeek'>): number {
+  if (kindOf(args.exerciseType) === 'distance') return DISTANCE_FREQUENCY;
+
   const baseline = clampInt(args.baselineMaxReps, 1, 500);
   const target = clampInt(args.targetReps, baseline, 1000);
   const age = clampInt(args.ageYears, 8, 90);
@@ -257,10 +346,10 @@ export function suggestFrequencyPerWeek(args: {
   if (baseline <= 8) freq = 2;
   if (baseline >= 32) freq = 4;
 
-  if (args.exerciseType === 'pullups') freq -= 1;
+  if (HARD_PULL_EXERCISES.has(args.exerciseType)) freq -= 1;
   if (age >= 45) freq -= 1;
   if (age >= 60) freq -= 1;
-  if (weight >= 110 && (args.exerciseType === 'pushups' || args.exerciseType === 'pullups')) freq -= 1;
+  if (weight >= 110 && BODYWEIGHT_HEAVY_EXERCISES.has(args.exerciseType)) freq -= 1;
 
   if (goalGap >= Math.max(12, Math.round(baseline * 0.7))) freq += 1;
 
@@ -349,24 +438,36 @@ function normalizeCreateInput(raw: ProgramCreateInput): NormalizedCreateInput {
   const exerciseType = raw.exerciseType;
 
   if (!isProgramExerciseType(exerciseType)) {
-    throw new ProgramError('Некорректный тип упражнения');
+    throw new ProgramError('Некорректный тип упражнения', 400, 'PROGRAM_EXERCISE_INVALID');
+  }
+  const kind = kindOf(exerciseType);
+
+  if (programStartAlternatives(exerciseType, Number(raw.baselineMaxReps) || 0).length) {
+    throw new ProgramError(
+      'С нулевого максимума программа не стартует: начните с подводящих упражнений',
+      400,
+      'PROGRAM_BASELINE_ZERO',
+    );
   }
 
-  const baselineMaxReps = clampInt(raw.baselineMaxReps, 1, 500);
-  const targetReps = clampInt(raw.targetReps, baselineMaxReps, 1000);
+  const range = programValueRange(exerciseType);
+  const baselineMaxReps = clampInt(raw.baselineMaxReps, range.min, kind === 'distance' ? range.max : 500);
+  const targetReps = clampInt(raw.targetReps, baselineMaxReps, range.max);
+
+  let loadKg: number | null = null;
+  if (kind === 'loaded') {
+    loadKg = normalizeLoadKg(raw.loadKg);
+    if (loadKg == null) throw new ProgramError('Укажите вес гири', 400, 'PROGRAM_LOAD_REQUIRED');
+  }
 
   const ageYears = clampInt(Number(raw.ageYears ?? 25), 8, 90);
   const weightKg = clampInt(Number(raw.weightKg ?? 70), 30, 250);
-  const frequencyPerWeek = raw.frequencyPerWeek != null
-    ? clampInt(Number(raw.frequencyPerWeek), 1, 6)
-    : suggestFrequencyPerWeek({
-      exerciseType,
-      baselineMaxReps,
-      targetReps,
-      ageYears,
-      weightKg,
-    });
-  const durationWeeks = raw.durationWeeks != null
+  const frequencyPerWeek = kind === 'distance'
+    ? DISTANCE_FREQUENCY
+    : raw.frequencyPerWeek != null
+      ? clampInt(Number(raw.frequencyPerWeek), 1, 6)
+      : suggestFrequencyPerWeek({ exerciseType, baselineMaxReps, targetReps, ageYears, weightKg });
+  const durationWeeks = kind !== 'distance' && raw.durationWeeks != null
     ? clampInt(Number(raw.durationWeeks), 4, 24)
     : suggestDurationWeeks({ exerciseType, baselineMaxReps, targetReps, ageYears, weightKg, frequencyPerWeek });
 
@@ -375,8 +476,10 @@ function normalizeCreateInput(raw: ProgramCreateInput): NormalizedCreateInput {
 
   return {
     exerciseType,
+    programKind: kind,
     baselineMaxReps,
     targetReps,
+    loadKg,
     durationWeeks,
     frequencyPerWeek,
     ageYears,
@@ -386,11 +489,62 @@ function normalizeCreateInput(raw: ProgramCreateInput): NormalizedCreateInput {
   };
 }
 
+function bodyNumber(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Тело запроса создания программы (личной и назначенной в группе) → вход `createTrainingProgram`.
+ * Неизвестное упражнение — 400, без подмены на отжимания. Возраст, вес и пол, которых нет
+ * в запросе, берутся из профиля (`profile`).
+ */
+export function parseProgramCreateBody(
+  body: Record<string, unknown>,
+  profile: { ageYears: number; weightKg: number; sex: string },
+): ProgramCreateInput {
+  const exerciseType = typeof body.exerciseType === 'string' ? body.exerciseType.trim() : '';
+  if (!isProgramExerciseType(exerciseType)) {
+    throw new ProgramError('Некорректный тип упражнения', 400, 'PROGRAM_EXERCISE_INVALID');
+  }
+  const baselineMaxReps = bodyNumber(body.baselineMaxReps) ?? 1;
+  const targetReps = bodyNumber(body.targetReps) ?? baselineMaxReps;
+  const ageYears = bodyNumber(body.ageYears) || profile.ageYears;
+  const weightKg = bodyNumber(body.weightKg) || profile.weightKg;
+  const frequencyPerWeek = bodyNumber(body.frequencyPerWeek)
+    ?? suggestFrequencyPerWeek({ exerciseType, baselineMaxReps, targetReps, ageYears, weightKg });
+  const durationWeeks = bodyNumber(body.durationWeeks)
+    ?? suggestDurationWeeks({ exerciseType, baselineMaxReps, targetReps, ageYears, weightKg, frequencyPerWeek });
+
+  return {
+    exerciseType,
+    baselineMaxReps,
+    targetReps,
+    loadKg: isLoadedExercise(exerciseType) ? bodyNumber(body.loadKg) : null,
+    durationWeeks,
+    frequencyPerWeek,
+    ageYears,
+    weightKg,
+    sex: String(body.sex || profile.sex || 'unknown').trim().toLowerCase(),
+    startDate: body.startDate ? String(body.startDate) : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Drafts
 // ---------------------------------------------------------------------------
 
-export type ProgramDraftSet = { setNumber: number; targetReps: number; restSeconds: number; isKeySet: boolean };
+export type DistanceSessionKind = 'easy' | 'interval' | 'long';
+
+export type ProgramDraftSet = {
+  setNumber: number;
+  targetReps: number;
+  restSeconds: number;
+  isKeySet: boolean;
+  /** Вес гири подхода (гиревые программы). */
+  loadKg?: number | null;
+};
 
 export type ProgramDraftSession = {
   weekNumber: number;
@@ -398,6 +552,8 @@ export type ProgramDraftSession = {
   day: DayKey;
   scheduledAt: Date;
   isFinalTest: boolean;
+  /** Дистанция: лёгкое / интервалы / длинное. */
+  sessionKind?: DistanceSessionKind | null;
   sets: ProgramDraftSet[];
 };
 
@@ -405,14 +561,226 @@ function restSecondsFor(idx: number): number {
   return GOAL_TEMPLATE.rest[idx] ?? GOAL_TEMPLATE.rest[GOAL_TEMPLATE.rest.length - 1] ?? 90;
 }
 
-function finalTestSets(targetReps: number): ProgramDraftSet[] {
-  return [{ setNumber: 1, targetReps, restSeconds: 0, isKeySet: true }];
+function finalTestSets(targetReps: number, loadKg: number | null = null): ProgramDraftSet[] {
+  return [{ setNumber: 1, targetReps, restSeconds: 0, isKeySet: true, ...(loadKg != null ? { loadKg } : {}) }];
 }
+
+function withLoad(sets: ProgramDraftSet[], loadKg: number | null): ProgramDraftSet[] {
+  return loadKg != null ? sets.map((st) => ({ ...st, loadKg })) : sets;
+}
+
+// ---------------------------------------------------------------------------
+// Distance: «пройти X км без остановки» (R08.6)
+// ---------------------------------------------------------------------------
+
+/** Занятий в неделю у дистанционной программы: лёгкое, интервалы, длинное. */
+export const DISTANCE_FREQUENCY = 3;
+/** Рост недельного объёма — не больше 10%. */
+export const DISTANCE_WEEKLY_GROWTH = 1.1;
+const DISTANCE_MAX_TRAINING_WEEKS = 23;
+const DISTANCE_INTERVAL_REPS = 4;
+const DISTANCE_INTERVAL_REST_SECONDS = 90;
+// Дни занятий от начала недели программы.
+const DISTANCE_DAY_OFFSETS: Record<number, number[]> = { 2: [0, 3], 3: [0, 2, 4], 4: [0, 1, 3, 5] };
+const DISTANCE_KINDS: Record<number, DistanceSessionKind[]> = {
+  2: ['easy', 'long'],
+  3: ['easy', 'interval', 'long'],
+  4: ['easy', 'interval', 'easy', 'long'],
+};
+
+export type DistancePlanSession = {
+  kind: DistanceSessionKind;
+  sets: Array<{ targetReps: number; restSeconds: number; isKeySet: boolean }>;
+};
+export type DistancePlanWeek = { weekNumber: number; longMeters: number; volumeMeters: number; sessions: DistancePlanSession[] };
+
+function floorTo10(meters: number): number {
+  return Math.max(10, Math.floor(meters / 10) * 10);
+}
+
+function distanceSession(kind: DistanceSessionKind, longMeters: number): DistancePlanSession {
+  if (kind === 'long') return { kind, sets: [{ targetReps: longMeters, restSeconds: 0, isKeySet: true }] };
+  if (kind === 'easy') return { kind, sets: [{ targetReps: floorTo10(longMeters * 0.5), restSeconds: 0, isKeySet: false }] };
+  const rep = floorTo10(longMeters * 0.1);
+  return {
+    kind,
+    sets: Array.from({ length: DISTANCE_INTERVAL_REPS }, (_, i) => ({
+      targetReps: rep,
+      restSeconds: i === DISTANCE_INTERVAL_REPS - 1 ? 0 : DISTANCE_INTERVAL_REST_SECONDS,
+      isKeySet: false,
+    })),
+  };
+}
+
+function sessionVolume(session: DistancePlanSession): number {
+  return session.sets.reduce((sum, st) => sum + st.targetReps, 0);
+}
+
+/**
+ * Недели дистанционной программы до финального теста. Длинная тренировка начинается с базы
+ * (дистанция, которую человек проходит без остановки сейчас) и растёт геометрически до ~90% цели,
+ * не быстрее 10% в неделю; лёгкое — половина длинной, интервалы — 4 × 10% длинной. Недельный объём
+ * не больше 1,1 × предыдущего: лишнее после округления снимается с лёгких занятий. Минимум 4 недели.
+ */
+export function buildDistancePlan(args: {
+  baselineMeters: number;
+  targetMeters: number;
+  frequencyPerWeek?: number | null;
+}): { weeks: DistancePlanWeek[] } {
+  const base = clampInt(args.baselineMeters, 100, MAX_DISTANCE_METERS);
+  const target = clampInt(args.targetMeters, base, MAX_DISTANCE_METERS);
+  const freq = clampInt(Number(args.frequencyPerWeek ?? DISTANCE_FREQUENCY), 2, 4);
+  const kinds = DISTANCE_KINDS[freq];
+
+  const peak = Math.max(base, Math.floor((target * 0.9) / 10) * 10);
+  const stepsNeeded = peak > base ? Math.ceil(Math.log(peak / base) / Math.log(DISTANCE_WEEKLY_GROWTH)) : 0;
+  const weekCount = Math.min(DISTANCE_MAX_TRAINING_WEEKS, Math.max(4, stepsNeeded + 1));
+  const growth = weekCount > 1 && peak > base
+    ? Math.min(DISTANCE_WEEKLY_GROWTH, (peak / base) ** (1 / (weekCount - 1)))
+    : 1;
+
+  const weeks: DistancePlanWeek[] = [];
+  let prevLong = base;
+  let prevVolume: number | null = null;
+  for (let w = 1; w <= weekCount; w += 1) {
+    const longMeters = w === 1
+      ? base
+      : Math.max(prevLong, Math.min(peak, Math.floor((prevLong * growth) / 10) * 10, Math.floor(prevLong * DISTANCE_WEEKLY_GROWTH)));
+    const sessions = kinds.map((kind) => distanceSession(kind, longMeters));
+    let volume = sessions.reduce((sum, s) => sum + sessionVolume(s), 0);
+
+    if (prevVolume != null) {
+      const cap = Math.floor(prevVolume * DISTANCE_WEEKLY_GROWTH);
+      for (const s of sessions) {
+        if (volume <= cap) break;
+        if (s.kind !== 'easy') continue;
+        const set = s.sets[0];
+        const cut = Math.min(set.targetReps - 10, Math.ceil((volume - cap) / 10) * 10);
+        set.targetReps -= cut;
+        volume -= cut;
+      }
+    }
+
+    weeks.push({ weekNumber: w, longMeters, volumeMeters: volume, sessions });
+    prevLong = longMeters;
+    prevVolume = volume;
+  }
+  return { weeks };
+}
+
+function distanceDraftSessions(args: {
+  plan: DistancePlanWeek[];
+  frequencyPerWeek: number;
+  firstDay: DayKey;
+  startDay: DayKey;
+  firstSessionNumber: number;
+  targetMeters: number;
+  timeZone: string;
+}): ProgramDraftSession[] {
+  const freq = clampInt(args.frequencyPerWeek, 2, 4);
+  const offsets = DISTANCE_DAY_OFFSETS[freq];
+  const out: ProgramDraftSession[] = [];
+  let sessionNumber = args.firstSessionNumber;
+  args.plan.forEach((week, weekIdx) => {
+    week.sessions.forEach((session, idx) => {
+      const day = addDays(args.firstDay, weekIdx * 7 + (offsets[idx] ?? idx * 2));
+      out.push({
+        weekNumber: weekNumberFor(day, args.startDay),
+        sessionNumber,
+        day,
+        scheduledAt: programSessionInstant(day, args.timeZone),
+        isFinalTest: false,
+        sessionKind: session.kind,
+        sets: session.sets.map((st, i) => ({ setNumber: i + 1, ...st })),
+      });
+      sessionNumber += 1;
+    });
+  });
+  const finalDay = addDays(args.firstDay, args.plan.length * 7);
+  out.push({
+    weekNumber: weekNumberFor(finalDay, args.startDay),
+    sessionNumber,
+    day: finalDay,
+    scheduledAt: programSessionInstant(finalDay, args.timeZone),
+    isFinalTest: true,
+    sessionKind: null,
+    sets: finalTestSets(args.targetMeters),
+  });
+  return out;
+}
+
+/**
+ * Продление дистанционной программы после несданного финального теста: новый план «+10% в неделю»
+ * от пройденного на тесте до цели и новый финальный тест; не раньше чем через 2 дня после теста и сегодня.
+ */
+export function planDistanceExtension(args: {
+  targetMeters: number;
+  finalTestActual: number;
+  frequencyPerWeek: number;
+  startDay: DayKey;
+  lastTestDay: DayKey;
+  nextSessionNumber: number;
+  clock: ProgramClock;
+}): ProgramDraftSession[] {
+  const timeZone = normalizeTimeZone(args.clock.timeZone);
+  const today = dayKeyInZone(args.clock.now, timeZone);
+  const plan = buildDistancePlan({
+    baselineMeters: Math.max(100, Math.min(args.finalTestActual, args.targetMeters)),
+    targetMeters: args.targetMeters,
+    frequencyPerWeek: args.frequencyPerWeek,
+  });
+  return distanceDraftSessions({
+    plan: plan.weeks,
+    frequencyPerWeek: args.frequencyPerWeek,
+    firstDay: addDays(laterDay(args.lastTestDay, today), 2),
+    startDay: args.startDay,
+    firstSessionNumber: args.nextSessionNumber,
+    targetMeters: args.targetMeters,
+    timeZone,
+  });
+}
+
+/** Следующий вес гири из пресетов упражнения после `loadKg`; null — тяжелее нет или упражнение без гири. */
+export function nextKettlebellLoad(exerciseType: string, loadKg: number | null | undefined): number | null {
+  if (!isExerciseType(exerciseType)) return null;
+  const load = EXERCISES[exerciseType].load;
+  const kg = Number(loadKg);
+  if (!load || !Number.isFinite(kg)) return null;
+  return load.presetsKg.find((preset) => preset > kg) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Drafts
+// ---------------------------------------------------------------------------
 
 export function buildProgramDraft(input: ProgramCreateInput, clock: ProgramClock) {
   const timeZone = normalizeTimeZone(clock.timeZone);
   const clean = normalizeCreateInput(input);
   const startDay = resolveProgramStartDay(clean.startDate, { now: clock.now, timeZone });
+
+  if (clean.programKind === 'distance') {
+    const plan = buildDistancePlan({
+      baselineMeters: clean.baselineMaxReps,
+      targetMeters: clean.targetReps,
+      frequencyPerWeek: clean.frequencyPerWeek,
+    });
+    const sessions = distanceDraftSessions({
+      plan: plan.weeks,
+      frequencyPerWeek: clean.frequencyPerWeek,
+      firstDay: startDay,
+      startDay,
+      firstSessionNumber: 1,
+      targetMeters: clean.targetReps,
+      timeZone,
+    });
+    const finalDay = sessions[sessions.length - 1].day;
+    return {
+      clean: { ...clean, durationWeeks: Math.ceil((diffDays(finalDay, startDay) + 1) / 7) },
+      startDay,
+      sessions,
+    };
+  }
+
   const totalSessions = Math.max(1, clean.durationWeeks * clean.frequencyPerWeek);
 
   const sessions: ProgramDraftSession[] = [];
@@ -426,7 +794,7 @@ export function buildProgramDraft(input: ProgramCreateInput, clock: ProgramClock
     });
     const weekNumber = weekNumberFor(day, startDay);
 
-    const sets = GOAL_TEMPLATE.percentages.map((_, idx) => {
+    const sets = withLoad(GOAL_TEMPLATE.percentages.map((_, idx) => {
       const setNumber = idx + 1;
       return {
         setNumber,
@@ -442,7 +810,7 @@ export function buildProgramDraft(input: ProgramCreateInput, clock: ProgramClock
         restSeconds: restSecondsFor(idx),
         isKeySet: setNumber === GOAL_TEMPLATE.keySet,
       };
-    });
+    }), clean.loadKg);
 
     sessions.push({
       weekNumber,
@@ -476,7 +844,7 @@ export function buildProgramDraft(input: ProgramCreateInput, clock: ProgramClock
     day: finalTestDay,
     scheduledAt: programSessionInstant(finalTestDay, timeZone),
     isFinalTest: true,
-    sets: finalTestSets(clean.targetReps),
+    sets: finalTestSets(clean.targetReps, clean.loadKg),
   });
 
   const effectiveDurationWeeks = Math.max(
@@ -558,9 +926,12 @@ export function planProgramExtension(args: {
   existingDays: DayKey[];
   nextSessionNumber: number;
   clock: ProgramClock;
+  /** Вес гири гиревой программы — переносится в подходы продления. */
+  loadKg?: number | null;
 }): ProgramDraftSession[] {
   const timeZone = normalizeTimeZone(args.clock.timeZone);
   const today = dayKeyInZone(args.clock.now, timeZone);
+  const loadKg = args.loadKg ?? null;
   const targetReps = Math.max(1, args.targetReps);
   const gap = Math.max(1, targetReps - Math.max(1, args.finalTestActual));
   const extraTrainingCount = clampInt(Math.ceil(gap / 2) + 2, 2, 10);
@@ -582,7 +953,7 @@ export function planProgramExtension(args: {
     const keyTarget = clampInt(Math.round(args.finalTestActual + gap * progress), 1, maxBeforeTest);
     const periodized = getPeriodizationMultiplier(weekNumber);
 
-    const sets = GOAL_TEMPLATE.percentages.map((p, idx) => {
+    const sets = withLoad(GOAL_TEMPLATE.percentages.map((p, idx) => {
       const setNumber = idx + 1;
       return {
         setNumber,
@@ -592,7 +963,7 @@ export function planProgramExtension(args: {
         restSeconds: restSecondsFor(idx),
         isKeySet: setNumber === GOAL_TEMPLATE.keySet,
       };
-    });
+    }), loadKg);
 
     out.push({
       weekNumber,
@@ -626,7 +997,7 @@ export function planProgramExtension(args: {
     day: finalTestDay,
     scheduledAt: programSessionInstant(finalTestDay, timeZone),
     isFinalTest: true,
-    sets: finalTestSets(targetReps),
+    sets: finalTestSets(targetReps, loadKg),
   });
 
   return out;
@@ -670,6 +1041,21 @@ export type AutofillSession = {
 
 export type AutofillPlan = { sessionId: string; day: DayKey; sets: Array<{ setId: string; actualReps: number }> };
 
+export type AutofillProgram = { exerciseType: string; programType?: string | null; loadKg?: number | null };
+
+/**
+ * Можно ли честно закрыть просроченное занятие программы обычными тренировками дня (R08.10):
+ * только однокомпонентная программа без веса, не дистанционная и не «на сторону» (у тех цель —
+ * на сторону, а тренировка хранит сумму). Остальные пропущенные занятия сдвигаются.
+ */
+export function canAutofillProgram(program: AutofillProgram): boolean {
+  if ((program.programType ?? 'single') !== 'single') return false;
+  if (program.loadKg != null) return false;
+  const kind = programKind(program.exerciseType);
+  if (kind !== 'reps' && kind !== 'timed') return false;
+  return !isUnilateralExercise(program.exerciseType);
+}
+
 /**
  * Overdue training sessions that ordinary workouts of the same day count for.
  * A final test is never filled from a day total — it measures a single set.
@@ -681,7 +1067,10 @@ export function planOverdueAutofill(args: {
   dayTotals: Map<DayKey, number>;
   clock: ProgramClock;
   consumedDays?: Iterable<DayKey>;
+  /** Программа занятий; без неё — как у однокомпонентной программы без веса. */
+  program?: AutofillProgram;
 }): AutofillPlan[] {
+  if (args.program && !canAutofillProgram(args.program)) return [];
   const today = programDayOf(args.clock.now, args.clock.timeZone);
   const consumedDays = new Set<DayKey>(args.consumedDays ?? []);
   const out: AutofillPlan[] = [];
@@ -747,18 +1136,98 @@ export function programSetClientRequestId(setId: string): string {
   return `program-set:${setId}`;
 }
 
+export type SetResultInput = {
+  actualReps?: unknown;
+  actualLeft?: unknown;
+  actualRight?: unknown;
+  actualSeconds?: unknown;
+};
+
+export type SetResult = {
+  /** Итог для цели подхода: повторы/секунды/метры; у «на сторону» — слабая сторона. */
+  actualReps: number;
+  actualLeft: number | null;
+  actualRight: number | null;
+  /** Время дистанции, секунды (необязательно). */
+  actualSeconds: number | null;
+};
+
+function optionalInt(raw: unknown, min: number, max: number, message: string): number | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || Math.round(n) < min || Math.round(n) > max) throw new ProgramError(message, 400, 'PROGRAM_SET_INVALID');
+  return Math.round(n);
+}
+
+/**
+ * Факт подхода по виду упражнения. «На сторону»: обе стороны (если пришло одно число — его сделали
+ * обе стороны), итог для цели — слабая сторона. Дистанция: метры и, по желанию, время.
+ */
+export function resolveSetResult(exerciseType: string, input: SetResultInput): SetResult {
+  const kind = kindOf(exerciseType);
+  const max = kind === 'distance' ? MAX_DISTANCE_METERS : 5000;
+  const valueError = kind === 'distance' ? 'Дистанция подхода — от 10 м до 300 км' : `Результат подхода — от 1 до ${max}`;
+
+  if (isUnilateralExercise(exerciseType)) {
+    const left = optionalInt(input.actualLeft, 0, max, 'Результат стороны — целое число от 0');
+    const right = optionalInt(input.actualRight, 0, max, 'Результат стороны — целое число от 0');
+    if (left != null || right != null) {
+      const l = left ?? 0;
+      const r = right ?? 0;
+      if (l + r <= 0) throw new ProgramError('Запишите результат хотя бы одной стороны', 400, 'PROGRAM_SET_INVALID');
+      return { actualReps: Math.min(l, r), actualLeft: l, actualRight: r, actualSeconds: null };
+    }
+    const both = optionalInt(input.actualReps, 1, max, valueError);
+    if (both == null) throw new ProgramError(valueError, 400, 'PROGRAM_SET_INVALID');
+    return { actualReps: both, actualLeft: both, actualRight: both, actualSeconds: null };
+  }
+
+  const value = optionalInt(input.actualReps, kind === 'distance' ? 10 : 1, max, valueError);
+  if (value == null) throw new ProgramError(valueError, 400, 'PROGRAM_SET_INVALID');
+  const seconds = kind === 'distance'
+    ? optionalInt(input.actualSeconds, 1, MAX_DURATION_SECONDS, 'Время — от 1 секунды до 48 часов')
+    : null;
+  return { actualReps: value, actualLeft: null, actualRight: null, actualSeconds: seconds };
+}
+
+/** Значение тренировки подхода: у «на сторону» — сумма сторон, иначе итог подхода. */
+export function programSetWorkoutReps(set: { actualReps: number | null; actualLeft?: number | null; actualRight?: number | null }): number {
+  if (set.actualLeft != null || set.actualRight != null) return (set.actualLeft ?? 0) + (set.actualRight ?? 0);
+  return set.actualReps ?? 0;
+}
+
+export type ProgramSetWorkoutInput = {
+  exerciseType: string;
+  reps: number;
+  repsLeft?: number;
+  repsRight?: number;
+  loadKg?: number;
+  durationSeconds?: number;
+  date: DayKey;
+  time: string;
+  clientRequestId: string;
+};
+
 /** The `createWorkoutForUser` input of a recorded program set (its local day and `programSetWorkoutTime`). */
 export function programSetWorkoutInput(args: {
   setId: string;
   setNumber: number;
   exerciseType: string;
   actualReps: number;
+  actualLeft?: number | null;
+  actualRight?: number | null;
+  actualSeconds?: number | null;
+  loadKg?: number | null;
   doneAt: Date;
   timeZone: string;
-}): { exerciseType: string; reps: number; date: DayKey; time: string; clientRequestId: string } {
+}): ProgramSetWorkoutInput {
+  const sides = args.actualLeft != null || args.actualRight != null;
   return {
     exerciseType: args.exerciseType,
-    reps: args.actualReps,
+    reps: programSetWorkoutReps(args),
+    ...(sides ? { repsLeft: args.actualLeft ?? 0, repsRight: args.actualRight ?? 0 } : {}),
+    ...(args.loadKg != null && isLoadedExercise(args.exerciseType) ? { loadKg: args.loadKg } : {}),
+    ...(args.actualSeconds != null && kindOf(args.exerciseType) === 'distance' ? { durationSeconds: args.actualSeconds } : {}),
     date: programDayOf(args.doneAt, args.timeZone),
     time: programSetWorkoutTime(args.doneAt, args.setNumber).toISOString(),
     clientRequestId: programSetClientRequestId(args.setId),
@@ -784,11 +1253,18 @@ export async function recordClaimedSet<T>(steps: {
   }
 }
 
-export type SessionSetRecord = { setNumber: number; actualReps: number | null; completedAt: Date | null };
+export type SessionSetRecord = {
+  setNumber: number;
+  actualReps: number | null;
+  actualLeft?: number | null;
+  actualRight?: number | null;
+  completedAt: Date | null;
+};
 
 /**
  * Recorded sets that have no matching `Workout` (e.g. one was deleted on the dashboard).
- * A workout matches a set by its time (`programSetWorkoutTime`), otherwise by equal reps.
+ * A workout matches a set by its time (`programSetWorkoutTime`), otherwise by equal reps
+ * (for a one-side set — the sum of both sides, as the workout stores it).
  */
 export function setsMissingWorkouts<S extends SessionSetRecord>(
   sets: S[],
@@ -811,12 +1287,99 @@ export function setsMissingWorkouts<S extends SessionSetRecord>(
 
   const missing: S[] = [];
   for (const set of unmatched) {
-    const idx = remaining.findIndex((w) => w.reps === set.actualReps);
+    const expectedReps = programSetWorkoutReps(set);
+    const idx = remaining.findIndex((w) => w.reps === expectedReps);
     if (idx >= 0) remaining.splice(idx, 1);
     else missing.push(set);
   }
 
   return missing.sort((a, b) => a.setNumber - b.setNumber);
+}
+
+export type RestoredSetRow = SessionSetRecord & {
+  id: string;
+  /** Упражнение подхода (круговые); null — упражнение программы. */
+  exerciseType?: string | null;
+  actualSeconds?: number | null;
+  loadKg?: number | null;
+};
+
+/**
+ * Строки `createMany` для подходов без тренировки при завершении занятия: восстановление
+ * (без лимита и уведомлений) с весом гири, сторонами, временем дистанции и активными калориями.
+ */
+export function restoredSetWorkoutRows(args: {
+  sets: RestoredSetRow[];
+  program: { userId: string; exerciseType: string; loadKg?: number | null };
+  sessionId: string;
+  timeZone: string;
+  now: Date;
+  body: BodyMetrics;
+}) {
+  return args.sets.map((st) => {
+    const doneAt = st.completedAt ?? args.now;
+    const exerciseType = st.exerciseType || args.program.exerciseType;
+    const input = programSetWorkoutInput({
+      setId: st.id,
+      setNumber: st.setNumber,
+      exerciseType,
+      actualReps: st.actualReps ?? 0,
+      actualLeft: st.actualLeft,
+      actualRight: st.actualRight,
+      actualSeconds: st.actualSeconds,
+      loadKg: st.loadKg ?? args.program.loadKg ?? null,
+      doneAt,
+      timeZone: args.timeZone,
+    });
+    const date = programWorkoutDate(doneAt, args.timeZone);
+    const row = {
+      userId: args.program.userId,
+      reps: input.reps,
+      loadKg: input.loadKg ?? null,
+      repsLeft: input.repsLeft ?? null,
+      repsRight: input.repsRight ?? null,
+      durationSeconds: input.durationSeconds ?? null,
+      date,
+      time: programSetWorkoutTime(doneAt, st.setNumber),
+      exerciseType,
+      trainingSessionId: args.sessionId,
+      clientRequestId: input.clientRequestId,
+    };
+    return { ...row, activeKcal: workoutActiveKcal(row, args.body) };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Program label (R08.9)
+// ---------------------------------------------------------------------------
+
+export type ProgramLabelSource = {
+  exerciseType: string;
+  programType?: string | null;
+  loadKg?: number | null;
+  circuitPlanId?: string | null;
+  /** Название плана круговой программы (из каталога кругов). */
+  circuitTitle?: { ru: string; en: string } | null;
+};
+
+/**
+ * Название программы для уведомлений, календаря и списков: упражнение, у гиревой — с весом
+ * («Махи гирей · 16 кг»), у круговой — «Круговая · <план>».
+ */
+export function programLabel(program: ProgramLabelSource, locale: string = 'ru'): string {
+  const en = locale === 'en';
+  if (program.programType === 'circuit' || program.exerciseType === 'circuit') {
+    const head = en ? 'Circuit' : 'Круговая';
+    const title = program.circuitTitle ? program.circuitTitle[en ? 'en' : 'ru'] : null;
+    return title ? `${head} · ${title}` : head;
+  }
+  const name = exerciseLabel(program.exerciseType, en ? 'en' : 'ru');
+  const kg = Number(program.loadKg);
+  if (program.loadKg != null && Number.isFinite(kg) && kg > 0 && isLoadedExercise(program.exerciseType)) {
+    const value = Number.isInteger(kg) ? String(kg) : String(Math.round(kg * 10) / 10).replace('.', en ? '.' : ',');
+    return `${name} · ${value} ${en ? 'kg' : 'кг'}`;
+  }
+  return name;
 }
 
 // ---------------------------------------------------------------------------
@@ -829,17 +1392,17 @@ export function setsMissingWorkouts<S extends SessionSetRecord>(
  * the personal program.
  */
 export function programReplacementScope(
-  exerciseType: ProgramExerciseType,
+  exerciseType: string,
   managedByGroupId: string | null | undefined,
-): { exerciseType: ProgramExerciseType; managedByGroupId: string | null } {
+): { exerciseType: string; managedByGroupId: string | null } {
   return { exerciseType, managedByGroupId: managedByGroupId || null };
 }
 
 /** The `updateMany` filter of the active programs a new one switches off (see `programReplacementScope`). */
 export function programReplacementWhere(
   userId: string,
-  exerciseType: ProgramExerciseType,
+  exerciseType: string,
   managedByGroupId: string | null | undefined,
-): { userId: string; isActive: true; exerciseType: ProgramExerciseType; managedByGroupId: string | null } {
+): { userId: string; isActive: true; exerciseType: string; managedByGroupId: string | null } {
   return { userId, isActive: true, ...programReplacementScope(exerciseType, managedByGroupId) };
 }

@@ -20,12 +20,14 @@ const DAY_MS = 24 * HOUR_MS;
 export const REMINDER_LOOKBACK_MS = 15 * MINUTE_MS;
 export const REMINDER_LOOKAHEAD_MS = 30 * MINUTE_MS;
 
-export type DueSession = { id: string; userId: string; exerciseType: string; scheduledAt: Date };
-export type OverdueSession = {
+/** Fields of the program that its notices name (`programLabel`: exercise, kettlebell weight, circuit plan). */
+type ProgramLabelFields = { exerciseType: string; programType?: string | null; loadKg?: number | null; circuitPlanId?: string | null };
+
+export type DueSession = ProgramLabelFields & { id: string; userId: string; scheduledAt: Date };
+export type OverdueSession = ProgramLabelFields & {
   id: string;
   userId: string;
   programId: string;
-  exerciseType: string;
   scheduledAt: Date;
   shiftedCount: number;
   timeZone: string;
@@ -126,7 +128,13 @@ export function createProgramRemindersJob(deps: ProgramRemindersDeps): Scheduler
         await deps.notifyUsers(
           [session.userId],
           'program_reminder',
-          (locale) => programMissedMessage(locale, notice.kind, { sessionId: session.id, exerciseType: session.exerciseType }),
+          (locale) => programMissedMessage(locale, notice.kind, {
+            sessionId: session.id,
+            exerciseType: session.exerciseType,
+            programType: session.programType,
+            loadKg: session.loadKg,
+            circuitPlanId: session.circuitPlanId,
+          }),
           { type: notice.type, tag: `program-${notice.kind}-${session.id}` },
         );
       }
@@ -142,6 +150,8 @@ export function createProgramRemindersJob(deps: ProgramRemindersDeps): Scheduler
   };
 }
 
+const PROGRAM_LABEL_SELECT = { userId: true, exerciseType: true, programType: true, loadKg: true, circuitPlanId: true } as const;
+
 export const programRemindersJob = createProgramRemindersJob({
   findDueSessions: async (from, to) => {
     const { prisma } = await import('@/lib/prisma');
@@ -153,9 +163,17 @@ export const programRemindersJob = createProgramRemindersJob({
         program: { isActive: true, needsRetest: false, user: { deletedAt: null } },
       },
       orderBy: { scheduledAt: 'asc' },
-      select: { id: true, scheduledAt: true, program: { select: { userId: true, exerciseType: true } } },
+      select: { id: true, scheduledAt: true, program: { select: PROGRAM_LABEL_SELECT } },
     });
-    return rows.map((r) => ({ id: r.id, scheduledAt: r.scheduledAt, userId: r.program.userId, exerciseType: r.program.exerciseType }));
+    return rows.map((r) => ({
+      id: r.id,
+      scheduledAt: r.scheduledAt,
+      userId: r.program.userId,
+      exerciseType: r.program.exerciseType,
+      programType: r.program.programType,
+      loadKg: r.program.loadKg,
+      circuitPlanId: r.program.circuitPlanId,
+    }));
   },
   findOverdueSessions: async (before) => {
     const { prisma } = await import('@/lib/prisma');
@@ -171,7 +189,7 @@ export const programRemindersJob = createProgramRemindersJob({
         programId: true,
         scheduledAt: true,
         shiftedCount: true,
-        program: { select: { userId: true, exerciseType: true, user: { select: { timeZone: true } } } },
+        program: { select: { ...PROGRAM_LABEL_SELECT, user: { select: { timeZone: true } } } },
       },
     });
     return rows.map((r) => ({
@@ -181,6 +199,9 @@ export const programRemindersJob = createProgramRemindersJob({
       shiftedCount: r.shiftedCount,
       userId: r.program.userId,
       exerciseType: r.program.exerciseType,
+      programType: r.program.programType,
+      loadKg: r.program.loadKg,
+      circuitPlanId: r.program.circuitPlanId,
       timeZone: r.program.user.timeZone,
     }));
   },

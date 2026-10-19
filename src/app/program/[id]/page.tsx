@@ -7,7 +7,9 @@ import { programSessionHref } from '@/lib/app-routes';
 import { useRouteParam } from '@/lib/use-route-param';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
-import { exerciseLabel as catalogExerciseLabel } from '@/lib/exercises';
+import { programKind } from '@/lib/exercises';
+import { programLabel, type DistanceSessionKind } from '@/lib/program-plan';
+import { programsMessages } from '@/i18n/messages/features/programs';
 
 type TrainingSet = {
   id: string;
@@ -25,6 +27,7 @@ type TrainingSession = {
   completed: boolean;
   completedAt: string | null;
   isFinalTest?: boolean;
+  sessionKind?: DistanceSessionKind | null;
   sets: TrainingSet[];
 };
 
@@ -37,6 +40,11 @@ type ProgramStats = {
 type ProgramDetail = {
   id: string;
   exerciseType: string;
+  programType?: string | null;
+  loadKg?: number | null;
+  circuitPlanId?: string | null;
+  /** Гиревая пройдена: следующий вес гири из пресетов. */
+  nextLoadKg?: number | null;
   targetReps: number | null;
   baselineMaxReps: number;
   durationWeeks: number;
@@ -68,10 +76,6 @@ async function fetchJson(url: string) {
   return data;
 }
 
-function exerciseLabel(exerciseType: string) {
-  return catalogExerciseLabel(exerciseType);
-}
-
 function formatSessionDate(iso: string, locale: string) {
   const d = new Date(iso);
   return d.toLocaleDateString(locale, {
@@ -83,17 +87,24 @@ function formatSessionDate(iso: string, locale: string) {
 }
 
 function renderSetPlan(session: TrainingSession, exerciseType: string | undefined, locale: string) {
+  const distance = programKind(exerciseType) === 'distance';
   return session.sets
     .slice()
     .sort((a, b) => a.setNumber - b.setNumber)
-    .map((set) => (set.isKeySet && !session.isFinalTest ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true, locale)))
+    .map((set) => (set.isKeySet && !session.isFinalTest && !distance ? 'max' : formatExerciseValue(set.targetReps, exerciseType, true, locale)))
     .join('-');
+}
+
+function formatKg(kg: number, locale: string): string {
+  const text = String(Math.round(kg * 10) / 10);
+  return locale === 'en' ? text : text.replace('.', ',');
 }
 
 export default function ProgramDetailPage() {
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
+  const text = programsMessages[locale];
   const programId = useRouteParam('id') || '';
 
   const [loading, setLoading] = useState(true);
@@ -149,12 +160,25 @@ export default function ProgramDetailPage() {
         <>
           <section style={card}>
             <div style={{ display: 'grid', gap: 4 }}>
-              <div>{tt('Упражнение')}: <b>{tt(exerciseLabel(program.exerciseType))}</b></div>
+              <div>{tt('Упражнение')}: <b>{programLabel(program, locale)}</b></div>
               <div>{tt('Базовый тест')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true, locale)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true, locale)}</b></div>
               <div>{tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')} · {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')}</div>
               <div>{tt('Прогресс')}: <b>{program.stats.completedSessions}/{program.stats.totalSessions}</b> ({program.stats.completionPercent}%)</div>
             </div>
           </section>
+
+          {program.nextLoadKg != null ? (
+            <section style={{ ...card, borderColor: '#93c5fd', background: '#eff6ff' }} data-testid="program-next-load">
+              <div style={{ fontWeight: 900 }}>{text.nextLoad.done(programLabel(program, locale))}</div>
+              <div style={{ marginTop: 4 }}>{text.nextLoad.offer(formatKg(program.nextLoadKg, locale))}</div>
+              <Link
+                href={`/program?start=${encodeURIComponent(program.exerciseType)}&loadKg=${program.nextLoadKg}`}
+                style={{ ...btnPrimaryLink, marginTop: 8 }}
+              >
+                {text.nextLoad.start}
+              </Link>
+            </section>
+          ) : null}
 
           <section style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -175,6 +199,7 @@ export default function ProgramDetailPage() {
                     <div style={{ fontWeight: 900 }}>
                       {formatSessionDate(session.scheduledAt, localeTag)} · #{session.sessionNumber}
                       {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
+                      {session.sessionKind ? ` · ${text.sessionKind[session.sessionKind]}` : ''}
                     </div>
                     <div style={{ color: '#111827' }}>
                       {tt('План подходов')}: <b>{renderSetPlan(session, program.exerciseType, locale)}</b>

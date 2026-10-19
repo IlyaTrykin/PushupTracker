@@ -12,16 +12,18 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     const body = await request.json().catch(() => null);
     if (!body) return jsonError('Некорректный JSON', 400);
 
-    const actualReps = Number(body.actualReps);
-    if (!Number.isFinite(actualReps) || actualReps <= 0) return jsonError('actualReps должен быть числом > 0', 400);
-
     const { id, setId } = await ctx.params;
 
+    // actualReps — повторы/секунды/метры; у упражнений «на сторону» — actualLeft/actualRight,
+    // у дистанции — необязательное actualSeconds. Проверка по виду упражнения — в submitTrainingSet.
     const out = await submitTrainingSet({
       userId: user.id,
       sessionId: id,
       setId,
-      actualReps,
+      actualReps: body.actualReps,
+      actualLeft: body.actualLeft,
+      actualRight: body.actualRight,
+      actualSeconds: body.actualSeconds,
     });
 
     return NextResponse.json(out);

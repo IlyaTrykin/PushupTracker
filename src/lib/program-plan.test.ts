@@ -1,8 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dayKeyInZone, localHHMM } from './calendar-day';
+import { EXERCISE_IDS } from './exercises';
 import {
+  PROGRAM_EXERCISE_TYPES,
+  ProgramError,
+  buildDistancePlan,
   buildProgramDraft,
+  canAutofillProgram,
+  isProgramExerciseType,
+  nextKettlebellLoad,
+  parseProgramCreateBody,
+  programCoefficient,
+  programLabel,
+  programSetWorkoutInput,
+  programStartAlternatives,
+  resolveSetResult,
+  restoredSetWorkoutRows,
   evaluateProgramOutcome,
   autofilledDays,
   recordClaimedSet,
@@ -278,4 +292,221 @@ test('a program set: only the request that claims the set creates its workout; a
   // over the daily limit: the set is free again and the error reaches the caller
   await assert.rejects(recordClaimedSet(steps(true, true)), /RATE_LIMITED/);
   assert.deepEqual(log.splice(0), ['claim', 'create', 'release']);
+});
+
+// ---------------------------------------------------------------------------
+// Программы для всех упражнений (R08)
+// ---------------------------------------------------------------------------
+
+const clockOct = { now: new Date('2026-10-12T09:00:00Z'), timeZone: MOSCOW };
+
+test('R08: every catalog exercise (24) can take a program; unknown types and circuits cannot', () => {
+  assert.equal(PROGRAM_EXERCISE_TYPES.length, 24);
+  for (const id of EXERCISE_IDS) {
+    assert.ok(isProgramExerciseType(id), id);
+    assert.ok(programCoefficient(id) > 0, `${id} has a coefficient`);
+  }
+  assert.equal(isProgramExerciseType('circuit'), false);
+  assert.equal(isProgramExerciseType('jumping_jacks'), false);
+});
+
+test('R08.1: a repetition exercise (dips) reaches its target like push-ups, with its own coefficient', () => {
+  const draft = buildProgramDraft({ ...baseInput, exerciseType: 'dips', baselineMaxReps: 8, targetReps: 15, startDate: '2026-10-12' }, clockOct);
+  assert.equal(draft.clean.exerciseType, 'dips');
+  assert.equal(draft.sessions.at(-1)?.isFinalTest, true);
+  assert.equal(draft.sessions.at(-1)?.sets[0].targetReps, 15);
+  for (const s of draft.sessions) for (const st of s.sets) assert.equal(st.loadKg ?? null, null);
+  assert.notEqual(programCoefficient('dips'), programCoefficient('pushups'));
+});
+
+test('R08.3: a timed exercise (wall sit) plans seconds; the final test is the target hold', () => {
+  const draft = buildProgramDraft({ ...baseInput, exerciseType: 'wall_sit', baselineMaxReps: 60, targetReps: 120, startDate: '2026-10-12' }, clockOct);
+  const final = draft.sessions.at(-1);
+  assert.equal(final?.isFinalTest, true);
+  assert.equal(final?.sets[0].targetReps, 120);
+  assert.ok(draft.sessions[0].sets.every((st) => st.targetReps >= 1 && st.targetReps <= 120));
+});
+
+test('R08.4: a set of a one-side exercise records both sides; the weaker side counts for the per-side target', () => {
+  assert.deepEqual(resolveSetResult('lunges', { actualLeft: 10, actualRight: 12 }), {
+    actualReps: 10, actualLeft: 10, actualRight: 12, actualSeconds: null,
+  });
+  // an old client sends one number — both sides did it
+  assert.deepEqual(resolveSetResult('side_plank', { actualReps: 30 }), {
+    actualReps: 30, actualLeft: 30, actualRight: 30, actualSeconds: null,
+  });
+  // sides do not apply to two-handed exercises
+  assert.deepEqual(resolveSetResult('pushups', { actualReps: 20, actualLeft: 5 }), {
+    actualReps: 20, actualLeft: null, actualRight: null, actualSeconds: null,
+  });
+  assert.throws(() => resolveSetResult('lunges', { actualLeft: 0, actualRight: 0 }), ProgramError);
+  assert.throws(() => resolveSetResult('pushups', {}), ProgramError);
+
+  const input = programSetWorkoutInput({
+    setId: 'set1', setNumber: 2, exerciseType: 'kettlebell_press', loadKg: 16,
+    actualReps: 6, actualLeft: 6, actualRight: 7, actualSeconds: null,
+    doneAt: new Date('2026-10-12T16:00:00Z'), timeZone: MOSCOW,
+  });
+  assert.equal(input.reps, 13);
+  assert.equal(input.repsLeft, 6);
+  assert.equal(input.repsRight, 7);
+  assert.equal(input.loadKg, 16);
+  assert.equal(input.clientRequestId, 'program-set:set1');
+});
+
+test('R08.5: a kettlebell program needs the weight, carries it in every set and offers the next preset', () => {
+  assert.throws(
+    () => buildProgramDraft({ ...baseInput, exerciseType: 'kettlebell_swing', baselineMaxReps: 15, targetReps: 30 }, clockOct),
+    (e: unknown) => e instanceof ProgramError && e.status === 400 && e.code === 'PROGRAM_LOAD_REQUIRED',
+  );
+  const draft = buildProgramDraft(
+    { ...baseInput, exerciseType: 'kettlebell_swing', loadKg: 16, baselineMaxReps: 15, targetReps: 30, startDate: '2026-10-12' },
+    clockOct,
+  );
+  assert.equal(draft.clean.loadKg, 16);
+  for (const s of draft.sessions) for (const st of s.sets) assert.equal(st.loadKg, 16);
+  // presets of the swing: 12, 16, 20, 24, 28, 32
+  assert.equal(nextKettlebellLoad('kettlebell_swing', 16), 20);
+  assert.equal(nextKettlebellLoad('kettlebell_swing', 17), 20);
+  assert.equal(nextKettlebellLoad('kettlebell_swing', 32), null);
+  assert.equal(nextKettlebellLoad('pushups', 16), null);
+  // a weight on a bodyweight exercise is ignored
+  const plain = buildProgramDraft({ ...baseInput, loadKg: 16, startDate: '2026-10-12' }, clockOct);
+  assert.equal(plain.clean.loadKg, null);
+});
+
+test('R08.6: distance plan — 3 sessions a week (easy, interval, long), weekly volume grows ≤ 10%, final test is X km', () => {
+  const cases = [
+    { baselineMeters: 1000, targetMeters: 5000 },
+    { baselineMeters: 3000, targetMeters: 10000 },
+    { baselineMeters: 4500, targetMeters: 5000 },
+    { baselineMeters: 2000, targetMeters: 42195 },
+    { baselineMeters: 20000, targetMeters: 100000 },
+  ];
+  for (const c of cases) {
+    const plan = buildDistancePlan({ ...c, frequencyPerWeek: 3 });
+    assert.ok(plan.weeks.length >= 4, `${c.targetMeters}: at least 4 weeks`);
+    let prev: number | null = null;
+    for (const week of plan.weeks) {
+      assert.deepEqual(week.sessions.map((s) => s.kind), ['easy', 'interval', 'long']);
+      const volume = week.sessions.reduce((sum, s) => sum + s.sets.reduce((a, st) => a + st.targetReps, 0), 0);
+      assert.equal(volume, week.volumeMeters);
+      if (prev != null) assert.ok(volume <= prev * 1.1, `${c.baselineMeters}→${c.targetMeters} week ${week.weekNumber}: ${volume} > 1.1 × ${prev}`);
+      prev = volume;
+    }
+    assert.equal(plan.weeks[0].sessions[2].sets[0].targetReps, c.baselineMeters);
+  }
+
+  const draft = buildProgramDraft(
+    { ...baseInput, exerciseType: 'run', baselineMaxReps: 3000, targetReps: 5000, frequencyPerWeek: 5, startDate: '2026-10-12' },
+    clockOct,
+  );
+  assert.equal(draft.clean.frequencyPerWeek, 3);
+  const training = draft.sessions.filter((s) => !s.isFinalTest);
+  assert.deepEqual(training.slice(0, 3).map((s) => s.sessionKind), ['easy', 'interval', 'long']);
+  const final = draft.sessions.at(-1);
+  assert.equal(final?.isFinalTest, true);
+  assert.deepEqual(final?.sets.map((s) => s.targetReps), [5000]);
+  for (const s of draft.sessions) assert.equal(localHHMM(s.scheduledAt, MOSCOW), '19:00');
+});
+
+test('R08.2: muscle-ups with a max of 0 do not start and suggest pull-ups and dips', () => {
+  assert.throws(
+    () => buildProgramDraft({ ...baseInput, exerciseType: 'muscle_ups', baselineMaxReps: 0, targetReps: 3 }, clockOct),
+    (e: unknown) => e instanceof ProgramError && e.status === 400 && e.code === 'PROGRAM_BASELINE_ZERO',
+  );
+  assert.deepEqual(programStartAlternatives('muscle_ups', 0), ['pullups', 'dips']);
+  assert.deepEqual(programStartAlternatives('muscle_ups', 2), []);
+  assert.deepEqual(programStartAlternatives('pushups', 0), []);
+  const ok = buildProgramDraft({ ...baseInput, exerciseType: 'muscle_ups', baselineMaxReps: 1, targetReps: 5, startDate: '2026-10-12' }, clockOct);
+  assert.equal(ok.clean.exerciseType, 'muscle_ups');
+});
+
+test('API body: an unknown exercise type is a 400, never a silent push-up program', () => {
+  const profile = { ageYears: 30, weightKg: 80, sex: 'male' };
+  assert.throws(
+    () => parseProgramCreateBody({ exerciseType: 'jumping_jacks', baselineMaxReps: 10, targetReps: 20 }, profile),
+    (e: unknown) => e instanceof ProgramError && e.status === 400 && e.code === 'PROGRAM_EXERCISE_INVALID',
+  );
+  assert.throws(() => parseProgramCreateBody({ baselineMaxReps: 10, targetReps: 20 }, profile), ProgramError);
+  const parsed = parseProgramCreateBody({ exerciseType: 'kettlebell_row', loadKg: '24', baselineMaxReps: 8, targetReps: 15 }, profile);
+  assert.equal(parsed.exerciseType, 'kettlebell_row');
+  assert.equal(parsed.loadKg, 24);
+  assert.equal(parsed.weightKg, 80);
+  // a 0 max reaches the muscle-up start rule instead of being turned into 1
+  assert.equal(parseProgramCreateBody({ exerciseType: 'muscle_ups', baselineMaxReps: 0, targetReps: 3 }, profile).baselineMaxReps, 0);
+});
+
+test('R08.10: overdue sessions are closed by ordinary workouts only in programs without weight and not distance', () => {
+  const clock = { now: new Date('2026-10-10T09:00:00Z'), timeZone: MOSCOW };
+  const sessions = [{ id: 'overdue', scheduledAt: new Date('2026-10-07T16:00:00Z'), isFinalTest: false, sets: [{ id: 'a', targetReps: 10 }] }];
+  const dayTotals = new Map([['2026-10-07', 30]]);
+  const plan = (program: Parameters<typeof canAutofillProgram>[0]) => planOverdueAutofill({ sessions, dayTotals, clock, program });
+
+  assert.deepEqual(plan({ exerciseType: 'pushups', programType: 'single', loadKg: null }).map((p) => p.sessionId), ['overdue']);
+  assert.deepEqual(plan({ exerciseType: 'plank' }).map((p) => p.sessionId), ['overdue']);
+  assert.deepEqual(plan({ exerciseType: 'kettlebell_swing', programType: 'single', loadKg: 16 }), []);
+  assert.deepEqual(plan({ exerciseType: 'run', programType: 'single', loadKg: null }), []);
+  assert.deepEqual(plan({ exerciseType: 'circuit', programType: 'circuit', loadKg: null }), []);
+  assert.equal(canAutofillProgram({ exerciseType: 'kettlebell_jerk', loadKg: 16 }), false);
+  assert.equal(canAutofillProgram({ exerciseType: 'dips' }), true);
+});
+
+test('a one-side set is matched to its workout by the sum of both sides', () => {
+  const t0 = new Date('2026-10-10T16:00:00Z');
+  const sets = [{ setNumber: 1, actualReps: 10, actualLeft: 10, actualRight: 12, completedAt: t0 }];
+  // the set time was edited away, the sum of sides still matches
+  assert.deepEqual(setsMissingWorkouts(sets, [{ time: new Date('2026-10-10T18:00:00Z'), reps: 22 }]), []);
+  assert.deepEqual(setsMissingWorkouts(sets, [{ time: new Date('2026-10-10T18:00:00Z'), reps: 10 }]).map((s) => s.setNumber), [1]);
+});
+
+test('restored set workouts carry weight, sides, time and active calories', () => {
+  const doneAt = new Date('2026-10-10T16:00:00Z');
+  const rows = restoredSetWorkoutRows({
+    sets: [
+      { id: 'k1', setNumber: 1, actualReps: 8, actualLeft: 8, actualRight: 9, actualSeconds: null, loadKg: null, completedAt: doneAt },
+    ],
+    program: { userId: 'u1', exerciseType: 'kettlebell_press', loadKg: 16 },
+    sessionId: 'sess',
+    timeZone: MOSCOW,
+    now: doneAt,
+    body: { weightKg: 80 },
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].reps, 17);
+  assert.equal(rows[0].repsLeft, 8);
+  assert.equal(rows[0].repsRight, 9);
+  assert.equal(rows[0].loadKg, 16);
+  assert.equal(rows[0].clientRequestId, 'program-set:k1');
+  assert.ok((rows[0].activeKcal ?? 0) > 0, 'active calories with a known weight');
+
+  const run = restoredSetWorkoutRows({
+    sets: [{ id: 'r1', setNumber: 1, actualReps: 5000, actualLeft: null, actualRight: null, actualSeconds: 1800, loadKg: null, completedAt: doneAt }],
+    program: { userId: 'u1', exerciseType: 'run', loadKg: null },
+    sessionId: 'sess',
+    timeZone: MOSCOW,
+    now: doneAt,
+    body: { weightKg: null },
+  });
+  assert.equal(run[0].durationSeconds, 1800);
+  assert.equal(run[0].activeKcal, null);
+});
+
+test('R08.9: program label for notifications, the calendar and lists', () => {
+  assert.equal(programLabel({ exerciseType: 'pushups' }, 'ru'), 'Отжимания');
+  assert.equal(programLabel({ exerciseType: 'kettlebell_swing', loadKg: 16 }, 'ru'), 'Махи гирей · 16 кг');
+  assert.equal(programLabel({ exerciseType: 'kettlebell_press', loadKg: 12.5 }, 'en'), 'Kettlebell press · 12.5 kg');
+  assert.equal(programLabel({ exerciseType: 'circuit', programType: 'circuit', circuitTitle: { ru: 'Дом, 3 раза в неделю', en: 'Home, 3 a week' } }, 'ru'), 'Круговая · Дом, 3 раза в неделю');
+  assert.equal(programLabel({ exerciseType: 'circuit', programType: 'circuit' }, 'en'), 'Circuit');
+});
+
+test('R08.9: reminders and stop notices name the program by its label', async () => {
+  const { programReminderMessage, programMissedMessage, programStoppedMessage } = await import('./notify');
+  const at = new Date('2026-10-12T16:00:00Z');
+  const reminder = programReminderMessage('ru', [{ id: 's1', exerciseType: 'kettlebell_swing', loadKg: 16, scheduledAt: at }], new Date('2026-10-12T15:40:00Z'));
+  assert.match(reminder.body ?? '', /Махи гирей · 16 кг/);
+  const missed = programMissedMessage('en', 'missed_1h', { sessionId: 's1', exerciseType: 'side_plank' });
+  assert.match(missed.body ?? '', /Side plank/);
+  const stopped = programStoppedMessage('ru', { programId: 'p1', exerciseType: 'kettlebell_press', loadKg: 12 });
+  assert.match(stopped.body ?? '', /«Жим гири · 12 кг»/);
 });
