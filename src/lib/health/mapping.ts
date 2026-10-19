@@ -58,6 +58,14 @@ const ACTIVITY_BY_EXERCISE: Record<string, ActivityPair> = {
   kettlebell_press: KETTLEBELL,
   kettlebell_jerk: KETTLEBELL,
   kettlebell_swing: KETTLEBELL,
+  kettlebell_row: KETTLEBELL,
+  superman: CORE,
+  side_plank: CORE,
+  // Плагины знают только эти названия типов (HealthBridgePlugin), поэтому альпинист —
+  // функциональная тренировка, как бёрпи, а не отдельный HIIT.
+  australian_pullups: STRENGTH,
+  glute_bridge: STRENGTH,
+  mountain_climbers: STRENGTH,
 };
 
 /** Seconds per metre when a distance workout has no duration: 6:00/km, 25 km/h, 2:30/500 m. */

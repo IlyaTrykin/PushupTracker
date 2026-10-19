@@ -28,10 +28,16 @@ const EXPECTED_ACTIVITY: Record<string, { apple: string; android: string }> = {
   run: { apple: 'running', android: 'EXERCISE_TYPE_RUNNING' },
   bike: { apple: 'cycling', android: 'EXERCISE_TYPE_BIKING' },
   row: { apple: 'rowing', android: 'EXERCISE_TYPE_ROWING_MACHINE' },
+  australian_pullups: { apple: 'functionalStrengthTraining', android: 'EXERCISE_TYPE_CALISTHENICS' },
+  glute_bridge: { apple: 'functionalStrengthTraining', android: 'EXERCISE_TYPE_CALISTHENICS' },
+  superman: { apple: 'coreTraining', android: 'EXERCISE_TYPE_CALISTHENICS' },
+  side_plank: { apple: 'coreTraining', android: 'EXERCISE_TYPE_CALISTHENICS' },
+  mountain_climbers: { apple: 'functionalStrengthTraining', android: 'EXERCISE_TYPE_CALISTHENICS' },
+  kettlebell_row: { apple: 'traditionalStrengthTraining', android: 'EXERCISE_TYPE_STRENGTH_TRAINING' },
 };
 
-test('every one of the 18 catalog exercises has its Health type on both platforms', () => {
-  assert.equal(EXERCISE_IDS.length, 18);
+test('every one of the 24 catalog exercises has its Health type on both platforms', () => {
+  assert.equal(EXERCISE_IDS.length, 24);
   for (const exerciseType of EXERCISE_IDS) {
     const expected = EXPECTED_ACTIVITY[exerciseType];
     assert.ok(expected, `no expectation for ${exerciseType}`);
@@ -47,6 +53,8 @@ test('duration: own duration first, else 3 s per rep with a 60 s floor, seconds 
   assert.equal(estimateDurationSeconds('pushups', 30, 200), 200);
   assert.equal(estimateDurationSeconds('plank', 45), 45);
   assert.equal(estimateDurationSeconds('wall_sit', 120, null), 120);
+  // Боковая планка: значение — сумма секунд обеих сторон.
+  assert.equal(estimateDurationSeconds('side_plank', 85), 85);
   assert.equal(estimateDurationSeconds('run', 5000, 1500), 1500);
 });
 

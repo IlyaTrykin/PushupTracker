@@ -3,7 +3,7 @@
  *
  * «30» → the first favourite exercise; «30 приседания» / «приседания 30» / «squats 30»;
  * «планка 60» / «планка 1:30» (seconds); «бег 5.2» / «бег 5,2 26:30» (km → metres, optional time);
- * «жим 10 24кг» / «жим 10 24» (reps + kg for exercises with a kettlebell);
+ * «жим 10 24кг» / «жим 10 24» / «тяга гири 16 кг 8» (reps + kg for exercises with a kettlebell);
  * «/start <code>», «/today@Bot», «сегодня», «помощь». Anything else → `null` (the bot answers with /help).
  *
  * Values are not range-checked here: `createWorkoutForUser` validates them like any other input.
@@ -57,6 +57,32 @@ const EXERCISE_NAMES: Record<ExerciseType, string[]> = {
   run: ['бег', 'бега', 'пробежка', 'пробежки', 'пробежку', 'run', 'running'],
   bike: ['велосипед', 'велосипеда', 'вело', 'велик', 'bike', 'cycling'],
   row: ['гребля', 'гребли', 'греблю', 'row', 'rowing'],
+  // Длинные фразы не путаются с короткими: совпадение только целой фразой
+  // («австралийские подтягивания» ≠ «подтягивания», «боковая планка» ≠ «планка»).
+  australian_pullups: [
+    'австралийские подтягивания', 'австралийских подтягиваний', 'австралийское подтягивание',
+    'австралийские', 'австралийских', 'горизонтальные подтягивания', 'горизонтальных подтягиваний',
+    'australian pull-ups', 'australian pull-up', 'australian pullups', 'australian pullup', 'australian pull ups',
+    'inverted rows', 'inverted row',
+  ],
+  glute_bridge: [
+    'ягодичный мост', 'ягодичного моста', 'ягодичные мосты', 'ягодичных мостов', 'мост', 'моста', 'мостик', 'мостики',
+    'glute bridge', 'glute bridges', 'bridge', 'bridges',
+  ],
+  superman: ['супермен', 'супермена', 'суперменов', 'супермены', 'superman', 'supermans'],
+  side_plank: [
+    'боковая планка', 'боковой планки', 'боковую планку', 'боковой планкой', 'боковые планки',
+    'side plank', 'side planks',
+  ],
+  mountain_climbers: [
+    'альпинист', 'альпиниста', 'альпинисты', 'альпинистов', 'скалолаз', 'скалолазы',
+    'mountain climbers', 'mountain climber', 'climbers',
+  ],
+  // «row» — гребля; тяга гири по-английски только полной фразой.
+  kettlebell_row: [
+    'тяга гири в наклоне', 'тяга гири', 'тяги гири', 'тяга в наклоне', 'тяга', 'тяги', 'тяг',
+    'kettlebell row', 'kettlebell rows',
+  ],
 };
 
 const COMMAND_WORDS: Record<string, string> = {

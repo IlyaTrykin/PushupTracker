@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatCalendarDayValue, formatDistance, formatDuration, formatExerciseValue, formatPace, formatSpeed, formatWorkoutValue, formatWorkoutValueParts } from './exercise-metrics';
+import { formatCalendarDayValue, formatDistance, formatDuration, formatExerciseValue, formatPace, formatSpeed, formatWorkoutSides, formatWorkoutValue, formatWorkoutValueParts } from './exercise-metrics';
 
 test('distance is shown in kilometres with the locale decimal separator', () => {
   assert.equal(formatDistance(5200, 'ru'), '5,2 км');
@@ -64,4 +64,18 @@ test('formatCalendarDayValue is a bare number that fits a day cell', () => {
   assert.equal(formatCalendarDayValue(1250, 'plank', 'ru'), '1,3k');
   assert.equal(formatCalendarDayValue(1000, 'pushups', 'en'), '1k');
   assert.equal(formatCalendarDayValue(12400, 'plank', 'en'), '12k');
+});
+
+test('timed exercises per side show seconds on each side: «Л 45 с / П 40 с»', () => {
+  const sidePlank = { reps: 85, exerciseType: 'side_plank', repsLeft: 45, repsRight: 40 };
+  assert.equal(formatWorkoutSides(sidePlank, 'ru'), 'Л 45 с / П 40 с');
+  assert.equal(formatWorkoutSides(sidePlank, 'en'), 'L 45 s / R 40 s');
+  assert.deepEqual(formatWorkoutValueParts(sidePlank, 'ru'), { main: '85 сек', detail: 'Л 45 с / П 40 с' });
+  assert.equal(formatWorkoutValue(sidePlank, 'en'), '85 sec (L 45 s / R 40 s)');
+  // Повторы на сторону — без единицы, как раньше.
+  assert.equal(formatWorkoutSides({ reps: 22, exerciseType: 'lunges', repsLeft: 12, repsRight: 10 }, 'ru'), 'Л 12 / П 10');
+  assert.deepEqual(
+    formatWorkoutValueParts({ reps: 16, exerciseType: 'kettlebell_row', loadKg: 24, repsLeft: 8, repsRight: 8 }, 'ru'),
+    { main: '16 × 24 кг', detail: 'Л 8 / П 8' },
+  );
 });

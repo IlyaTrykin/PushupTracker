@@ -749,7 +749,7 @@ export default function DashboardPage() {
     if (activeExercise.unilateral) {
       const total = repsLeft + repsRight;
       if (total <= 0) {
-        setError(tt('Укажите повторы хотя бы для одной руки'));
+        setError(tt(isTimedSelected ? 'Введите корректное количество секунд (> 0)' : 'Укажите повторы хотя бы для одной руки'));
         return;
       }
       await runAdd(() => submitWorkout(total, exerciseType, { loadKg: exerciseLoad.loadKg, repsLeft, repsRight }));
@@ -842,7 +842,7 @@ export default function DashboardPage() {
     setError(null);
     setInfo(null);
     if (getExercise(editExerciseType).unilateral && editRepsLeft + editRepsRight <= 0) {
-      setError(tt('Укажите повторы хотя бы для одной руки'));
+      setError(tt(isTimedExercise(editExerciseType) ? 'Введите корректное количество секунд (> 0)' : 'Укажите повторы хотя бы для одной руки'));
       return;
     }
 

@@ -2,9 +2,11 @@
 
 import type React from 'react';
 import { calculateExercisePoints } from '@/lib/exercise-points';
+import { formatDuration } from '@/lib/exercise-metrics';
 import type { ExerciseDefinition } from '@/lib/exercises';
 import { unitsMessages } from '@/i18n/messages/features/units';
 import { MAX_WORKOUT_VALUE } from '@/lib/workout-input';
+import { useStopwatch } from '@/lib/use-stopwatch';
 
 type Props = {
   exercise: ExerciseDefinition;
@@ -54,7 +56,13 @@ export function WeightPicker({ exercise, locale, tt, loadKg, onLoadKgChange }: W
   );
 }
 
-/** Ввод подхода на каждую сторону отдельно (руку или ногу), при необходимости — с весом снаряда. */
+type Stopwatch = ReturnType<typeof useStopwatch>;
+
+/**
+ * Ввод подхода на каждую сторону отдельно (руку или ногу), при необходимости — с весом снаряда.
+ * У упражнений на время (боковая планка) значение стороны — секунды, у каждой стороны свой
+ * секундомер: «Стоп» записывает замер в сторону, запись подхода — по «Добавить».
+ */
 export default function SideLoadEntry({
   exercise,
   locale,
@@ -69,36 +77,70 @@ export default function SideLoadEntry({
   const kg = unitsMessages[locale === 'en' ? 'en' : 'ru'].kg;
   const total = repsLeft + repsRight;
   const points = calculateExercisePoints(total, exercise.id, loadKg);
+  const timed = exercise.unit === 'seconds';
+  // Замер принадлежит упражнению и стороне; хранится в localStorage и переживает перезагрузку.
+  const leftWatch = useStopwatch(`dashboardSideStopwatch:${exercise.id}:left`);
+  const rightWatch = useStopwatch(`dashboardSideStopwatch:${exercise.id}:right`);
+  const steps = timed ? [5, 10] : [1, 5];
+  const stepLabel = (step: number) => (timed ? `+${step} ${tt('сек')}` : `+${step}`);
 
-  const side = (label: string, value: number, onChange: (next: number) => void) => (
-    <div style={sideCard}>
-      <div style={sideLabel}>{label}</div>
-      <input
-        inputMode="numeric"
-        value={String(value)}
-        onChange={(event) => onChange(parseDigits(event.target.value))}
-        onFocus={(event) => event.target.select()}
-        style={sideInput}
-        aria-label={label}
-      />
-      <div style={sideButtons}>
-        <button type="button" style={sideButton} onClick={() => onChange(clampReps(value + 1))}>+1</button>
-        <button type="button" style={sideButton} onClick={() => onChange(clampReps(value + 5))}>+5</button>
+  const side = (label: string, value: number, onChange: (next: number) => void, watch: Stopwatch, other: Stopwatch) => {
+    const measuring = timed && watch.started;
+    return (
+      <div style={sideCard}>
+        <div style={sideLabel}>{label}</div>
+        <input
+          inputMode="numeric"
+          value={measuring ? formatDuration(watch.elapsedSeconds) : String(value)}
+          onChange={(event) => {
+            if (!measuring) onChange(parseDigits(event.target.value));
+          }}
+          onFocus={(event) => event.target.select()}
+          readOnly={measuring}
+          style={sideInput}
+          aria-label={label}
+        />
+        {measuring ? (
+          <button type="button" style={stopButton} onClick={() => onChange(clampReps(watch.finish()))}>
+            {tt('Стоп')}
+          </button>
+        ) : (
+          <>
+            <div style={sideButtons}>
+              {steps.map((step) => (
+                <button key={step} type="button" style={sideButton} onClick={() => onChange(clampReps(value + step))}>
+                  {stepLabel(step)}
+                </button>
+              ))}
+            </div>
+            {timed ? (
+              <button
+                type="button"
+                style={other.started ? { ...startButton, opacity: 0.45, cursor: 'default' } : startButton}
+                onClick={watch.start}
+                disabled={other.started}
+              >
+                ▶ {tt('Старт')}
+              </button>
+            ) : null}
+          </>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div style={wrap}>
       <WeightPicker exercise={exercise} locale={locale} tt={tt} loadKg={loadKg} onLoadKgChange={onLoadKgChange} />
 
       <div style={sidesGrid}>
-        {side(tt('Левая'), repsLeft, onRepsLeftChange)}
-        {side(tt('Правая'), repsRight, onRepsRightChange)}
+        {side(tt('Левая'), repsLeft, onRepsLeftChange, leftWatch, rightWatch)}
+        {side(tt('Правая'), repsRight, onRepsRightChange, rightWatch, leftWatch)}
       </div>
 
       <div style={summary}>
         {tt('Итого')}: <b>{total}</b>
+        {timed ? <> {tt('сек')}</> : null}
         {loadKg != null ? <> × {loadKg} {kg}</> : null}
         {points > 0 ? <> · ≈ {points.toLocaleString(locale)} {tt('баллов')}</> : null}
       </div>
@@ -194,6 +236,22 @@ const sideButton: React.CSSProperties = {
   fontWeight: 800,
   fontSize: 22,
   cursor: 'pointer',
+};
+
+const startButton: React.CSSProperties = {
+  ...sideButton,
+  fontSize: 18,
+  color: '#fff',
+  border: 'none',
+  background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+};
+
+const stopButton: React.CSSProperties = {
+  ...sideButton,
+  fontSize: 18,
+  color: '#fff',
+  border: 'none',
+  background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
 };
 
 const summary: React.CSSProperties = {

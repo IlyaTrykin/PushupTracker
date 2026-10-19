@@ -86,12 +86,15 @@ type WorkoutValueFields = {
   repsRight?: number | null;
 };
 
-// Раскладка по рукам («Л 5 / П 6») или пустая строка, если её нет.
+// Раскладка по сторонам («Л 5 / П 6»; у упражнений на время — «Л 45 с / П 40 с») или пустая
+// строка, если её нет.
 export function formatWorkoutSides(workout: WorkoutValueFields, locale: string = 'ru'): string {
   if (workout.repsLeft == null && workout.repsRight == null) return '';
-  const left = workout.repsLeft ?? 0;
-  const right = workout.repsRight ?? 0;
-  return locale === 'en' ? `L ${left} / R ${right}` : `Л ${left} / П ${right}`;
+  const en = locale === 'en';
+  const unit = isTimedExercise(workout.exerciseType) ? (en ? ' s' : ' с') : '';
+  const left = `${workout.repsLeft ?? 0}${unit}`;
+  const right = `${workout.repsRight ?? 0}${unit}`;
+  return en ? `L ${left} / R ${right}` : `Л ${left} / П ${right}`;
 }
 
 /**

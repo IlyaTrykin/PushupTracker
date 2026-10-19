@@ -157,3 +157,21 @@ test('start link and one-time code', () => {
   assert.match(a, /^[A-Za-z0-9_-]{32,64}$/);
   assert.notEqual(a, b);
 });
+
+test('new exercises are recognised and do not mix with the older ones', () => {
+  assert.deepEqual(parseWorkoutMessage('боковая планка 30', []), { exerciseType: 'side_plank', value: 30 });
+  assert.deepEqual(parseWorkoutMessage('Боковая планка 1:00', []), { exerciseType: 'side_plank', value: 60 });
+  assert.deepEqual(parseWorkoutMessage('side plank 45s', []), { exerciseType: 'side_plank', value: 45 });
+  assert.deepEqual(parseWorkoutMessage('планка 30', []), { exerciseType: 'plank', value: 30 });
+  assert.deepEqual(parseWorkoutMessage('австралийские подтягивания 10', []), { exerciseType: 'australian_pullups', value: 10 });
+  assert.deepEqual(parseWorkoutMessage('australian pull-ups 12', []), { exerciseType: 'australian_pullups', value: 12 });
+  assert.deepEqual(parseWorkoutMessage('подтягивания 10', []), { exerciseType: 'pullups', value: 10 });
+  assert.deepEqual(parseWorkoutMessage('тяга гири 16 кг 8', []), { exerciseType: 'kettlebell_row', value: 8, loadKg: 16 });
+  assert.deepEqual(parseWorkoutMessage('тяга 10 24', []), { exerciseType: 'kettlebell_row', value: 10, loadKg: 24 });
+  assert.deepEqual(parseWorkoutMessage('kettlebell row 8 16kg', []), { exerciseType: 'kettlebell_row', value: 8, loadKg: 16 });
+  assert.deepEqual(parseWorkoutMessage('row 2', []), { exerciseType: 'row', value: 2000 });
+  assert.deepEqual(parseWorkoutMessage('ягодичный мост 20', []), { exerciseType: 'glute_bridge', value: 20 });
+  assert.deepEqual(parseWorkoutMessage('супермен 15', []), { exerciseType: 'superman', value: 15 });
+  assert.deepEqual(parseWorkoutMessage('альпинист 40', []), { exerciseType: 'mountain_climbers', value: 40 });
+  assert.deepEqual(parseWorkoutMessage('mountain climbers 40', []), { exerciseType: 'mountain_climbers', value: 40 });
+});
