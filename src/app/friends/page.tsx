@@ -9,6 +9,7 @@ import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/Achie
 import InviteFriendCard from '@/components/InviteFriendCard';
 import WeeklyLeague from '@/components/WeeklyLeague';
 import ModerationActions, { ReportSheet } from '@/components/ModerationActions';
+import { InfoButton } from '@/components/ui';
 import { fillModeration, moderationText } from '@/i18n/messages/features/moderation';
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
@@ -1105,8 +1106,10 @@ export default function FriendsPage() {
 
         {hiddenFriends.length ? (
           <details style={hiddenBox} data-testid="comparison-hidden">
-            <summary style={hiddenSummary}>{compareText.hiddenSummary.replace('{n}', String(hiddenFriends.length))}</summary>
-            <p style={hiddenHint}>{compareText.hint}</p>
+            <summary style={hiddenSummary}>
+              {compareText.hiddenSummary.replace('{n}', String(hiddenFriends.length))}{' '}
+              <InfoButton>{compareText.hint}</InfoButton>
+            </summary>
             <ul style={hiddenList}>
               {hiddenFriends.map((f) => (
                 <li key={f.friendshipId} style={hiddenItem}>
@@ -2131,8 +2134,7 @@ const hiddenBox: React.CSSProperties = {
   background: 'rgba(255, 255, 255, 0.7)',
 };
 const hiddenSummary: React.CSSProperties = { cursor: 'pointer', fontWeight: 800, color: '#475569', fontSize: 14 };
-const hiddenHint: React.CSSProperties = { margin: '8px 0', fontSize: 13, color: '#64748b', lineHeight: 1.4 };
-const hiddenList: React.CSSProperties = { listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 6 };
+const hiddenList: React.CSSProperties = { listStyle: 'none', margin: '8px 0 0', padding: 0, display: 'grid', gap: 6 };
 const hiddenItem: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 };
 const hiddenName: React.CSSProperties = { flex: 1, minWidth: 0, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 

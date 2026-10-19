@@ -20,6 +20,7 @@ import { installPushActionHandler, restoreNativePush } from '@/lib/native-push-c
 import { captureAttribution } from '@/lib/attribution-client';
 import { hostOf, resolveDeepLink } from '@/lib/deep-links';
 import { apiBase } from '@/lib/platform';
+import { backFromSubpage, closeTopLayer } from '@/components/ui';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -177,6 +178,10 @@ function NativeSystemHooks() {
 
   useEffect(() => {
     const handle = App.addListener('backButton', ({ canGoBack }) => {
+      // Сначала открытое окно/пояснение UI-кита: закрыть его, страница остаётся.
+      if (closeTopLayer()) return;
+      // Затем уровень внутри страницы (`?section=`) — и на корневых экранах вроде /dashboard.
+      if (backFromSubpage()) return;
       const path = (pathRef.current || '/').replace(/\/+$/, '') || '/';
       if (canGoBack && !ROOT_ROUTES.includes(path)) {
         window.history.back();

@@ -18,6 +18,7 @@ import { hardNavigate } from '@/lib/platform';
 import { useRouteParam } from '@/lib/use-route-param';
 import { useAuth } from '@/auth/provider';
 import ModerationActions from '@/components/ModerationActions';
+import { InfoButton, Sheet } from '@/components/ui';
 import { EXERCISE_ORDER, PROGRAM_EXERCISE_ORDER, exerciseIcon, isExerciseType, isLoadedExercise, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
 
 type MemberItem = {
@@ -237,7 +238,6 @@ function ActivityHeatmap({
   loadUnit: string;
   labels: {
     weekdays: string[];
-    eachSquareDay: string;
     selectedDay: string;
     workload: string;
     less: string;
@@ -267,7 +267,6 @@ function ActivityHeatmap({
 
   return (
     <div style={heatmapWrap}>
-      <div style={heatmapHint}>{labels.eachSquareDay}</div>
       <div style={heatmapScroller}>
         <div style={heatmapLayout}>
           <div style={heatmapWeekdayColumn}>
@@ -909,7 +908,10 @@ export default function GroupMemberDetailPage() {
               </div>
 
               <div style={subCard}>
-                <h3 style={subTitle}>{messages.progress.sections.activityCalendar}</h3>
+                <h3 style={subTitle}>
+                  {messages.progress.sections.activityCalendar}{' '}
+                  <InfoButton title={messages.progress.sections.activityCalendar}>{messages.progress.chart.eachSquareDay}</InfoButton>
+                </h3>
                 <ActivityHeatmap
                   cells={analytics.heatmap}
                   accent={getExerciseAccent(deferredExerciseFilter)}
@@ -926,7 +928,6 @@ export default function GroupMemberDetailPage() {
                       messages.progress.weekdays.sat,
                       messages.progress.weekdays.sun,
                     ],
-                    eachSquareDay: messages.progress.chart.eachSquareDay,
                     selectedDay: messages.progress.chart.selectedDay,
                     workload: messages.progress.chart.workload,
                     less: messages.progress.chart.less,
@@ -942,10 +943,10 @@ export default function GroupMemberDetailPage() {
 
       {canManageMember ? (
         <section style={card}>
-          <div style={{ display: 'grid', gap: 6 }}>
-            <h2 style={sectionTitle}>{tt('Календарь записей')}</h2>
-            <p style={metaLine}>{tt('Календарный вид тренировок участника по дням месяца.')}</p>
-          </div>
+          <h2 style={sectionTitle}>
+            {tt('Календарь записей')}{' '}
+            <InfoButton title={tt('Календарь записей')}>{tt('Календарный вид тренировок участника по дням месяца.')}</InfoButton>
+          </h2>
 
           <div style={calendarNavWrap}>
             <div style={{ fontWeight: 900, fontSize: 18, textAlign: 'center' }}>{formatMonthTitle(calendarMonth, localeTag)}</div>
@@ -1189,46 +1190,35 @@ export default function GroupMemberDetailPage() {
         </section>
       ) : null}
 
-      {canManageMember && detailsOpen ? (
-        <div style={modalBackdrop} onClick={closeDetails}>
-          <section style={modalCardWide} onClick={(event) => event.stopPropagation()}>
-            <div style={modalTop}>
-              <h2 style={{ margin: 0 }}>{tt('Подходы за день')}</h2>
-              <button type="button" style={btnSecondary} onClick={closeDetails}>
-                {tt('Закрыть')}
-              </button>
+      <Sheet open={canManageMember && detailsOpen} onClose={closeDetails} title={tt('Подходы за день')} wide testId="member-day-sheet">
+        {!detailDay || !selectedDayData ? (
+          <div style={{ color: '#6b7280' }}>{tt('Нет записей на выбранный день.')}</div>
+        ) : (
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div style={{ color: '#111827', fontWeight: 800 }}>
+              {formatDateWithWeekday(detailDay, localeTag)} · {formatDayPointsTotal(selectedDayData.totalPoints, locale)}
             </div>
 
-            {!detailDay || !selectedDayData ? (
-              <div style={{ color: '#6b7280' }}>{tt('Нет записей на выбранный день.')}</div>
-            ) : (
-              <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(detailDay, localeTag)} · {formatDayPointsTotal(selectedDayData.totalPoints, locale)}
-                </div>
-
-                {selectedDayData.items.map((workout) => {
-                  const type = toExerciseType(workout.exerciseType);
-                  return (
-                    <div key={workout.id} style={calendarDetailsRowCard}>
-                      <div style={{ display: 'grid', gap: 6 }}>
-                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                          <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={16} height={16} style={detailsExerciseIcon} unoptimized />
-                          <strong>{exerciseLabel(type, messages.nav.exercise) || type}</strong>
-                        </div>
-                        <span style={metaLine}>
-                          {tt('Время')}: <b>{formatTimeHHMM(workout.time || workout.date)}</b>
-                        </span>
-                        <span style={metaLine}>{formatWorkoutValue(workout, locale)}</span>
-                      </div>
+            {selectedDayData.items.map((workout) => {
+              const type = toExerciseType(workout.exerciseType);
+              return (
+                <div key={workout.id} style={calendarDetailsRowCard}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Image src={exerciseFeedIcon(type)} alt={exerciseLabel(type, messages.nav.exercise) || type} width={16} height={16} style={detailsExerciseIcon} unoptimized />
+                      <strong>{exerciseLabel(type, messages.nav.exercise) || type}</strong>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </div>
-      ) : null}
+                    <span style={metaLine}>
+                      {tt('Время')}: <b>{formatTimeHHMM(workout.time || workout.date)}</b>
+                    </span>
+                    <span style={metaLine}>{formatWorkoutValue(workout, locale)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Sheet>
 
       {ownerExitOpen ? (
         <div style={modalBackdrop} role="dialog" aria-modal="true">
@@ -1535,28 +1525,6 @@ const modalCard: CSSProperties = {
   boxShadow: '0 28px 70px rgba(15, 23, 42, 0.18)',
 };
 
-const modalCardWide: CSSProperties = {
-  width: 'min(820px, 100%)',
-  maxHeight: '88vh',
-  overflowY: 'auto',
-  display: 'grid',
-  gap: 14,
-  padding: 22,
-  borderRadius: 24,
-  border: '1px solid rgba(226, 232, 240, 0.95)',
-  background: '#fff',
-  boxShadow: '0 28px 70px rgba(15, 23, 42, 0.18)',
-};
-
-const modalTop: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: 8,
-  marginBottom: 10,
-  flexWrap: 'wrap',
-};
-
 const analyticsGrid: CSSProperties = {
   display: 'grid',
   gap: 12,
@@ -1749,11 +1717,6 @@ const calendarDetailsRowCard: CSSProperties = {
 const heatmapWrap: CSSProperties = {
   display: 'grid',
   gap: 12,
-};
-
-const heatmapHint: CSSProperties = {
-  fontSize: 12,
-  color: '#475569',
 };
 
 const heatmapScroller: CSSProperties = {

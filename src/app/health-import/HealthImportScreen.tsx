@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useAuth } from '@/auth/provider';
+import { BackButton, InfoButton } from '@/components/ui';
 import { useI18n } from '@/i18n/provider';
 import { nativeHealthMessages } from '@/i18n/messages/features/native-health';
 import { calculateExercisePoints } from '@/lib/exercise-points';
@@ -145,9 +145,9 @@ export default function HealthImportScreen() {
     return (
       <div className="app-page" style={wrap}>
         <section style={card}>
+          <BackButton fallbackHref="/profile" />
           <h1 style={title}>{text.importTitle}</h1>
           <p style={hint}>{text.importWebOnly}</p>
-          <Link href="/profile" style={back}>{text.importBack}</Link>
         </section>
       </div>
     );
@@ -167,9 +167,11 @@ export default function HealthImportScreen() {
   return (
     <div className="app-page" style={wrap} data-testid="health-import">
       <section style={card}>
-        <Link href="/profile" style={back}>{text.importBack}</Link>
-        <h1 style={title}>{text.importTitle}</h1>
-        <p style={hint}>{text.importIntro}</p>
+        <BackButton fallbackHref="/profile" />
+        <h1 style={title}>
+          {text.importTitle}{' '}
+          <InfoButton title={text.importTitle}>{text.importIntro}</InfoButton>
+        </h1>
       </section>
 
       {summary ? (
@@ -278,7 +280,6 @@ const wrap: CSSProperties = { display: 'grid', gap: 16, maxWidth: 720, margin: '
 const card: CSSProperties = { display: 'grid', gap: 14, padding: 'clamp(18px, 3vw, 24px)', borderRadius: 28, border: '1px solid rgba(255, 255, 255, 0.86)', background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.88) 100%)', boxShadow: '0 20px 52px rgba(15, 23, 42, 0.08)' };
 const title: CSSProperties = { margin: 0, fontSize: 24, fontWeight: 900, color: '#0f172a' };
 const hint: CSSProperties = { margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.5 };
-const back: CSSProperties = { fontWeight: 800, color: '#ea580c', textDecoration: 'none' };
 const list: CSSProperties = { listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 10 };
 const row: CSSProperties = { borderRadius: 18, border: '1px solid rgba(148, 163, 184, 0.28)', background: 'rgba(255, 255, 255, 0.82)' };
 const rowLabel: CSSProperties = { display: 'flex', alignItems: 'center', gap: 12, minHeight: 56, padding: '10px 14px' };

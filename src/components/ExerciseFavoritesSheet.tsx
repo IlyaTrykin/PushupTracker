@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { EXERCISE_ORDER, FAVORITE_EXERCISE_LIMIT, exerciseIcon, exerciseLabel, type ExerciseType } from '@/lib/exercises';
 import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
+import { InfoButton } from '@/components/ui';
 import styles from './ExerciseFavoritesSheet.module.css';
 
 function fill(template: string, params: Record<string, string | number>) {
@@ -59,13 +60,15 @@ function FavoritesDialog({ onClose }: { onClose: () => void }) {
         onClick={(event) => event.stopPropagation()}
       >
         <div className={styles.head}>
-          <div className={styles.title}>{copy.title}</div>
+          <div className={styles.title}>
+            {copy.title}{' '}
+            <InfoButton title={copy.title}>{fill(copy.hint, { limit: FAVORITE_EXERCISE_LIMIT })}</InfoButton>
+          </div>
           <button type="button" className={styles.close} onClick={onClose} aria-label={messages.nav.closeAria}>
             ✕
           </button>
         </div>
 
-        <p className={styles.hint}>{fill(copy.hint, { limit: FAVORITE_EXERCISE_LIMIT })}</p>
         <p className={styles.counter}>{fill(copy.selected, { count: favorites.length, limit: FAVORITE_EXERCISE_LIMIT })}</p>
 
         <ul className={styles.list}>

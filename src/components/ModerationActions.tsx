@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useId, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
+import { Sheet } from '@/components/ui';
 import { fillModeration, moderationText } from '@/i18n/messages/features/moderation';
 
 /**
@@ -60,14 +61,7 @@ export function ReportSheet({
   const [details, setDetails] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const formId = useId();
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -102,18 +96,26 @@ export function ReportSheet({
         ? fillModeration(text.reportOnReaction, { emoji: contextLabel })
         : null;
 
+  const title = fillModeration(text.reportTitle, { name: targetUsername });
+
+  // Общее окно над шапкой: заголовок и кнопки закреплены, причины и текст прокручиваются внутри.
   return (
-    <div style={backdrop} onClick={onClose} role="presentation">
-      <form
-        role="dialog"
-        aria-modal="true"
-        aria-label={fillModeration(text.reportTitle, { name: targetUsername })}
-        style={sheet}
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={submit}
-        data-testid="report-sheet"
-      >
-        <h2 style={sheetTitle}>{fillModeration(text.reportTitle, { name: targetUsername })}</h2>
+    <Sheet
+      open
+      onClose={onClose}
+      title={title}
+      footer={
+        <div style={buttonRow}>
+          <button type="button" style={btnSecondary} onClick={onClose}>
+            {text.cancel}
+          </button>
+          <button type="submit" form={formId} style={{ ...btnDanger, opacity: !reason || sending ? 0.6 : 1 }} disabled={!reason || sending}>
+            {sending ? text.sending : text.send}
+          </button>
+        </div>
+      }
+    >
+      <form id={formId} style={formStack} onSubmit={submit} data-testid="report-sheet">
         {subtitle ? <div style={muted}>{subtitle}</div> : null}
 
         <fieldset style={fieldset}>
@@ -138,18 +140,9 @@ export function ReportSheet({
           <span style={{ ...muted, justifySelf: 'end' }}>{fillModeration(text.textCounter, { n: details.length, max: TEXT_MAX })}</span>
         </label>
 
-        {error ? <div style={errorText}>{error}</div> : null}
-
-        <div style={buttonRow}>
-          <button type="button" style={btnSecondary} onClick={onClose}>
-            {text.cancel}
-          </button>
-          <button type="submit" style={{ ...btnDanger, opacity: !reason || sending ? 0.6 : 1 }} disabled={!reason || sending}>
-            {sending ? text.sending : text.send}
-          </button>
-        </div>
+        {error ? <div style={errorText} role="alert">{error}</div> : null}
       </form>
-    </div>
+    </Sheet>
   );
 }
 
@@ -232,33 +225,7 @@ export default function ModerationActions({
   );
 }
 
-const backdrop: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 1000,
-  background: 'rgba(15, 23, 42, 0.45)',
-  display: 'flex',
-  alignItems: 'flex-end',
-  justifyContent: 'center',
-  padding: '16px 16px calc(16px + env(safe-area-inset-bottom))',
-};
-
-const sheet: React.CSSProperties = {
-  width: '100%',
-  maxWidth: 440,
-  maxHeight: '90vh',
-  overflowY: 'auto',
-  display: 'grid',
-  gap: 12,
-  padding: 18,
-  borderRadius: 22,
-  background: '#fff',
-  boxShadow: '0 24px 60px rgba(15, 23, 42, 0.25)',
-  color: '#0f172a',
-  textAlign: 'left',
-};
-
-const sheetTitle: React.CSSProperties = { margin: 0, fontSize: 18, fontWeight: 900 };
+const formStack: React.CSSProperties = { display: 'grid', gap: 12 };
 const muted: React.CSSProperties = { color: '#64748b', fontSize: 13 };
 const fieldset: React.CSSProperties = { border: 'none', margin: 0, padding: 0, display: 'grid', gap: 8 };
 const legend: React.CSSProperties = { fontWeight: 800, fontSize: 14, marginBottom: 4 };

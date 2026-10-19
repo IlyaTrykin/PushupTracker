@@ -1,0 +1,363 @@
+/* Общий UI-кит. Слои (z-index) и анимации — в globals.css (`--z-sheet`, `--z-popover`,
+   `ui-sheet-up`, `ui-slide-in`, `ui-slide-back`, `ui-fade-in`). */
+
+/* ---- Sheet: окно/лист над шапкой ----
+   Шапка закреплена поверх всего (z-index 10000), поэтому окно лежит выше неё, а его верх
+   всегда начинается ниже шапки (с учётом выреза): заголовок с «Закрыть» нельзя закрыть шапкой.
+   Содержимое прокручивается внутри, заголовок закреплён. */
+.overlay {
+  --sheet-top: calc(var(--app-header-h, 64px) + var(--safe-top, 0px) + 20px);
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-sheet, 10500);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--sheet-top) 10px calc(10px + var(--safe-bottom, 0px));
+  padding-left: calc(10px + var(--safe-left, 0px));
+  padding-right: calc(10px + var(--safe-right, 0px));
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+@media (min-width: 720px) {
+  .overlay {
+    align-items: flex-start;
+  }
+}
+
+.sheet {
+  width: min(560px, 100%);
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  background: #fff;
+  box-shadow: 0 28px 64px rgba(15, 23, 42, 0.24);
+  color: #0f172a;
+  text-align: left;
+  outline: none;
+}
+
+.sheetWide {
+  width: min(760px, 100%);
+}
+
+.sheetHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 18px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.96);
+  background: #fff;
+}
+
+.sheetTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.sheetClose {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sheetBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 18px 18px;
+}
+
+.sheetFooter {
+  flex: none;
+  padding: 12px 18px;
+  border-top: 1px solid rgba(226, 232, 240, 0.96);
+  background: #fff;
+}
+
+/* ---- InfoButton: кнопка «i» ---- */
+.infoButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  /* Зона нажатия 44 px, но строку текста кнопка не раздвигает. */
+  margin: -12px -10px -12px -8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  vertical-align: middle;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.infoDot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1.5px solid #94a3b8;
+  color: #475569;
+  background: rgba(255, 255, 255, 0.9);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 13px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.infoButton[aria-expanded='true'] .infoDot,
+.infoButton:focus-visible .infoDot {
+  border-color: #ea580c;
+  color: #ea580c;
+}
+
+.infoButton:focus-visible {
+  outline: none;
+}
+
+.popover {
+  position: fixed;
+  z-index: var(--z-popover, 10600);
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: #fff;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.22);
+  color: #334155;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: left;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: normal;
+  outline: none;
+}
+
+/* Узкий экран: лист снизу на всю ширину. */
+.popoverSheet {
+  left: calc(10px + var(--safe-left, 0px)) !important;
+  right: calc(10px + var(--safe-right, 0px));
+  bottom: calc(10px + var(--safe-bottom, 0px));
+  top: auto !important;
+  width: auto;
+  max-height: calc(100dvh - var(--app-header-h, 64px) - var(--safe-top, 0px) - var(--safe-bottom, 0px) - 40px);
+  border-radius: 22px;
+  padding: 14px 16px 18px;
+  font-size: 15px;
+}
+
+.popoverHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.popoverTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 10px;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.popoverClose {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -4px -8px 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.popoverBody > :first-child {
+  margin-top: 0;
+}
+
+.popoverBody > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---- Уровни внутри страницы ---- */
+.level {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.levelHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
+
+.levelTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.backButton {
+  display: inline-flex;
+  justify-self: start;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 12px 0 6px;
+  margin-left: -6px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #ea580c;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.backChevron {
+  font-size: 24px;
+  line-height: 1;
+  margin-top: -3px;
+}
+
+.backButton:focus-visible,
+.menuRow:focus-visible {
+  outline: 2px solid #ea580c;
+  outline-offset: 2px;
+}
+
+/* ---- Списки разделов ---- */
+.menuList {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.07);
+}
+
+.menuList > li + li {
+  border-top: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+.menuRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 14px 10px 16px;
+  border: none;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.menuRow:active {
+  background: rgba(241, 245, 249, 0.9);
+}
+
+.menuIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+}
+
+.menuText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.menuLabel {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.menuHint {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.menuValue {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.menuChevron {
+  flex: none;
+  color: #94a3b8;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.menuRowDanger .menuLabel {
+  color: #b91c1c;
+}

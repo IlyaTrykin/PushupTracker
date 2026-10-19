@@ -911,3 +911,52 @@ html[data-native-app] body::after {
   background: #f4f5f9;
   pointer-events: none;
 }
+
+/* ---- UI-кит (src/components/ui): слои и анимации ----
+   Слои: нижнее меню 60 < шапка 10000 < окно (Sheet) < пояснение «i» < боковое меню 11000.
+   Окно и пояснение лежат ВЫШЕ шапки: их верх всё равно начинается ниже неё (см. ui.module.css),
+   поэтому «Закрыть» нельзя перекрыть, сколько бы записей ни было в окне. */
+:root {
+  --z-header: 10000;
+  --z-sheet: 10500;
+  --z-popover: 10600;
+  --ui-motion: 220ms;
+  --ui-ease: cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+
+@keyframes ui-slide-in {
+  from { transform: translateX(28%); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+@keyframes ui-slide-back {
+  from { transform: translateX(-22%); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+@keyframes ui-sheet-up {
+  from { transform: translateY(32px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+@keyframes ui-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Уровень внутри страницы въезжает справа, при возврате предыдущий — слева (200–250 мс). */
+.ui-slide-in { animation: ui-slide-in var(--ui-motion) var(--ui-ease); }
+.ui-slide-back { animation: ui-slide-back var(--ui-motion) var(--ui-ease); }
+/* Лист/окно поднимается снизу, затемнение проявляется. */
+.ui-sheet-up { animation: ui-sheet-up var(--ui-motion) var(--ui-ease); }
+.ui-fade-in { animation: ui-fade-in 180ms ease-out; }
+
+/* «Уменьшить движение» в системе — никаких въездов и подъёмов. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-slide-in,
+  .ui-slide-back,
+  .ui-sheet-up,
+  .ui-fade-in {
+    animation: none !important;
+  }
+}

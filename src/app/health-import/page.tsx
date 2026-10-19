@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import type { CSSProperties } from 'react';
 import { useI18n } from '@/i18n/provider';
+import { BackButton } from '@/components/ui';
 import { nativeHealthMessages } from '@/i18n/messages/features/native-health';
 
 /** On the site: the import reads Health on the phone, so there is nothing to do here. */
@@ -12,9 +12,9 @@ export default function HealthImportWebPage() {
   return (
     <div className="app-page" style={wrap}>
       <section style={card}>
+        <BackButton fallbackHref="/profile" />
         <h1 style={title}>{text.importTitle}</h1>
         <p style={hint}>{text.importWebOnly}</p>
-        <Link href="/profile" style={back}>{text.importBack}</Link>
       </section>
     </div>
   );
@@ -24,4 +24,3 @@ const wrap: CSSProperties = { display: 'grid', gap: 16, maxWidth: 720, margin: '
 const card: CSSProperties = { display: 'grid', gap: 12, padding: 'clamp(18px, 3vw, 24px)', borderRadius: 28, border: '1px solid rgba(255, 255, 255, 0.86)', background: 'rgba(255, 255, 255, 0.94)', boxShadow: '0 20px 52px rgba(15, 23, 42, 0.08)' };
 const title: CSSProperties = { margin: 0, fontSize: 24, fontWeight: 900, color: '#0f172a' };
 const hint: CSSProperties = { margin: 0, fontSize: 14, color: '#64748b', lineHeight: 1.5 };
-const back: CSSProperties = { fontWeight: 800, color: '#ea580c', textDecoration: 'none' };
