@@ -8,6 +8,12 @@
  *   on the site or in Telegram, deleted, changed): the whole history the first time after switching
  *   on (batches of 100, `healthReconcileProgress {done,total}`), afterwards the last 30 days.
  *   `installHealthSync` runs it at start, on resume and after the outbox went out (`outboxFlushed`).
+ * - Калории (R01, R03.1): записи несут активные ккал (`healthRecordEnergy`) — с сервера, иначе по
+ *   профилю из кэша; переключатель `isHealthEnergyEnabled` (по умолчанию включён) выключает их.
+ *   Формат записи 2 → полный проход истории повторяется один раз (`health-full-sync:v2`).
+ * - Данные тела (R04, R05): `syncBodyMetrics` читает вес/рост (на iPhone — ещё дату рождения и пол)
+ *   и шлёт в `POST /api/profile/body-metrics` при старте и resume, не чаще раза в 6 ч.
+ * - Новые разрешения (R18i.1): у уже подключивших Health запрашиваются один раз при запуске.
  * - `listImportableCardio` / `importHealthSessions` — the «Импорт из Health» screen: runs, rides and
  *   rows of the last 30 days that are not in the tracker yet, and sending the chosen ones.
  *
@@ -19,17 +25,22 @@
  */
 
 import { registerPlugin } from '@capacitor/core';
-import { readCachedUser } from '@/lib/native-auth';
+import { dayKeyInZone } from '@/lib/calendar-day';
+import { readCachedUser, writeCachedUser } from '@/lib/native-auth';
+import type { HealthBodyMetrics } from '@/lib/body-metrics';
+import type { BodyMetrics } from './energy';
 import { nativePlatform } from '@/lib/platform';
 import { outboxStore } from '@/lib/offline/outbox-store';
 import { OUTBOX_FLUSHED_EVENT } from '@/lib/offline/sync';
 import {
+  bodyMetricsPayload,
   healthClientRequestId,
   toHealthWorkout,
   toImportCandidate,
   type HealthPlatform,
   type HealthSession,
   type HealthWorkoutInput,
+  type HealthBodyReading,
   type HealthWorkoutSource,
   type ImportCandidate,
 } from './mapping';
@@ -39,6 +50,7 @@ import {
   isImportedFromHealth,
   planHealthReconcile,
   reconcileSince,
+  type HealthEnergyContext,
   type OwnHealthRecord,
   type ServerWorkoutForHealth,
 } from './reconcile';
@@ -55,6 +67,8 @@ type HealthBridgePlugin = {
   /** Deletes the records of `externalId` of `owner` and those without an owner; never another account's. */
   deleteWorkout(options: { externalId: string; owner?: string }): Promise<{ deleted: boolean }>;
   listOwn(options: { since: string }): Promise<{ records: OwnHealthRecord[] }>;
+  /** Последние вес и рост с датами замеров; на iPhone — ещё дата рождения и пол. Нет данных/разрешения — поля нет. */
+  readBodyMetrics(): Promise<HealthBodyReading>;
   querySessions(options: { since: string }): Promise<{ sessions: HealthSession[] }>;
   openSettings(): Promise<void>;
 };
@@ -64,7 +78,15 @@ export const HEALTH_RECONCILE_BATCH_SIZE = 100;
 /** Before accounts were told apart: one switch for the phone. Taken over by the first account. */
 const LEGACY_ENABLED_KEY = 'health-write-enabled:v1';
 const ENABLED_KEY = 'health-write-enabled:v2';
-const FULL_DONE_KEY = 'health-full-sync:v1';
+/** v2 — формат записи 2 (калории): полный проход истории повторяется один раз (R17i). */
+const FULL_DONE_KEY = 'health-full-sync:v2';
+/** «Передавать калории в Health»: '0' — выключено; по умолчанию включено (R03.1). */
+const ENERGY_KEY = 'health-energy-enabled:v1';
+/** Новые разрешения (калории, вес, рост, дата рождения, пол) запрошены у этого аккаунта (R18i.1). */
+const PERMISSIONS_KEY = 'health-permissions:v2';
+/** Когда последний раз данные тела из Health ушли в профиль (мс). */
+const BODY_SYNC_KEY = 'health-body-sync:v1';
+const BODY_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** Set once records without an owner were taken over (by the first account that reconciled). */
 const LEGACY_CLAIMED_KEY = 'health-owner-claimed:v1';
 /** Since when the first pass after switching on looks: the whole history. */
@@ -145,6 +167,60 @@ export function setHealthWriteEnabled(on: boolean, userId?: string | null): void
 export function forgetHealthUser(userId: string): void {
   writeFlag(enabledKey(userId), false);
   writeFlag(fullDoneKey(userId), false);
+  writeValue(`${ENERGY_KEY}:${userId}`, null);
+  writeValue(`${PERMISSIONS_KEY}:${userId}`, null);
+  writeValue(`${BODY_SYNC_KEY}:${userId}`, null);
+}
+
+function readValue(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeValue(key: string, value: string | null): void {
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch {
+    // Storage off: the setting just does not stick.
+  }
+}
+
+/** «Передавать калории в Health» для аккаунта; по умолчанию включено. */
+export function isHealthEnergyEnabled(userId?: string | null): boolean {
+  const user = healthUserId(userId);
+  if (!user) return true;
+  return readValue(`${ENERGY_KEY}:${user}`) !== '0';
+}
+
+/**
+ * Переключает калории в записях. Следующая сверка — снова по всей истории: записи переписываются
+ * с энергией или без неё (их fingerprint учитывает калории).
+ */
+export function setHealthEnergyEnabled(on: boolean, userId?: string | null): void {
+  const user = healthUserId(userId);
+  if (!user) return;
+  writeValue(`${ENERGY_KEY}:${user}`, on ? null : '0');
+  writeFlag(fullDoneKey(user), false);
+}
+
+/** Профиль для расчёта калорий — из кэша приложения (`/api/me`), только этого аккаунта. */
+function cachedBody(userId: string): BodyMetrics | null {
+  const cached = readCachedUser();
+  if (!cached || cached.id !== userId) return null;
+  return {
+    weightKg: cached.weightKg ?? null,
+    heightCm: cached.heightCm ?? null,
+    birthDate: cached.birthDate ? cached.birthDate.slice(0, 10) : null,
+    sex: cached.gender ?? null,
+  };
+}
+
+function energyContext(userId: string): HealthEnergyContext {
+  return { enabled: isHealthEnergyEnabled(userId), body: cachedBody(userId) };
 }
 
 function locale(): 'ru' | 'en' {
@@ -162,10 +238,72 @@ export async function healthAvailability(): Promise<HealthAvailability> {
   }
 }
 
-export async function requestHealthPermissions(): Promise<boolean> {
+export async function requestHealthPermissions(userId?: string | null): Promise<boolean> {
   if (!healthPlatform()) return false;
   const { granted } = await bridge().requestPermissions();
+  const user = healthUserId(userId);
+  if (user) writeValue(`${PERMISSIONS_KEY}:${user}`, '1');
   return granted;
+}
+
+/**
+ * R18i.1: у уже подключившего Health новые типы (калории, данные тела) запрашиваются один раз —
+ * при запуске новой версии. Отказ ничего не ломает: тренировки пишутся без того, что не разрешено.
+ */
+async function requestNewPermissionsOnce(userId: string): Promise<void> {
+  if (!isHealthWriteEnabled(userId) || readValue(`${PERMISSIONS_KEY}:${userId}`) === '1') return;
+  try {
+    await requestHealthPermissions(userId);
+  } catch (error) {
+    console.error('Health permissions request failed', error);
+    writeValue(`${PERMISSIONS_KEY}:${userId}`, '1'); // не спрашивать при каждом запуске
+  }
+}
+
+/** Вес, рост (на iPhone — дата рождения и пол) из Health; null — нет данных, разрешения или Health. */
+export async function readBodyMetricsFromHealth(): Promise<HealthBodyMetrics | null> {
+  if (!healthPlatform()) return null;
+  try {
+    return bodyMetricsPayload(await bridge().readBodyMetrics());
+  } catch (error) {
+    console.error('Could not read body metrics from Health', error);
+    return null;
+  }
+}
+
+type ProfileAnswer = { user?: { weightKg?: number | null; heightCm?: number | null; birthDate?: string | null; gender?: string | null } };
+
+/**
+ * Данные тела из Health → профиль (`POST /api/profile/body-metrics`, правило «свежее заменяет» —
+ * на сервере). Только при включённом Health, не чаще раза в 6 ч (`force` — сразу, при включении).
+ * Нет данных или отказ в чтении — профиль не трогается. Ответ сервера обновляет кэш пользователя
+ * (калории без связи считаются по нему).
+ */
+export async function syncBodyMetrics(userId: string, options: { force?: boolean } = {}): Promise<boolean> {
+  if (!healthPlatform() || !isHealthWriteEnabled(userId)) return false;
+  const key = `${BODY_SYNC_KEY}:${userId}`;
+  const last = Number(readValue(key));
+  if (!options.force && Number.isFinite(last) && last > 0 && Date.now() - last < BODY_SYNC_INTERVAL_MS) return false;
+  const payload = await readBodyMetricsFromHealth();
+  if (!payload) {
+    writeValue(key, String(Date.now()));
+    return false;
+  }
+  if (anotherUserSignedIn(userId)) return false;
+  try {
+    const answer = await postJson<ProfileAnswer>('/api/profile/body-metrics', payload);
+    writeValue(key, String(Date.now()));
+    const cached = readCachedUser();
+    const user = answer.user;
+    if (cached && cached.id === userId && user) {
+      const gender = user.gender === 'male' || user.gender === 'female' || user.gender === 'other' ? user.gender : null;
+      writeCachedUser({ ...cached, weightKg: user.weightKg ?? null, heightCm: user.heightCm ?? null, birthDate: user.birthDate ?? null, gender });
+    }
+    return true;
+  } catch (error) {
+    console.error('Could not send body metrics from Health', error); // повторится при следующем запуске/resume
+    return false;
+  }
 }
 
 /** Health settings (permissions); on Android without Health Connect — its page in Google Play. */
@@ -178,10 +316,22 @@ export async function openHealthSettings(): Promise<void> {
   }
 }
 
-function toInput(w: HealthWorkoutSource, owner: string): HealthWorkoutInput | null {
+/** День тренировки без `date` (подход программы) — по поясу пользователя из кэша: возраст в калориях. */
+function withDay(w: HealthWorkoutSource): HealthWorkoutSource {
+  if (w.date) return w;
+  const zone = readCachedUser()?.timeZone;
+  if (!zone) return w;
+  try {
+    return { ...w, date: dayKeyInZone(new Date(w.time), zone) };
+  } catch {
+    return w;
+  }
+}
+
+function toInput(w: HealthWorkoutSource, owner: string, energy: HealthEnergyContext): HealthWorkoutInput | null {
   const platform = healthPlatform();
   if (!platform) return null;
-  return { ...toHealthWorkout(w, platform, locale()), owner };
+  return { ...toHealthWorkout(withDay(w), platform, locale(), energy), owner };
 }
 
 /**
@@ -192,7 +342,7 @@ function toInput(w: HealthWorkoutSource, owner: string): HealthWorkoutInput | nu
 export async function syncWorkoutToHealth(w: HealthWorkoutSource, userId?: string | null): Promise<void> {
   const user = healthUserId(userId);
   if (!user || !isHealthWriteEnabled(user) || isImportedFromHealth(w.clientRequestId)) return;
-  const input = toInput(w, healthOwnerTag(user));
+  const input = toInput(w, healthOwnerTag(user), energyContext(user));
   if (!input) return;
   try {
     await bridge().saveWorkout(input);
@@ -219,6 +369,10 @@ function fullDoneKey(userId: string): string {
   return `${FULL_DONE_KEY}:${userId}`;
 }
 
+function optionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 async function loadServerWorkouts(): Promise<ServerWorkoutForHealth[]> {
   const response = await fetch('/api/workouts', { cache: 'no-store' });
   if (!response.ok) throw new Error(`GET /api/workouts → ${response.status}`);
@@ -233,6 +387,11 @@ async function loadServerWorkouts(): Promise<ServerWorkoutForHealth[]> {
       reps: Number(w.reps),
       durationSeconds: typeof w.durationSeconds === 'number' ? w.durationSeconds : null,
       time: String(w.time ?? w.date),
+      date: typeof w.date === 'string' ? w.date.slice(0, 10) : null,
+      loadKg: optionalNumber(w.loadKg),
+      repsLeft: optionalNumber(w.repsLeft),
+      repsRight: optionalNumber(w.repsRight),
+      activeKcal: optionalNumber(w.activeKcal),
     };
   });
 }
@@ -263,7 +422,8 @@ async function runReconcile(options: ReconcileOptions): Promise<HealthReconcileR
   ]);
   // Another account signed in meanwhile: its workouts must not be matched against these records.
   if (anotherUserSignedIn(userId)) return null;
-  const plan = planHealthReconcile(server, own, { since, pendingIds, owner, claimLegacy });
+  const energy = energyContext(userId);
+  const plan = planHealthReconcile(server, own, { since, pendingIds, owner, claimLegacy, energy });
   // Newest first: the recent days appear in Health before the old history.
   const byNewest = (a: ServerWorkoutForHealth, b: ServerWorkoutForHealth) => b.time.localeCompare(a.time);
   type Step = { kind: 'delete'; externalId: string } | { kind: 'rewrite' | 'save'; workout: ServerWorkoutForHealth };
@@ -286,7 +446,7 @@ async function runReconcile(options: ReconcileOptions): Promise<HealthReconcileR
           await bridge().deleteWorkout({ externalId: step.externalId, owner });
           result.deleted += 1;
         } else {
-          const input = toInput({ ...step.workout, clientRequestId: healthExternalId(step.workout) }, owner);
+          const input = toInput({ ...step.workout, clientRequestId: healthExternalId(step.workout) }, owner, energy);
           if (input) await bridge().saveWorkout(input);
           if (step.kind === 'rewrite') result.rewritten += 1;
           else result.saved += 1;
@@ -342,14 +502,22 @@ export function reconcileHealth(options: ReconcileOptions = {}): Promise<HealthR
 
 let installedFor: string | null = null;
 
-/** Start, resume and «outbox went out» triggers of the regular pass; once per app run and user. */
+/**
+ * Start, resume and «outbox went out» triggers of the regular pass; once per app run and user.
+ * Перед сверкой: новые разрешения (один раз) и данные тела из Health (не чаще раза в 6 ч).
+ */
 export function installHealthSync(userId: string): void {
   if (!healthPlatform() || installedFor === userId) return;
   const first = installedFor === null;
   installedFor = userId;
   const kick = () => {
-    if (!installedFor) return;
-    reconcileHealth({ userId: installedFor }).catch((error) => console.error('Health reconcile failed', error));
+    const user = installedFor;
+    if (!user || !isHealthWriteEnabled(user)) return;
+    void (async () => {
+      await requestNewPermissionsOnce(user);
+      await syncBodyMetrics(user).catch((error) => console.error('Health body metrics sync failed', error));
+      await reconcileHealth({ userId: user });
+    })().catch((error) => console.error('Health reconcile failed', error));
   };
   kick();
   if (!first) return;

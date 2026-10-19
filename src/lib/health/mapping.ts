@@ -4,7 +4,9 @@
  *
  * - Type: the table below; Apple Health gets `HKWorkoutActivityType` case names, Health Connect —
  *   `ExerciseSessionRecord.EXERCISE_TYPE_*` constant names (the plugin maps the name to the value).
- * - Time: the workout ends at its `time`; it starts `estimateDurationSeconds` earlier.
+ * - Time: the workout ends at its `time`; it starts `workoutDurationSeconds` earlier (темп упражнения).
+ * - Energy: активные ккал (`healthRecordEnergy`): серверные тренировки, иначе расчёт по профилю
+ *   на день тренировки; 0 / нет — запись без энергии (переключатель выключен или веса нет).
  * - Distance (run/bike/row): metres, as stored in `Workout.reps`. Reps go along for rep exercises
  *   (HK metadata `pushup.reps`, HC — in the title).
  */
@@ -13,7 +15,9 @@ import { dayKeyInZone } from '@/lib/calendar-day';
 import { exerciseLabel, getExercise } from '@/lib/exercises';
 import { formatWorkoutValueParts } from '@/lib/exercise-metrics';
 import { programSetClientRequestId, programSetWorkoutTime } from '@/lib/program-plan';
-import { workoutFingerprint } from './reconcile';
+import { HEIGHT_RANGE_CM, WEIGHT_RANGE_KG, type BodySex, type HealthBodyMetrics } from '@/lib/body-metrics';
+import { workoutDurationSeconds } from './energy';
+import { healthRecordEnergy, workoutFingerprint, type HealthEnergyContext } from './reconcile';
 
 export type HealthPlatform = 'apple_health' | 'health_connect';
 
@@ -27,6 +31,8 @@ export type HealthWorkoutInput = {
   end: string;
   distanceMeters?: number;
   reps?: number;
+  /** Активные ккал (iOS — сэмпл `activeEnergyBurned`, Android — `ActiveCaloriesBurnedRecord`); нет — без энергии. */
+  activeKcal?: number;
   title: string;
   /** `workoutFingerprint` of the workout: a changed workout no longer matches its record. */
   fingerprint: string;
@@ -40,6 +46,13 @@ export type HealthWorkoutSource = {
   reps: number;
   durationSeconds?: number | null;
   time: string;
+  /** День тренировки 'YYYY-MM-DD' (возраст в расчёте калорий); нет — день `time` по UTC. */
+  date?: string | null;
+  loadKg?: number | null;
+  repsLeft?: number | null;
+  repsRight?: number | null;
+  /** Калории с сервера; у записи из очереди их ещё нет — считаются по профилю. */
+  activeKcal?: number | null;
 };
 
 type ActivityPair = { apple: string; android: string };
@@ -68,29 +81,9 @@ const ACTIVITY_BY_EXERCISE: Record<string, ActivityPair> = {
   mountain_climbers: STRENGTH,
 };
 
-/** Seconds per metre when a distance workout has no duration: 6:00/km, 25 km/h, 2:30/500 m. */
-const SECONDS_PER_METER: Record<string, number> = { run: 0.36, bike: 0.144, row: 0.3 };
-
-const MIN_ESTIMATED_SECONDS = 60;
-const SECONDS_PER_REP = 3;
-
 function activityFor(exerciseType: string, platform: HealthPlatform): string {
   const pair = ACTIVITY_BY_EXERCISE[exerciseType] ?? STRENGTH;
   return platform === 'apple_health' ? pair.apple : pair.android;
-}
-
-/**
- * Length of the record in Health: the workout's own duration; a timed exercise lasts its value;
- * distance without a duration — at a typical pace; reps — 3 s each, at least a minute.
- */
-export function estimateDurationSeconds(exerciseType: string, reps: number, durationSeconds?: number | null): number {
-  if (durationSeconds != null && durationSeconds > 0) return Math.round(durationSeconds);
-  const value = Math.max(0, Number(reps) || 0);
-  const exercise = getExercise(exerciseType);
-  if (exercise.id === exerciseType && exercise.unit === 'seconds') return Math.max(1, Math.round(value));
-  const perMeter = SECONDS_PER_METER[exerciseType];
-  if (perMeter) return Math.max(MIN_ESTIMATED_SECONDS, Math.round(value * perMeter));
-  return Math.max(MIN_ESTIMATED_SECONDS, Math.round(value * SECONDS_PER_REP));
 }
 
 function titleFor(w: HealthWorkoutSource, locale: 'ru' | 'en'): string {
@@ -105,10 +98,20 @@ function titleFor(w: HealthWorkoutSource, locale: 'ru' | 'en'): string {
   return detail ? `${label} · ${value} · ${detail}` : `${label} · ${value}`;
 }
 
-export function toHealthWorkout(w: HealthWorkoutSource, platform: HealthPlatform, locale: 'ru' | 'en'): HealthWorkoutInput {
+/**
+ * Запись тренировки в Health. `energy` — переключатель калорий и профиль из кэша; без него в запись
+ * идут только калории, посчитанные сервером.
+ */
+export function toHealthWorkout(
+  w: HealthWorkoutSource,
+  platform: HealthPlatform,
+  locale: 'ru' | 'en',
+  energy?: HealthEnergyContext,
+): HealthWorkoutInput {
   const endMs = new Date(w.time).getTime();
-  const seconds = estimateDurationSeconds(w.exerciseType, w.reps, w.durationSeconds);
+  const seconds = workoutDurationSeconds(w);
   const unit = getExercise(w.exerciseType).unit;
+  const kcal = healthRecordEnergy(w, energy);
   const input: HealthWorkoutInput = {
     externalId: w.clientRequestId,
     exerciseType: w.exerciseType,
@@ -116,32 +119,110 @@ export function toHealthWorkout(w: HealthWorkoutSource, platform: HealthPlatform
     start: new Date(endMs - seconds * 1000).toISOString(),
     end: new Date(endMs).toISOString(),
     title: titleFor(w, locale),
-    fingerprint: workoutFingerprint(w),
+    fingerprint: workoutFingerprint(w, kcal),
   };
   if (unit === 'distance') input.distanceMeters = w.reps;
   if (unit === 'reps') input.reps = w.reps;
+  if (kcal > 0) input.activeKcal = kcal;
   return input;
 }
 
 /**
  * The workout of a just recorded program set, as the server stored it (`programSetWorkoutInput`):
- * key `programSetClientRequestId`, time = completion + `setNumber` seconds, no duration. Written to
- * Health at once; the reconcile then finds the same fingerprint and leaves it alone.
+ * key `programSetClientRequestId`, time = completion + `setNumber` seconds, no duration, day of the
+ * completion in the user's zone (`timeZone`, for the age in the calories). Вес гири и стороны
+ * подхода — как у сервера. Written to Health at once; the reconcile then finds the same fingerprint.
  */
 export function programSetHealthSource(
-  set: { id: string; setNumber: number; actualReps: number | null; completedAt: string | Date | null },
+  set: {
+    id: string;
+    setNumber: number;
+    actualReps: number | null;
+    completedAt: string | Date | null;
+    loadKg?: number | null;
+    actualLeft?: number | null;
+    actualRight?: number | null;
+  },
   exerciseType: string,
+  timeZone?: string | null,
 ): HealthWorkoutSource | null {
   if (!set.actualReps || !set.completedAt) return null;
   const completedAt = new Date(set.completedAt);
   if (!Number.isFinite(completedAt.getTime())) return null;
-  return {
+  const source: HealthWorkoutSource = {
     clientRequestId: programSetClientRequestId(set.id),
     exerciseType,
     reps: set.actualReps,
     durationSeconds: null,
     time: programSetWorkoutTime(completedAt, set.setNumber).toISOString(),
   };
+  if (timeZone) {
+    try {
+      source.date = dayKeyInZone(completedAt, timeZone);
+    } catch {
+      // Неизвестный пояс: день по UTC (только возраст в расчёте калорий).
+    }
+  }
+  if (set.loadKg != null) source.loadKg = set.loadKg;
+  if (set.actualLeft != null && set.actualRight != null) {
+    source.repsLeft = set.actualLeft;
+    source.repsRight = set.actualRight;
+  }
+  return source;
+}
+
+// --- Данные тела из Health (R04, R05) ---
+
+/** Что вернул плагин `readBodyMetrics` (поля, которых нет или не разрешены, отсутствуют). */
+export type HealthBodyReading = {
+  weightKg?: unknown;
+  weightMeasuredAt?: unknown;
+  heightCm?: unknown;
+  heightMeasuredAt?: unknown;
+  birthDate?: unknown;
+  sex?: unknown;
+};
+
+const BODY_SEXES: readonly BodySex[] = ['male', 'female', 'other'];
+
+function roundedInRange(value: unknown, range: { min: number; max: number }): number | null {
+  const n = typeof value === 'number' ? value : NaN;
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n);
+  return rounded >= range.min && rounded <= range.max ? rounded : null;
+}
+
+function isoInstant(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/**
+ * Тело `POST /api/profile/body-metrics` из прочитанного в Health: вес до целых кг, рост до целых см
+ * (вне допустимого диапазона — отброшены), дата рождения 'YYYY-MM-DD', пол — male/female/other.
+ * null — отправлять нечего (нет данных или нет разрешения: iPhone об отказе в чтении не сообщает).
+ */
+export function bodyMetricsPayload(reading: HealthBodyReading | null | undefined): HealthBodyMetrics | null {
+  if (!reading) return null;
+  const out: HealthBodyMetrics = {};
+  const weightKg = roundedInRange(reading.weightKg, WEIGHT_RANGE_KG);
+  if (weightKg !== null) {
+    out.weightKg = weightKg;
+    const at = isoInstant(reading.weightMeasuredAt);
+    if (at) out.weightMeasuredAt = at;
+  }
+  const heightCm = roundedInRange(reading.heightCm, HEIGHT_RANGE_CM);
+  if (heightCm !== null) {
+    out.heightCm = heightCm;
+    const at = isoInstant(reading.heightMeasuredAt);
+    if (at) out.heightMeasuredAt = at;
+  }
+  if (typeof reading.birthDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(reading.birthDate) && isoInstant(`${reading.birthDate}T00:00:00Z`)) {
+    out.birthDate = reading.birthDate;
+  }
+  if (typeof reading.sex === 'string' && (BODY_SEXES as readonly string[]).includes(reading.sex)) out.sex = reading.sex as BodySex;
+  return Object.keys(out).length ? out : null;
 }
 
 // --- Import from Health ---

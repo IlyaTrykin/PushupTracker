@@ -3,8 +3,9 @@ import test from 'node:test';
 import { EXERCISE_IDS } from '@/lib/exercises';
 import { createHash } from 'node:crypto';
 import { programSetWorkoutInput } from '@/lib/program-plan';
-import { estimateDurationSeconds, healthClientRequestId, programSetHealthSource, toHealthWorkout, toImportCandidate, type HealthSession } from './mapping';
-import { workoutFingerprint } from './reconcile';
+import { bodyMetricsPayload, healthClientRequestId, programSetHealthSource, toHealthWorkout, toImportCandidate, type HealthSession } from './mapping';
+import { estimateActiveEnergy, workoutDurationSeconds } from './energy';
+import { healthRecordFingerprint, workoutFingerprint } from './reconcile';
 
 const END = '2026-10-17T10:00:00.000Z';
 
@@ -47,23 +48,20 @@ test('every one of the 24 catalog exercises has its Health type on both platform
   }
 });
 
-test('duration: own duration first, else 3 s per rep with a 60 s floor, seconds exercises last their value', () => {
-  assert.equal(estimateDurationSeconds('pushups', 30), 90);
-  assert.equal(estimateDurationSeconds('pushups', 10), 60);
-  assert.equal(estimateDurationSeconds('pushups', 30, 200), 200);
-  assert.equal(estimateDurationSeconds('plank', 45), 45);
-  assert.equal(estimateDurationSeconds('wall_sit', 120, null), 120);
-  // Боковая планка: значение — сумма секунд обеих сторон.
-  assert.equal(estimateDurationSeconds('side_plank', 85), 85);
-  assert.equal(estimateDurationSeconds('run', 5000, 1500), 1500);
-});
-
-test('distance without a duration gets a plausible pace, not 3 s per metre', () => {
-  // 6:00/km running, 25 km/h cycling (2:24/km), 2:30/500 m rowing (5:00/km).
-  assert.equal(estimateDurationSeconds('run', 5000), 1800);
-  assert.equal(estimateDurationSeconds('bike', 10000), 1440);
-  assert.equal(estimateDurationSeconds('row', 2000), 600);
-  assert.equal(estimateDurationSeconds('run', 50), 60);
+test('duration of the record: by the exercise pace (sum of sides), seconds exercises last their value, at least 30 s', () => {
+  const at = (w: { exerciseType: string; reps: number; durationSeconds?: number | null; repsLeft?: number; repsRight?: number }) => {
+    const h = toHealthWorkout({ clientRequestId: 'd', time: END, ...w }, 'apple_health', 'ru');
+    return (new Date(h.end).getTime() - new Date(h.start).getTime()) / 1000;
+  };
+  // Темп отжиманий — 2 с на повтор (spec R01.2), а не «3 с, минимум минута».
+  assert.equal(at({ exerciseType: 'pushups', reps: 30 }), 60);
+  assert.equal(at({ exerciseType: 'pushups', reps: 30 }), workoutDurationSeconds({ exerciseType: 'pushups', reps: 30 }));
+  assert.equal(at({ exerciseType: 'pushups', reps: 5 }), 30);
+  assert.equal(at({ exerciseType: 'plank', reps: 45 }), 45);
+  assert.equal(at({ exerciseType: 'side_plank', reps: 40, repsLeft: 20, repsRight: 20 }), 40);
+  assert.equal(at({ exerciseType: 'run', reps: 5000, durationSeconds: 1500 }), 1500);
+  // Дистанция без своего времени — типичный темп: 6:00/км бег.
+  assert.equal(at({ exerciseType: 'run', reps: 5000 }), 1800);
 });
 
 test('a strength workout ends at its time, starts duration earlier and keeps reps and a readable title', () => {
@@ -71,7 +69,7 @@ test('a strength workout ends at its time, starts duration earlier and keeps rep
   assert.equal(h.externalId, 'req-1');
   assert.equal(h.exerciseType, 'pushups');
   assert.equal(h.end, END);
-  assert.equal(h.start, '2026-10-17T09:58:30.000Z');
+  assert.equal(h.start, '2026-10-17T09:59:00.000Z');
   assert.equal(h.reps, 30);
   assert.equal(h.distanceMeters, undefined);
   assert.equal(h.title, 'Отжимания · 30 повт.');
@@ -98,7 +96,7 @@ test('a plank has no reps (its value is seconds) and lasts its value', () => {
 test('the record carries the fingerprint of the workout, so a changed workout is found later', () => {
   const w = { clientRequestId: 'req-4', exerciseType: 'squats', reps: 25, durationSeconds: null, time: END };
   const h = toHealthWorkout(w, 'apple_health', 'ru');
-  assert.equal(h.fingerprint, workoutFingerprint(w));
+  assert.equal(h.fingerprint, healthRecordFingerprint(w));
   assert.notEqual(toHealthWorkout({ ...w, reps: 26 }, 'apple_health', 'ru').fingerprint, h.fingerprint);
 });
 
@@ -177,12 +175,70 @@ test('a session of zero length is not importable (the server needs a duration of
 test('a program set written to Health at once is the very record the server made (same key and fingerprint)', () => {
   const completedAt = '2026-10-17T07:12:40.123Z';
   const server = programSetWorkoutInput({ setId: 'set-3', setNumber: 3, exerciseType: 'squats', actualReps: 18, doneAt: new Date(completedAt), timeZone: 'Europe/Moscow' });
-  const source = programSetHealthSource({ id: 'set-3', setNumber: 3, actualReps: 18, completedAt }, 'squats');
+  const source = programSetHealthSource({ id: 'set-3', setNumber: 3, actualReps: 18, completedAt }, 'squats', 'Europe/Moscow');
   assert.ok(source);
   assert.equal(source.clientRequestId, server.clientRequestId);
+  assert.equal(source.date, server.date);
   assert.equal(
     workoutFingerprint(source),
     workoutFingerprint({ exerciseType: server.exerciseType, reps: server.reps, durationSeconds: null, time: server.time }),
   );
   assert.equal(programSetHealthSource({ id: 'set-4', setNumber: 4, actualReps: null, completedAt: null }, 'squats'), null);
+});
+
+// --- Калории в записи (R01, R01.8, R03.1) ---
+
+const BODY = { weightKg: 80, heightCm: 180, birthDate: '1990-10-17', sex: 'male' as const };
+
+test('the record carries the workout\'s own active calories and its fingerprint counts them', () => {
+  const w = { clientRequestId: 'k1', exerciseType: 'pushups', reps: 50, time: END, activeKcal: 14.4 };
+  const h = toHealthWorkout(w, 'apple_health', 'ru', { enabled: true, body: BODY });
+  assert.equal(h.activeKcal, 14.4);
+  assert.equal(h.fingerprint, workoutFingerprint(w, 14.4));
+  assert.notEqual(h.fingerprint, workoutFingerprint(w, 0));
+});
+
+test('a queued workout (no server calories yet) gets calories estimated from the cached profile on its own day', () => {
+  // 21:30 UTC 16-го = 00:30 17-го по Москве: день тренировки — 17-е, в этот день ему 36, а не 35.
+  const queued = { clientRequestId: 'q1', exerciseType: 'burpees', reps: 40, time: '2026-10-16T21:30:00.000Z', date: '2026-10-17' };
+  const h = toHealthWorkout(queued, 'health_connect', 'en', { enabled: true, body: BODY });
+  const expected = estimateActiveEnergy(queued, BODY, '2026-10-17');
+  assert.ok(expected && expected > 0);
+  assert.equal(h.activeKcal, expected);
+  assert.notEqual(estimateActiveEnergy(queued, BODY, '2026-10-16'), expected);
+});
+
+test('no weight anywhere or calories switched off: the record has no energy', () => {
+  const w = { clientRequestId: 'n1', exerciseType: 'squats', reps: 30, time: END };
+  assert.equal(toHealthWorkout(w, 'apple_health', 'ru', { enabled: true, body: { weightKg: null } }).activeKcal, undefined);
+  const off = toHealthWorkout({ ...w, activeKcal: 9.5 }, 'apple_health', 'ru', { enabled: false, body: BODY });
+  assert.equal(off.activeKcal, undefined);
+  assert.equal(off.fingerprint, workoutFingerprint(w, 0));
+});
+
+test('a kettlebell set and a set by sides keep their weight and sides on the way to Health', () => {
+  const source = programSetHealthSource(
+    { id: 'set-9', setNumber: 1, actualReps: 16, completedAt: '2026-10-17T07:00:00.000Z', loadKg: 16, actualLeft: 8, actualRight: 8 },
+    'kettlebell_row',
+  );
+  assert.ok(source);
+  assert.equal(source.loadKg, 16);
+  assert.equal(source.repsLeft, 8);
+  assert.equal(source.repsRight, 8);
+});
+
+// --- Данные тела из Health (R04, R05, R06.1) ---
+
+test('body metrics from Health: weight and height rounded, birth date as a day, sex only male/female/other', () => {
+  assert.deepEqual(
+    bodyMetricsPayload({ weightKg: 79.6, weightMeasuredAt: '2026-10-18T07:00:00.000Z', heightCm: 181.4, heightMeasuredAt: '2025-01-01T00:00:00Z', birthDate: '1990-10-17', sex: 'male' }),
+    { weightKg: 80, weightMeasuredAt: '2026-10-18T07:00:00.000Z', heightCm: 181, heightMeasuredAt: '2025-01-01T00:00:00.000Z', birthDate: '1990-10-17', sex: 'male' },
+  );
+  assert.deepEqual(bodyMetricsPayload({ heightCm: 175 }), { heightCm: 175 });
+  assert.deepEqual(bodyMetricsPayload({ sex: 'notSet', birthDate: 'soon', weightKg: -3 }), null);
+});
+
+test('nothing read (no permission: iPhone just returns nothing) — nothing to send', () => {
+  assert.equal(bodyMetricsPayload({}), null);
+  assert.equal(bodyMetricsPayload(null), null);
 });

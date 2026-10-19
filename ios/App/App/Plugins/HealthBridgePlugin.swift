@@ -4,14 +4,17 @@ import HealthKit
 import UIKit
 
 /// Apple Health: workouts of the tracker as `HKWorkout` (HKWorkoutBuilder) with distance samples for
-/// run / bike / row. Every record is tagged in its metadata with the workout's key and fingerprint,
+/// run / bike / row and an `activeEnergyBurned` sample (active kcal: fills the Move ring) when the
+/// workout has calories and writing energy is allowed. Every record is tagged in its metadata with the workout's key and fingerprint,
 /// so the app finds, rewrites and deletes only its own records. `pushup.owner` — the short tag of the
 /// tracker account the record belongs to: with an owner given, records of another account on this
 /// phone are never touched (records without an owner, from an older version, count as the caller's).
 /// JS (`src/lib/health/health.ts`): `isAvailable() → {available, reason?}`,
 /// `requestPermissions() → {granted}`, `saveWorkout(HealthWorkoutInput) → {saved, skipped?}`,
 /// `deleteWorkout({externalId, owner?}) → {deleted}`, `listOwn({since}) → {records: [{externalId, fingerprint, owner?}]}`,
-/// `querySessions({since}) → {sessions: [HealthSession]}` (run / bike / row only), `openSettings()`.
+/// `querySessions({since}) → {sessions: [HealthSession]}` (run / bike / row only), `openSettings()`,
+/// `readBodyMetrics() → {weightKg?, weightMeasuredAt?, heightCm?, heightMeasuredAt?, birthDate?, sex?}`
+/// (latest samples; HealthKit never says that reading was denied — then the fields are just missing).
 @objc(HealthBridgePlugin)
 public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "HealthBridgePlugin"
@@ -23,6 +26,7 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "deleteWorkout", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "listOwn", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "querySessions", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "readBodyMetrics", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise)
     ]
 
@@ -77,10 +81,24 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Active energy of a workout (kcal): counted by the Move ring.
+    private static let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
+
+    /// Samples the app writes (and reads back to find its own records).
     private static func sampleTypes() -> Set<HKSampleType> {
-        var types: Set<HKSampleType> = [HKObjectType.workoutType()]
+        var types: Set<HKSampleType> = [HKObjectType.workoutType(), energyType]
         for type in distanceTypes() { types.insert(type) }
         return types
+    }
+
+    /// Read-only: weight, height, date of birth and sex — for the calories of the workouts.
+    private static func bodyReadTypes() -> Set<HKObjectType> {
+        return [
+            HKQuantityType.quantityType(forIdentifier: .bodyMass)!,
+            HKQuantityType.quantityType(forIdentifier: .height)!,
+            HKCharacteristicType.characteristicType(forIdentifier: .dateOfBirth)!,
+            HKCharacteristicType.characteristicType(forIdentifier: .biologicalSex)!
+        ]
     }
 
     private static let isoFormatter: ISO8601DateFormatter = {
@@ -131,7 +149,9 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let types = HealthBridgePlugin.sampleTypes()
-        store.requestAuthorization(toShare: types, read: Set(types.map { $0 as HKObjectType })) { [weak self] _, _ in
+        let read = Set(types.map { $0 as HKObjectType }).union(HealthBridgePlugin.bodyReadTypes())
+        // The system sheet appears only while some of these types were never asked about.
+        store.requestAuthorization(toShare: types, read: read) { [weak self] _, _ in
             guard let self = self else { return }
             call.resolve(["granted": !self.notAuthorized()])
         }
@@ -160,6 +180,9 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         if let reps = call.getInt("reps") { metadata[HealthBridgePlugin.repsKey] = reps }
         if let owner = owner { metadata[HealthBridgePlugin.ownerKey] = owner }
         let distance = call.getDouble("distanceMeters")
+        // Без разрешения на энергию тренировка пишется без неё (отказ ничего не ломает).
+        let energyAllowed = store.authorizationStatus(for: HealthBridgePlugin.energyType) == .sharingAuthorized
+        let kcal = energyAllowed ? call.getDouble("activeKcal") : nil
 
         serially { done in
             self.findOwnWorkouts(externalId: externalId, owner: owner) { existing in
@@ -173,7 +196,7 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
                     return
                 }
                 self.deleteOwn(externalId: externalId, owner: owner, workouts: existing) { _ in
-                    self.build(activity: activity, start: start, end: end, distance: distance, metadata: metadata) { error in
+                    self.build(activity: activity, start: start, end: end, distance: distance, kcal: kcal, metadata: metadata) { error in
                         if let error = error {
                             call.reject("Could not save the workout: \(error.localizedDescription)", "save_failed")
                         } else {
@@ -283,6 +306,55 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         return workout.totalDistance?.doubleValue(for: .meter())
     }
 
+    /// Latest weight (kg) and height (cm) with the moments they were measured, date of birth
+    /// (`YYYY-MM-DD`) and sex (`male` / `female` / `other`). Nothing allowed or nothing there — no field.
+    @objc func readBodyMetrics(_ call: CAPPluginCall) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            call.resolve([:])
+            return
+        }
+        var result: [String: Any] = [:]
+        let lock = NSLock()
+        let group = DispatchGroup()
+        let formatter = HealthBridgePlugin.isoFormatter
+        let quantities: [(HKQuantityTypeIdentifier, HKUnit, String, String)] = [
+            (.bodyMass, HKUnit.gramUnit(with: .kilo), "weightKg", "weightMeasuredAt"),
+            (.height, HKUnit.meterUnit(with: .centi), "heightCm", "heightMeasuredAt")
+        ]
+        for (identifier, unit, valueKey, dateKey) in quantities {
+            guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { continue }
+            group.enter()
+            let newestFirst = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+            let query = HKSampleQuery(sampleType: type, predicate: nil, limit: 1, sortDescriptors: [newestFirst]) { _, samples, _ in
+                if let sample = (samples as? [HKQuantitySample])?.first {
+                    lock.lock()
+                    result[valueKey] = sample.quantity.doubleValue(for: unit)
+                    result[dateKey] = formatter.string(from: sample.endDate)
+                    lock.unlock()
+                }
+                group.leave()
+            }
+            store.execute(query)
+        }
+        if let birth = try? store.dateOfBirthComponents(), let year = birth.year, let month = birth.month, let day = birth.day {
+            result["birthDate"] = String(format: "%04d-%02d-%02d", year, month, day)
+        }
+        if let sex = try? store.biologicalSex().biologicalSex {
+            switch sex {
+            case .male: result["sex"] = "male"
+            case .female: result["sex"] = "female"
+            case .other: result["sex"] = "other"
+            default: break
+            }
+        }
+        group.notify(queue: .global(qos: .userInitiated)) {
+            lock.lock()
+            let metrics = result
+            lock.unlock()
+            call.resolve(metrics)
+        }
+    }
+
     @objc func openSettings(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             // The app's page in Settings lists «Health» with its permissions.
@@ -310,7 +382,7 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         store.execute(query)
     }
 
-    /// Deletes the workouts and their distance samples (tagged with the same key and owner).
+    /// Deletes the workouts and their distance and energy samples (tagged with the same key and owner).
     private func deleteOwn(externalId: String, owner: String?, workouts: [HKWorkout], completion: @escaping (Bool) -> Void) {
         let group = DispatchGroup()
         var deletedAny = false
@@ -322,7 +394,7 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
                 group.leave()
             }
         }
-        for type in HealthBridgePlugin.distanceTypes() {
+        for type in HealthBridgePlugin.distanceTypes() + [HealthBridgePlugin.energyType] {
             group.enter()
             // Read, then delete what belongs to this owner: another account's sample keeps its distance.
             let query = HKSampleQuery(sampleType: type, predicate: ownPredicate(externalId: externalId), limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, _ in
@@ -335,7 +407,7 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         group.notify(queue: .global(qos: .userInitiated)) { completion(deletedAny) }
     }
 
-    private func build(activity: HKWorkoutActivityType, start: Date, end: Date, distance: Double?, metadata: [String: Any], completion: @escaping (Error?) -> Void) {
+    private func build(activity: HKWorkoutActivityType, start: Date, end: Date, distance: Double?, kcal: Double?, metadata: [String: Any], completion: @escaping (Error?) -> Void) {
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = activity
         let builder = HKWorkoutBuilder(healthStore: store, configuration: configuration, device: .local())
@@ -345,14 +417,31 @@ public class HealthBridgePlugin: CAPPlugin, CAPBridgedPlugin {
                 guard ok else { completion(error); return }
                 self.addDistance(builder: builder, activity: activity, start: start, end: end, distance: distance, metadata: metadata) { error in
                     if let error = error { completion(error); return }
-                    builder.endCollection(withEnd: end) { ok, error in
-                        guard ok else { completion(error); return }
-                        builder.finishWorkout { workout, error in
-                            completion(workout == nil ? (error ?? NSError(domain: "HealthBridge", code: 1)) : nil)
+                    self.addEnergy(builder: builder, start: start, end: end, kcal: kcal, metadata: metadata) { error in
+                        if let error = error { completion(error); return }
+                        builder.endCollection(withEnd: end) { ok, error in
+                            guard ok else { completion(error); return }
+                            builder.finishWorkout { workout, error in
+                                completion(workout == nil ? (error ?? NSError(domain: "HealthBridge", code: 1)) : nil)
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// Active energy of the workout (kcal) as one sample over its time: the Move ring counts it.
+    private func addEnergy(builder: HKWorkoutBuilder, start: Date, end: Date, kcal: Double?, metadata: [String: Any], completion: @escaping (Error?) -> Void) {
+        guard let kcal = kcal, kcal > 0 else {
+            completion(nil)
+            return
+        }
+        var sampleMetadata: [String: Any] = [HealthBridgePlugin.externalIdKey: metadata[HealthBridgePlugin.externalIdKey] ?? ""]
+        if let owner = metadata[HealthBridgePlugin.ownerKey] { sampleMetadata[HealthBridgePlugin.ownerKey] = owner }
+        let sample = HKQuantitySample(type: HealthBridgePlugin.energyType, quantity: HKQuantity(unit: .kilocalorie(), doubleValue: kcal), start: start, end: end, metadata: sampleMetadata)
+        builder.add([sample]) { ok, error in
+            completion(ok ? nil : error)
         }
     }
 

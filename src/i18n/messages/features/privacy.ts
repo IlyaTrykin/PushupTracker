@@ -10,7 +10,7 @@ export const privacyMessages = {
   ru: {
     metaTitle: 'Политика конфиденциальности — Pushup Tracker',
     title: 'Политика конфиденциальности',
-    updated: 'Редакция от 18 октября 2026',
+    updated: 'Редакция от 19 октября 2026',
     profileLink: 'Политика конфиденциальности',
     profileHint: 'Какие данные мы храним и зачем.',
     intro:
@@ -32,8 +32,8 @@ export const privacyMessages = {
       {
         title: 'Какие данные мы собираем',
         items: [
-          'Аккаунт: логин, email и пароль (хранится только в виде хеша, сам пароль мы не знаем). Необязательно: пол, дата рождения, вес, аватар, дневная цель и время напоминания, любимые упражнения.',
-          'Тренировки: упражнение, число повторений или дистанция, длительность, время и день; из них считаются баллы, серии и достижения. Тренировки, импортированные из Apple Health или Health Connect, помечены источником.',
+          'Аккаунт: логин, email и пароль (хранится только в виде хеша, сам пароль мы не знаем). Необязательно: пол, дата рождения, вес, рост, аватар, дневная цель и время напоминания, любимые упражнения.',
+          'Тренировки: упражнение, число повторений или дистанция, длительность, время и день; из них считаются баллы, серии и достижения. Если в профиле указан вес, у каждой тренировки хранятся её активные калории — их видите только вы. Тренировки, импортированные из Apple Health или Health Connect, помечены источником.',
           'Часовой пояс и язык: чтобы правильно определять день тренировки и показывать интерфейс на вашем языке.',
           'Друзья, группы, челленджи и реакции: кого вы добавили, в каких группах состоите, ваши реакции и участие в челленджах. Эти сведения, включая ваши тренировки, видны тем участникам, с которыми вы связаны.',
           'Жалобы и блокировки: если вы заблокировали пользователя, мы храним сам факт блокировки (она скрывает вас друг от друга). Если вы пожаловались на пользователя, мы храним причину, ваш необязательный комментарий и объект жалобы; жалоба передаётся администратору сервиса и дублируется ему письмом.',
@@ -52,10 +52,11 @@ export const privacyMessages = {
           'Доступ к «Здоровью» (iPhone) и Health Connect (Android) включается только по вашему разрешению и в любой момент отключается в настройках телефона. Пользоваться Pushup Tracker можно и без него.',
         ],
         items: [
-          'Что мы записываем: ваши тренировки из Pushup Tracker — тип, время начала и конца, длительность и дистанцию (для бега, велосипеда и гребли).',
+          'Что мы записываем: ваши тренировки из Pushup Tracker — тип, время начала и конца, длительность, дистанцию (для бега, велосипеда и гребли) и активные калории (на iPhone они идут в кольцо «Подвижность»). Передачу калорий можно выключить в профиле, в разделе «Здоровье».',
           'Что мы читаем: тренировки бега, велосипеда и гребли и их дистанцию, чтобы вы могли импортировать их в Pushup Tracker и чтобы не записывать одно и то же дважды. Импорт идёт только по вашему действию на экране импорта; записи, сделанные самим приложением, пропускаются.',
+          'Данные тела: вес и рост (на iPhone — ещё дата рождения и пол) читаются только для расчёта калорий ваших тренировок и попадают в ваш профиль: вес и рост — если замер в Health свежее, чем в профиле, дата рождения и пол — только если в профиле их нет. Health Connect дату рождения и пол не хранит. Другие данные о здоровье (пульс, шаги, сон) мы не читаем.',
           'Данные Health не используются для рекламы, маркетинга, профилирования или оценки кредитоспособности и не передаются третьим лицам: мы не продаём их, не отдаём рекламным сетям, брокерам данных и страховщикам.',
-          'На iPhone мы не сохраняем данные «Здоровья» в iCloud. На сервер попадают только тренировки, которые вы импортировали или записали в Pushup Tracker сами; остальные данные «Здоровья» остаются на телефоне.',
+          'На iPhone мы не сохраняем данные «Здоровья» в iCloud. На сервер попадают только тренировки, которые вы импортировали или записали в Pushup Tracker сами, и вес, рост, дата рождения и пол в вашем профиле; остальные данные «Здоровья» остаются на телефоне.',
         ],
       },
       {
@@ -99,7 +100,7 @@ export const privacyMessages = {
   en: {
     metaTitle: 'Privacy Policy — Pushup Tracker',
     title: 'Privacy Policy',
-    updated: 'Version of 18 October 2026',
+    updated: 'Version of 19 October 2026',
     profileLink: 'Privacy policy',
     profileHint: 'What data we keep and why.',
     intro:
@@ -121,8 +122,8 @@ export const privacyMessages = {
       {
         title: 'What we collect',
         items: [
-          'Account: username, email and password (stored only as a hash; we never know the password itself). Optional: gender, birth date, weight, avatar, daily goal and reminder time, favourite exercises.',
-          'Workouts: exercise, repetitions or distance, duration, time and day; points, streaks and achievements are calculated from them. Workouts imported from Apple Health or Health Connect are marked with their source.',
+          'Account: username, email and password (stored only as a hash; we never know the password itself). Optional: gender, birth date, weight, height, avatar, daily goal and reminder time, favourite exercises.',
+          'Workouts: exercise, repetitions or distance, duration, time and day; points, streaks and achievements are calculated from them. Workouts imported from Apple Health or Health Connect are marked with their source. If your profile has a weight, every workout keeps its active calories, visible only to you.',
           'Time zone and language: to work out the day of a workout correctly and to show the interface in your language.',
           'Friends, groups, challenges and reactions: who you added, which groups you belong to, your reactions and challenge participation. This, including your workouts, is visible to the members you are connected with.',
           'Reports and blocks: if you block a user we store the fact of the block (it hides you from each other). If you report a user we store the reason, your optional comment and the reported item; the report goes to the service administrator and is also emailed to them.',
@@ -141,10 +142,11 @@ export const privacyMessages = {
           'Access to Apple Health (iPhone) and Health Connect (Android) is enabled only with your permission and can be turned off at any time in the phone settings. Pushup Tracker works without it.',
         ],
         items: [
-          'What we write: your Pushup Tracker workouts: type, start and end time, duration and distance (for running, cycling and rowing).',
+          'What we write: your Pushup Tracker workouts: type, start and end time, duration, distance (for running, cycling and rowing) and active calories (on iPhone they count towards the Move ring). Sending calories can be turned off in your profile, in the Health section.',
           'What we read: running, cycling and rowing workouts and their distance, so you can import them into Pushup Tracker and so the same workout is not recorded twice. Import happens only when you start it on the import screen; records written by this app are skipped.',
+          'Body data: weight and height (on iPhone also date of birth and sex) are read only to calculate the calories of your workouts and go into your profile: weight and height when the Health measurement is newer than your profile, date of birth and sex only when your profile has none. Health Connect keeps no date of birth or sex. We read no other health data (heart rate, steps, sleep).',
           'Health data is not used for advertising, marketing, profiling or credit decisions and is not shared with third parties: we do not sell it or give it to ad networks, data brokers or insurers.',
-          'On iPhone we do not store Health data in iCloud. Only the workouts you imported or logged in Pushup Tracker yourself reach our server; the rest of your Health data stays on the phone.',
+          'On iPhone we do not store Health data in iCloud. Only the workouts you imported or logged in Pushup Tracker yourself and the weight, height, date of birth and sex in your profile reach our server; the rest of your Health data stays on the phone.',
         ],
       },
       {

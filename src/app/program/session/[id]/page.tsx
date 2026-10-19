@@ -506,6 +506,9 @@ export default function ProgramSessionPage() {
               setNumber: currentSet.setNumber,
               actualReps: typeof savedSet.actualReps === 'number' ? savedSet.actualReps : null,
               completedAt: typeof savedSet.completedAt === 'string' ? savedSet.completedAt : null,
+              loadKg: typeof savedSet.loadKg === 'number' ? savedSet.loadKg : null,
+              actualLeft: typeof savedSet.actualLeft === 'number' ? savedSet.actualLeft : null,
+              actualRight: typeof savedSet.actualRight === 'number' ? savedSet.actualRight : null,
             },
             program.exerciseType,
           )

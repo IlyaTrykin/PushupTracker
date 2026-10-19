@@ -1,3 +1,3 @@
 "NSCameraUsageDescription" = "Pushup Tracker counts your reps by the position of your body in the frame. Video is processed on your phone, is not saved and is never sent anywhere.";
-"NSHealthShareUsageDescription" = "Pushup Tracker reads workouts from Health so they are not logged twice, and imports running, cycling and rowing.";
-"NSHealthUpdateUsageDescription" = "Pushup Tracker saves your workouts to Health: type, time, duration and distance.";
+"NSHealthShareUsageDescription" = "Pushup Tracker reads workouts from Health so they are not logged twice, and imports running, cycling and rowing. It also reads your weight, height, date of birth and sex to calculate the calories of your workouts.";
+"NSHealthUpdateUsageDescription" = "Pushup Tracker saves your workouts to Health: type, time, duration, distance and active calories, which count towards your Move ring.";

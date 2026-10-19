@@ -74,11 +74,16 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.proximity" android:required="false" />
-    <!-- HealthBridge: тренировки и дистанция в Health Connect (запись; чтение — свои записи и импорт). -->
+    <!-- HealthBridge: тренировки, дистанция и активные калории в Health Connect (запись; чтение — свои
+         записи и импорт бега/велосипеда/гребли). Вес и рост — только чтение, для расчёта калорий
+         тренировок (политика конфиденциальности, раздел Health). Набор = PERMISSIONS в HealthBridgePlugin.kt. -->
     <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
     <uses-permission android:name="android.permission.health.READ_EXERCISE" />
     <uses-permission android:name="android.permission.health.WRITE_DISTANCE" />
     <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.WRITE_ACTIVE_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.READ_WEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_HEIGHT" />
 
     <!-- Health Connect на Android 13 и ниже — отдельное приложение: его нужно видеть. -->
     <queries>

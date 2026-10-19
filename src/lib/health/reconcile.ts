@@ -5,7 +5,12 @@
  * server: missing ones are written, deleted ones removed, changed ones rewritten. A record is keyed
  * by the workout's `clientRequestId` (`wid:<id>` without one) and carries `workoutFingerprint`.
  * Workouts imported from Health (`hk:` / `hc:`) are never written back.
+ *
+ * Формат записи 2 (R17i): fingerprint включает версию формата, вес гири, стороны и активные
+ * калории записи, поэтому записи версии 1 (без калорий) при первом полном проходе переписываются.
  */
+import { getExercise } from '../exercises';
+import { estimateActiveEnergy, type BodyMetrics } from './energy';
 
 export type ServerWorkoutForHealth = {
   id: string;
@@ -14,7 +19,23 @@ export type ServerWorkoutForHealth = {
   reps: number;
   durationSeconds: number | null;
   time: string;
+  /** День тренировки 'YYYY-MM-DD' (или ISO): возраст для расчёта калорий. */
+  date?: string | null;
+  loadKg?: number | null;
+  repsLeft?: number | null;
+  repsRight?: number | null;
+  /** Активные ккал, посчитанные сервером (null — веса не было). */
+  activeKcal?: number | null;
 };
+
+/** Версия формата записи в Health: меняется — все свои записи переписываются (R17i). */
+export const HEALTH_RECORD_FORMAT = 2;
+
+/**
+ * Калории записей: `enabled` — переключатель «Передавать калории в Health» (выключен — записи без
+ * энергии), `body` — профиль из кэша приложения (расчёт для тренировок без серверного значения).
+ */
+export type HealthEnergyContext = { enabled: boolean; body?: BodyMetrics | null };
 
 /**
  * A record the app wrote to Health. `owner` — `healthOwnerTag` of the account it was written for
@@ -42,6 +63,8 @@ export type HealthReconcileWindow = {
   owner?: string;
   /** Records without an owner (written by an older version) are taken over by this account. */
   claimLegacy?: boolean;
+  /** Калории записей (как их пишет `toHealthWorkout`); без него — только серверные. */
+  energy?: HealthEnergyContext;
 };
 
 /** The regular pass looks this far back; the first one after switching on — the whole history. */
@@ -72,14 +95,57 @@ function fnv1a32(text: string): string {
   return hash.toString(16).padStart(8, '0');
 }
 
+type FingerprintSource = Pick<ServerWorkoutForHealth, 'exerciseType' | 'reps' | 'time'> &
+  Partial<Pick<ServerWorkoutForHealth, 'durationSeconds' | 'loadKg' | 'repsLeft' | 'repsRight'>>;
+
+function optionalNumber(value: number | null | undefined): number | '' {
+  return value == null || !Number.isFinite(Number(value)) ? '' : Number(value);
+}
+
 /**
- * `exerciseType|reps|durationSeconds|time`, hashed to 8 hex digits: Health Connect keeps it as the
- * record's numeric `clientRecordVersion`, Apple Health — in the workout metadata.
+ * `2|exerciseType|reps|durationSeconds|time|loadKg|repsLeft|repsRight|kcal`, hashed to 8 hex digits:
+ * Health Connect keeps it as the record's numeric `clientRecordVersion`, Apple Health — in the
+ * workout metadata. Вес гири — только у упражнений с гирей, стороны — только у «на сторону»
+ * (очередь и сервер хранят их по-разному); `energyKcal` — калории, записанные в Health (0 — без них).
  */
-export function workoutFingerprint(
-  w: Pick<ServerWorkoutForHealth, 'exerciseType' | 'reps' | 'time'> & { durationSeconds?: number | null },
+export function workoutFingerprint(w: FingerprintSource, energyKcal: number = 0): string {
+  const exercise = getExercise(w.exerciseType);
+  const own = exercise.id === w.exerciseType;
+  const loadKg = own && exercise.load ? optionalNumber(w.loadKg) : '';
+  const sides = own && exercise.unilateral ? [optionalNumber(w.repsLeft), optionalNumber(w.repsRight)] : ['', ''];
+  const kcal = energyKcal > 0 ? (Math.round(energyKcal * 10) / 10).toFixed(1) : '0';
+  return fnv1a32(
+    [HEALTH_RECORD_FORMAT, w.exerciseType, w.reps, w.durationSeconds ?? '', normalizeTime(w.time), loadKg, ...sides, kcal].join('|'),
+  );
+}
+
+/** День тренировки для возраста: её `date`, иначе день `time` по UTC. */
+function workoutDay(w: Pick<ServerWorkoutForHealth, 'time' | 'date'>): string {
+  if (w.date && /^\d{4}-\d{2}-\d{2}/.test(w.date)) return w.date.slice(0, 10);
+  return normalizeTime(w.time).slice(0, 10);
+}
+
+/**
+ * Активные ккал записи в Health: 0 — переключатель выключен; серверное значение тренировки; иначе
+ * (очередь без связи, сервер ещё не посчитал) — `estimateActiveEnergy` по профилю на день тренировки;
+ * без веса — 0 (запись без энергии).
+ */
+export function healthRecordEnergy(
+  w: FingerprintSource & Pick<ServerWorkoutForHealth, 'date' | 'activeKcal'>,
+  energy?: HealthEnergyContext,
+): number {
+  if (energy && !energy.enabled) return 0;
+  if (typeof w.activeKcal === 'number' && Number.isFinite(w.activeKcal) && w.activeKcal > 0) return Math.round(w.activeKcal * 10) / 10;
+  if (!energy?.body) return 0;
+  return estimateActiveEnergy(w, energy.body, workoutDay(w)) ?? 0;
+}
+
+/** Fingerprint записи, как её пишет `toHealthWorkout`: с калориями `healthRecordEnergy`. */
+export function healthRecordFingerprint(
+  w: FingerprintSource & Pick<ServerWorkoutForHealth, 'date' | 'activeKcal'>,
+  energy?: HealthEnergyContext,
 ): string {
-  return fnv1a32([w.exerciseType, w.reps, w.durationSeconds ?? '', normalizeTime(w.time)].join('|'));
+  return workoutFingerprint(w, healthRecordEnergy(w, energy));
 }
 
 /** Short tag of an account on its Health records: 8 hex digits of `userId`, not the id itself. */
@@ -128,7 +194,7 @@ export function planHealthReconcile(
       if (new Date(w.time).getTime() >= sinceMs) toSave.push(w);
       continue;
     }
-    const fingerprint = workoutFingerprint(w);
+    const fingerprint = healthRecordFingerprint(w, window.energy);
     const untagged = owner !== undefined && !records[0].owner;
     if (records.length > 1 || untagged || records[0].fingerprint !== fingerprint) toRewrite.push(w);
   }

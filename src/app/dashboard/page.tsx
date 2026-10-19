@@ -880,6 +880,10 @@ export default function DashboardPage() {
           reps: patch.reps ?? 0,
           durationSeconds: patch.durationSeconds ?? null,
           time: patch.time ?? zonedIsoTime(editDate, editTime, entryZone),
+          date: patch.date ?? editDate,
+          loadKg: patch.loadKg ?? null,
+          repsLeft: patch.repsLeft ?? null,
+          repsRight: patch.repsRight ?? null,
         }, user?.id);
         setEditingId(null);
         setInfo(queueText.queueUpdated);
@@ -921,6 +925,12 @@ export default function DashboardPage() {
           reps: record.reps,
           durationSeconds: record.durationSeconds ?? null,
           time: record.time ?? zonedIsoTime(editDate, editTime, entryZone),
+          date: record.date ? record.date.slice(0, 10) : editDate,
+          loadKg: record.loadKg ?? null,
+          repsLeft: record.repsLeft ?? null,
+          repsRight: record.repsRight ?? null,
+          // Калории, пересчитанные сервером после правки (R01.5).
+          activeKcal: (updated as { activeKcal?: number | null }).activeKcal ?? null,
         }, user?.id);
       }
       setEditingId(null);

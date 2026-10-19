@@ -9,15 +9,19 @@ import androidx.activity.result.ActivityResult
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
+import androidx.health.connect.client.records.HeightRecord
 import androidx.health.connect.client.records.Record
+import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Length
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -35,7 +39,9 @@ import kotlin.reflect.KClass
 
 /**
  * Health Connect: workouts of the tracker as `ExerciseSessionRecord` (+ `DistanceRecord` for
- * run / bike / row). `clientRecordId` = the workout's key (`externalId`, distance — `<key>:distance`),
+ * run / bike / row, + `ActiveCaloriesBurnedRecord` when the workout has calories and writing them is
+ * allowed). `clientRecordId` = the workout's key (`externalId`, distance — `<key>:distance`, energy —
+ * `<key>:energy`),
  * `clientRecordVersion` = its fingerprint (8 hex digits as a number). Only the app's own records
  * are read, rewritten and deleted. With the tracker account's tag (`owner`) the key is prefixed:
  * `<owner>|<externalId>`, so another account on this phone never touches the record; a key without
@@ -43,13 +49,16 @@ import kotlin.reflect.KClass
  * JS (`src/lib/health/health.ts`): `isAvailable() → {available, reason?}`,
  * `requestPermissions() → {granted}`, `saveWorkout(HealthWorkoutInput) → {saved, skipped?}`,
  * `deleteWorkout({externalId, owner?}) → {deleted}`, `listOwn({since}) → {records: [{externalId, fingerprint, owner?}]}`,
- * `querySessions({since}) → {sessions: [HealthSession]}` (run / bike / row of any app), `openSettings()`.
+ * `querySessions({since}) → {sessions: [HealthSession]}` (run / bike / row of any app), `openSettings()`,
+ * `readBodyMetrics() → {weightKg?, weightMeasuredAt?, heightCm?, heightMeasuredAt?}` (latest records;
+ * Health Connect keeps no date of birth or sex).
  */
 @CapacitorPlugin(name = "HealthBridge")
 class HealthBridgePlugin : Plugin() {
     companion object {
         private const val PROVIDER = "com.google.android.apps.healthdata"
         private const val DISTANCE_SUFFIX = ":distance"
+        private const val ENERGY_SUFFIX = ":energy"
         private const val OWNER_SEPARATOR = '|'
         private const val PAGE_SIZE = 1000
 
@@ -66,6 +75,9 @@ class HealthBridgePlugin : Plugin() {
         private val WRITE_DISTANCE = HealthPermission.getWritePermission(DistanceRecord::class)
         private val READ_SESSION = HealthPermission.getReadPermission(ExerciseSessionRecord::class)
         private val READ_DISTANCE = HealthPermission.getReadPermission(DistanceRecord::class)
+        private val WRITE_CALORIES = HealthPermission.getWritePermission(ActiveCaloriesBurnedRecord::class)
+        private val READ_WEIGHT = HealthPermission.getReadPermission(WeightRecord::class)
+        private val READ_HEIGHT = HealthPermission.getReadPermission(HeightRecord::class)
 
         /** Health Connect exercise type → the tracker's cardio exercise (treadmill / stationary count too). */
         private val IMPORT_ACTIVITIES = mapOf(
@@ -77,11 +89,15 @@ class HealthBridgePlugin : Plugin() {
             ExerciseSessionRecord.EXERCISE_TYPE_ROWING_MACHINE to "row",
         )
 
+        /** Also in AndroidManifest.xml (`android.permission.health.*`). */
         private val PERMISSIONS = setOf(
             WRITE_SESSION,
             WRITE_DISTANCE,
-            HealthPermission.getReadPermission(ExerciseSessionRecord::class),
-            HealthPermission.getReadPermission(DistanceRecord::class),
+            READ_SESSION,
+            READ_DISTANCE,
+            WRITE_CALORIES,
+            READ_WEIGHT,
+            READ_HEIGHT,
         )
 
         /** Fingerprint `a1b2c3d4` ⇄ `clientRecordVersion`. */
@@ -195,6 +211,7 @@ class HealthBridgePlugin : Plugin() {
         val key = recordKey(externalId, owner)
         val title = call.getString("title")
         val distance = call.getDouble("distanceMeters")
+        val kcal = call.getDouble("activeKcal")
         val zone = ZoneId.systemDefault().rules
         val device = Device(Device.TYPE_PHONE, Build.MANUFACTURER, Build.MODEL)
 
@@ -236,7 +253,20 @@ class HealthBridgePlugin : Plugin() {
                         ),
                     )
                 }
-                deleteOwn(client, externalId, owner, granted.contains(WRITE_DISTANCE))
+                // Без разрешения на калории сессия пишется без них (отказ ничего не ломает).
+                if (kcal != null && kcal > 0 && granted.contains(WRITE_CALORIES)) {
+                    records.add(
+                        ActiveCaloriesBurnedRecord(
+                            startTime = start,
+                            startZoneOffset = zone.getOffset(start),
+                            endTime = end,
+                            endZoneOffset = zone.getOffset(end),
+                            energy = Energy.kilocalories(kcal),
+                            metadata = Metadata.manualEntry(key + ENERGY_SUFFIX, version, device),
+                        ),
+                    )
+                }
+                deleteOwn(client, externalId, owner, granted)
                 client.insertRecords(records)
                 true
             }
@@ -257,7 +287,7 @@ class HealthBridgePlugin : Plugin() {
         val owner = call.getString("owner")?.takeIf { it.isNotEmpty() }
         launch(call, {
             val client = client()
-            deleteOwn(client, externalId, owner, client.permissionController.getGrantedPermissions().contains(WRITE_DISTANCE))
+            deleteOwn(client, externalId, owner, client.permissionController.getGrantedPermissions())
         }) { deleted ->
             call.resolve(JSObject().put("deleted", deleted))
         }
@@ -360,6 +390,53 @@ class HealthBridgePlugin : Plugin() {
         }
     }
 
+    /**
+     * Latest weight (kg) and height (cm) from any app, with the moment of the measurement. A value
+     * whose read permission is not granted (or that is not there) is left out.
+     */
+    @PluginMethod
+    fun readBodyMetrics(call: PluginCall) {
+        if (sdkStatus() != HealthConnectClient.SDK_AVAILABLE) {
+            call.resolve(JSObject())
+            return
+        }
+        launch(call, {
+            val client = client()
+            val granted = client.permissionController.getGrantedPermissions()
+            val result = JSObject()
+            val now = Instant.now()
+            if (granted.contains(READ_WEIGHT)) {
+                client.readRecords(
+                    ReadRecordsRequest(
+                        recordType = WeightRecord::class,
+                        timeRangeFilter = TimeRangeFilter.before(now),
+                        ascendingOrder = false,
+                        pageSize = 1,
+                    ),
+                ).records.firstOrNull()?.let {
+                    result.put("weightKg", it.weight.inKilograms)
+                    result.put("weightMeasuredAt", it.time.toString())
+                }
+            }
+            if (granted.contains(READ_HEIGHT)) {
+                client.readRecords(
+                    ReadRecordsRequest(
+                        recordType = HeightRecord::class,
+                        timeRangeFilter = TimeRangeFilter.before(now),
+                        ascendingOrder = false,
+                        pageSize = 1,
+                    ),
+                ).records.firstOrNull()?.let {
+                    result.put("heightCm", it.height.inMeters * 100)
+                    result.put("heightMeasuredAt", it.time.toString())
+                }
+            }
+            result
+        }) { result ->
+            call.resolve(result)
+        }
+    }
+
     /** The app's label when the system lets us see it, else its package name. */
     private fun sourceName(packageName: String): String =
         try {
@@ -387,17 +464,18 @@ class HealthBridgePlugin : Plugin() {
     }
 
     /**
-     * Deletes the session and its distance by `clientRecordId` (unique per app in Health Connect,
-     * so there is never more than one of each). `true` — nothing of this workout is left.
-     * Without the distance write permission (the user granted workouts only) the distance is not
-     * touched: deleting it would throw SecurityException and fail the whole save (a distance written
-     * before the permission was taken back stays — Health Connect does not let the app change it).
+     * Deletes the session, its distance and its calories by `clientRecordId` (unique per app in
+     * Health Connect, so there is never more than one of each). `true` — nothing of this workout is left.
+     * Without the distance / calories write permission (the user granted workouts only) that record
+     * is not touched: deleting it would throw SecurityException and fail the whole save (a record
+     * written before the permission was taken back stays — Health Connect does not let the app change it).
      */
-    private suspend fun deleteOwn(client: HealthConnectClient, externalId: String, owner: String?, canWriteDistance: Boolean): Boolean {
+    private suspend fun deleteOwn(client: HealthConnectClient, externalId: String, owner: String?, granted: Set<String>): Boolean {
         // This owner's key and the key of an older version without an owner; never another owner's.
         val keys = listOf(recordKey(externalId, owner), externalId).distinct()
         deleteByClientIds(client, ExerciseSessionRecord::class, keys)
-        if (canWriteDistance) deleteByClientIds(client, DistanceRecord::class, keys.map { it + DISTANCE_SUFFIX })
+        if (granted.contains(WRITE_DISTANCE)) deleteByClientIds(client, DistanceRecord::class, keys.map { it + DISTANCE_SUFFIX })
+        if (granted.contains(WRITE_CALORIES)) deleteByClientIds(client, ActiveCaloriesBurnedRecord::class, keys.map { it + ENERGY_SUFFIX })
         return true
     }
 

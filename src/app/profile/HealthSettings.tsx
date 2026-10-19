@@ -3,17 +3,21 @@
 import Link from 'next/link';
 import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { useAuth } from '@/auth/provider';
+import { InfoButton } from '@/components/ui';
 import { useI18n } from '@/i18n/provider';
 import { nativeHealthMessages } from '@/i18n/messages/features/native-health';
 import {
   HEALTH_RECONCILE_PROGRESS_EVENT,
   healthAvailability,
   healthPlatform,
+  isHealthEnergyEnabled,
   isHealthWriteEnabled,
   openHealthSettings,
   reconcileHealth,
   requestHealthPermissions,
+  setHealthEnergyEnabled,
   setHealthWriteEnabled,
+  syncBodyMetrics,
   type HealthReconcileProgress,
 } from '@/lib/health/health';
 
@@ -23,20 +27,25 @@ const noSubscribe = () => () => undefined;
 
 /**
  * «Здоровье» in the app's profile: the switch «Save workouts to Apple Health / Health Connect».
- * Switching on asks for Health permissions and copies the whole history with a progress line;
- * on the site the block is not shown at all.
+ * Switching on asks for Health permissions, takes weight/height from Health into the profile and
+ * copies the whole history with a progress line; on the site the block is not shown at all.
+ * «Передавать калории в Health» (по умолчанию включён) — против задвоения с часами: переключение
+ * переписывает записи истории с энергией или без. Без веса в профиле — приглашение его указать.
  */
 export default function HealthSettings() {
   const { locale } = useI18n();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const text = nativeHealthMessages[locale === 'en' ? 'en' : 'ru'];
   const platform = useSyncExternalStore(noSubscribe, healthPlatform, () => null);
   const storedEnabled = useSyncExternalStore(noSubscribe, isHealthWriteEnabled, () => false);
+  const storedEnergy = useSyncExternalStore(noSubscribe, isHealthEnergyEnabled, () => true);
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [energyChoice, setEnergyChoice] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<HealthReconcileProgress | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const on = enabled ?? storedEnabled;
+  const energyOn = energyChoice ?? storedEnergy;
 
   useEffect(() => {
     const onProgress = (event: Event) => {
@@ -57,13 +66,15 @@ export default function HealthSettings() {
       else setNotice({ text: text.notSupported, tone: 'error' });
       return;
     }
-    const granted = await requestHealthPermissions();
+    const granted = await requestHealthPermissions(user?.id);
     if (!granted) {
       setNotice({ text: text.denied, tone: 'error', action: 'settings' });
       return;
     }
     setHealthWriteEnabled(true);
     setEnabled(true);
+    // Вес и рост из Health — до переноса истории: калории записей считаются по ним.
+    if (user?.id && (await syncBodyMetrics(user.id, { force: true }).catch(() => false))) await refreshUser();
     const result = await reconcileHealth({ full: true, userId: user?.id });
     const changed = result ? result.saved + result.rewritten + result.deleted : 0;
     if (result && result.failed > 0) setNotice({ text: text.failed, tone: 'error', action: 'settings' });
@@ -91,12 +102,41 @@ export default function HealthSettings() {
     }
   };
 
+  const toggleEnergy = async (next: boolean) => {
+    if (busy) return;
+    setNotice(null);
+    setProgress(null);
+    setHealthEnergyEnabled(next, user?.id);
+    setEnergyChoice(next);
+    if (!on) return;
+    // Записи истории переписываются с калориями или без них.
+    setBusy(true);
+    try {
+      const result = await reconcileHealth({ full: true, userId: user?.id });
+      if (result && result.failed > 0) setNotice({ text: text.failed, tone: 'error', action: 'settings' });
+    } catch (error) {
+      console.error('Health rewrite after the calories switch failed', error);
+      setNotice({ text: text.failed, tone: 'error', action: 'settings' });
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+
   const label = platform === 'apple_health' ? text.toggleAppleHealth : text.toggleHealthConnect;
+  const apple = platform === 'apple_health';
   const summary = platform === 'apple_health' ? text.summaryAppleHealth : text.summaryHealthConnect;
 
   return (
     <section style={panelCard} data-testid="health-settings">
-      <div style={sectionTitle}>{text.sectionTitle}</div>
+      <div style={titleRow}>
+        <div style={sectionTitle}>{text.sectionTitle}</div>
+        <InfoButton title={text.infoTitle}>
+          <p>{text.infoCalories}</p>
+          <p>{apple ? text.infoBodyAppleHealth : text.infoBodyHealthConnect}</p>
+          <p>{apple ? text.infoRingsAppleHealth : text.infoRingsHealthConnect}</p>
+        </InfoButton>
+      </div>
       <div style={fieldHint}>{summary}</div>
       <label style={switchRow}>
         <input
@@ -110,6 +150,30 @@ export default function HealthSettings() {
         />
         <span style={{ fontWeight: 800, color: '#0f172a' }}>{label}</span>
       </label>
+      {on ? (
+        <div style={{ display: 'grid', gap: 2 }}>
+          <label style={switchRow}>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-checked={energyOn}
+              checked={energyOn}
+              disabled={busy}
+              onChange={(e) => void toggleEnergy(e.target.checked)}
+              style={{ width: 22, height: 22, accentColor: '#ea580c' }}
+              data-testid="health-energy-switch"
+            />
+            <span style={{ fontWeight: 800, color: '#0f172a' }}>{text.energyToggle}</span>
+          </label>
+          <div style={fieldHint}>{text.energyHint}</div>
+        </div>
+      ) : null}
+      {user?.weightKg === null ? (
+        <div style={promptBox} data-testid="health-weight-prompt">
+          {text.weightPrompt}{' '}
+          <Link href="/profile?section=personal" style={promptLink}>{text.weightPromptLink}</Link>
+        </div>
+      ) : null}
       {busy && progress && progress.total > 0 ? (
         <div style={fieldHint} role="status" aria-live="polite">
           {text.progress.replace('{done}', String(progress.done)).replace('{total}', String(progress.total))}
@@ -146,6 +210,20 @@ const panelCard: CSSProperties = {
 };
 
 const sectionTitle: CSSProperties = { fontSize: 18, fontWeight: 900, color: '#0f172a' };
+
+const titleRow: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 };
+
+const promptBox: CSSProperties = {
+  padding: '12px 14px',
+  borderRadius: 16,
+  background: 'rgba(255, 237, 213, 0.7)',
+  border: '1px solid rgba(251, 146, 60, 0.3)',
+  color: '#9a3412',
+  fontWeight: 700,
+  lineHeight: 1.5,
+};
+
+const promptLink: CSSProperties = { color: '#ea580c', fontWeight: 900 };
 
 const importLinkStyle: CSSProperties = { fontWeight: 900, color: '#ea580c', textDecoration: 'none', minHeight: 44, display: 'inline-flex', alignItems: 'center' };
 
