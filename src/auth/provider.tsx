@@ -29,6 +29,12 @@ export type AuthUserState = {
   dailyReminderTime?: string | null;
   /** Exercises with an active training program. */
   activeProgramExercises?: string[];
+  /** Данные тела из `GET /api/me` (калории без связи; в приложении — в кэше пользователя). */
+  weightKg?: number | null;
+  heightCm?: number | null;
+  /** ISO-дата; день рождения — первые 10 символов. */
+  birthDate?: string | null;
+  gender?: 'male' | 'female' | 'other' | null;
 } | null;
 
 const BROWSER_ZONE_KEY_PREFIX = 'pushup-browser-tz:';

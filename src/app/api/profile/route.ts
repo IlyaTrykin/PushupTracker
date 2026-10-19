@@ -7,6 +7,7 @@ import { parseDailyGoalPoints, parseReminderTime } from '@/lib/daily-goal';
 import { dailyGoalMessages } from '@/i18n/messages/features/daily-goal';
 import { normalizeLocale } from '@/i18n/locale';
 import { setPreferredLocaleCookie } from '@/i18n/server';
+import { HEIGHT_RANGE_CM, PROFILE_SELECT, WEIGHT_RANGE_KG, parseBodyMetricInput } from '@/lib/body-metrics';
 
 type ProfileHistoryChanges = Record<string, Prisma.InputJsonValue | null>;
 
@@ -45,23 +46,7 @@ export async function GET(request: Request) {
 
     const u = await prisma.user.findUnique({
       where: { id: me.id },
-      select: {
-        id: true,
-        email: true,
-        username: true,
-        isAdmin: true,
-        language: true,
-        createdAt: true,
-        updatedAt: true,
-        gender: true,
-        birthDate: true,
-        weightKg: true,
-        avatarPath: true,
-        timeZone: true,
-        dailyGoalPoints: true,
-        dailyReminderTime: true,
-        deletedAt: true,
-      },
+      select: { ...PROFILE_SELECT, deletedAt: true },
     });
 
     if (!u || u.deletedAt) return jsonError('UNAUTHORIZED', 401);
@@ -72,8 +57,9 @@ export async function GET(request: Request) {
   }
 }
 
-// Update profile fields: { username?, gender?, birthDate?, weightKg?, language?,
-//   timeZone? (IANA), dailyGoalPoints? (10–2000 | null), dailyReminderTime? ('HH:MM' | null) }
+// Update profile fields: { username?, gender?, birthDate?, weightKg? (30–250, rounded), heightCm? (100–250, rounded),
+//   language?, timeZone? (IANA), dailyGoalPoints? (10–2000 | null), dailyReminderTime? ('HH:MM' | null) }
+// A changed weight/height is a manual edit: `*Source = 'manual'`, `*UpdatedAt = now` (R04.1).
 export async function PATCH(request: Request) {
   try {
     const me = await requireUser(request);
@@ -84,11 +70,12 @@ export async function PATCH(request: Request) {
     const nextLanguage = body.language !== undefined ? normalizeLocale(body.language) : undefined;
     const nextGender = body.gender !== undefined ? normalizeGender(body.gender) : undefined;
     const nextBirthDate = body.birthDate !== undefined ? parseBirthDate(body.birthDate) : undefined;
-    const nextWeightKg = body.weightKg !== undefined && body.weightKg !== null && String(body.weightKg).trim() !== ''
-      ? Number(body.weightKg)
-      : body.weightKg === null || body.weightKg === ''
-        ? null
-        : undefined;
+    const weightInput = parseBodyMetricInput(body.weightKg, WEIGHT_RANGE_KG);
+    if (!weightInput.ok) return jsonError('Вес должен быть в диапазоне 30..250 кг', 400, 'WEIGHT_INVALID');
+    const nextWeightKg = weightInput.value;
+    const heightInput = parseBodyMetricInput(body.heightCm, HEIGHT_RANGE_CM);
+    if (!heightInput.ok) return jsonError('Рост должен быть в диапазоне 100..250 см', 400, 'HEIGHT_INVALID');
+    const nextHeightCm = heightInput.value;
 
     const goalText = dailyGoalMessages[requestLocale(request)].errors;
     const nextTimeZone = body.timeZone !== undefined ? normalizeTimeZone(body.timeZone) : undefined;
@@ -114,6 +101,7 @@ export async function PATCH(request: Request) {
         gender: true,
         birthDate: true,
         weightKg: true,
+        heightCm: true,
         avatarPath: true,
         timeZone: true,
         dailyGoalPoints: true,
@@ -123,6 +111,7 @@ export async function PATCH(request: Request) {
     });
 
     if (!current || current.deletedAt) return jsonError('UNAUTHORIZED', 401);
+    const now = new Date();
 
     const data: Prisma.UserUpdateInput = {};
     const changes: ProfileHistoryChanges = {};
@@ -164,12 +153,21 @@ export async function PATCH(request: Request) {
 
     if (nextWeightKg !== undefined) {
       const cur = current.weightKg ?? null;
-      if (nextWeightKg !== null && (!Number.isFinite(nextWeightKg) || nextWeightKg < 30 || nextWeightKg > 250)) {
-        return jsonError('Вес должен быть в диапазоне 30..250 кг');
-      }
       if (nextWeightKg !== cur) {
         data.weightKg = nextWeightKg;
+        data.weightSource = 'manual';
+        data.weightUpdatedAt = now;
         changes.weightKg = { from: cur, to: nextWeightKg };
+      }
+    }
+
+    if (nextHeightCm !== undefined) {
+      const cur = current.heightCm ?? null;
+      if (nextHeightCm !== cur) {
+        data.heightCm = nextHeightCm;
+        data.heightSource = 'manual';
+        data.heightUpdatedAt = now;
+        changes.heightCm = { from: cur, to: nextHeightCm };
       }
     }
 
@@ -196,22 +194,7 @@ export async function PATCH(request: Request) {
       const u = await tx.user.update({
         where: { id: me.id },
         data,
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          isAdmin: true,
-          language: true,
-          createdAt: true,
-          updatedAt: true,
-          gender: true,
-          birthDate: true,
-          weightKg: true,
-          avatarPath: true,
-          timeZone: true,
-          dailyGoalPoints: true,
-          dailyReminderTime: true,
-        },
+        select: PROFILE_SELECT,
       });
       await tx.userProfileHistory.create({
         data: {

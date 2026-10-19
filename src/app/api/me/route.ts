@@ -19,6 +19,9 @@ export async function GET(request: Request) {
         updatedAt: true,
         gender: true,
         birthDate: true,
+        // Данные тела — для расчёта калорий на устройстве без связи (кэш пользователя приложения).
+        weightKg: true,
+        heightCm: true,
         avatarPath: true,
         favoriteExercises: true,
         timeZone: true,

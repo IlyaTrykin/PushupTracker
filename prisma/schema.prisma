@@ -19,6 +19,13 @@ model User {
   gender            String?
   birthDate         DateTime?
   weightKg          Int?
+  // Рост, см (100–250).
+  heightCm          Int?
+  // Когда вес/рост последний раз менялись и откуда: 'manual' | 'health' (src/lib/body-metrics.ts).
+  weightUpdatedAt   DateTime?
+  heightUpdatedAt   DateTime?
+  weightSource      String?
+  heightSource      String?
   avatarPath        String?
   // Упражнения на экране тренировки; пусто — порядок каталога по умолчанию.
   favoriteExercises String[]  @default([])
@@ -64,6 +71,7 @@ model User {
   notificationPreferences  NotificationPreference[]
   trainingPrograms         TrainingProgram[]
   assignedTrainingPrograms TrainingProgram[]        @relation("TrainingProgramAssignedByUser")
+  customCircuits           CustomCircuit[]
 
   // IANA time zone of the user's calendar days (see src/lib/calendar-day.ts).
   timeZone          String    @default("Europe/Moscow")
@@ -197,6 +205,8 @@ model Workout {
   repsRight         Int?
   // Optional duration of the set (cardio: total time), seconds.
   durationSeconds   Int?
+  // Активная энергия, ккал: считается один раз при записи и при правке (не видна другим).
+  activeKcal        Float?
   // Client-generated idempotency key: a retried POST returns the existing workout.
   clientRequestId   String?
   trainingSessionId String?
@@ -417,7 +427,14 @@ model TrainingProgram {
   managedByGroup     Group?    @relation("GroupManagedPrograms", fields: [managedByGroupId], references: [id], onDelete: SetNull)
   assignedByUserId   String?
   assignedByUser     User?     @relation("TrainingProgramAssignedByUser", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  // Для круговой — 'circuit'.
   exerciseType       String
+  // 'single' | 'circuit'
+  programType        String    @default("single")
+  // Вес снаряда (кг) для программ с отягощением.
+  loadKg             Float?
+  // План круговой программы (CIRCUIT_PLANS в src/lib/circuits.ts).
+  circuitPlanId      String?
   goalType           String
   targetReps         Int?
   durationWeeks      Int
@@ -441,20 +458,25 @@ model TrainingProgram {
 }
 
 model TrainingSession {
-  id             String          @id @default(cuid())
-  programId      String
-  program        TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
-  weekNumber     Int
-  sessionNumber  Int
-  scheduledAt    DateTime
-  isFinalTest    Boolean         @default(false)
-  startedAt      DateTime?
-  completed      Boolean         @default(false)
-  completedAt    DateTime?
-  shiftedCount   Int             @default(0)
-  reminderSentAt DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @default(now()) @updatedAt
+  id                String          @id @default(cuid())
+  programId         String
+  program           TrainingProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  weekNumber        Int
+  sessionNumber     Int
+  scheduledAt       DateTime
+  isFinalTest       Boolean         @default(false)
+  startedAt         DateTime?
+  completed         Boolean         @default(false)
+  completedAt       DateTime?
+  shiftedCount      Int             @default(0)
+  reminderSentAt    DateTime?
+  // Круговая программа: день плана 'A' | 'B' | 'C' и шаблон круга.
+  dayLabel          String?
+  // Дистанция: 'easy' | 'interval' | 'long'.
+  sessionKind       String?
+  circuitTemplateId String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @default(now()) @updatedAt
 
   sets     TrainingSet[]
   workouts Workout[]
@@ -465,20 +487,48 @@ model TrainingSession {
 }
 
 model TrainingSet {
-  id          String          @id @default(cuid())
-  sessionId   String
-  session     TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  setNumber   Int
-  targetReps  Int
-  actualReps  Int?
-  restSeconds Int
-  completedAt DateTime?
-  isKeySet    Boolean         @default(false)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @default(now()) @updatedAt
+  id            String          @id @default(cuid())
+  sessionId     String
+  session       TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  setNumber     Int
+  targetReps    Int
+  actualReps    Int?
+  restSeconds   Int
+  completedAt   DateTime?
+  isKeySet      Boolean         @default(false)
+  // Упражнение подхода; null — упражнение программы (круговые задают своё).
+  exerciseType  String?
+  loadKg        Float?
+  // Круговая: номер круга и станции.
+  round         Int?
+  station       Int?
+  // Упражнения на сторону: факт по сторонам.
+  actualLeft    Int?
+  actualRight   Int?
+  // Дистанция: время подхода, секунды.
+  actualSeconds Int?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @default(now()) @updatedAt
 
   @@unique([sessionId, setNumber])
   @@index([sessionId, setNumber])
+}
+
+// Свой круг пользователя (разовая круговая тренировка): станции, круги, отдых.
+model CustomCircuit {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title          String
+  // CircuitStation[]: { exerciseType, target, loadKg? }
+  stations       Json
+  rounds         Int
+  restStationSec Int
+  restRoundSec   Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model UserAchievement {
