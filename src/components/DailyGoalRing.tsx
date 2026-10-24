@@ -4,38 +4,58 @@ import Link from 'next/link';
 import type React from 'react';
 import { dailyGoalProgress, formatGoalPoints } from '@/lib/daily-goal';
 import { dailyGoalMessages, fillDailyGoalText } from '@/i18n/messages/features/daily-goal';
+import { dashboardLiteMessages } from '@/i18n/messages/features/dashboard-lite';
+import { InfoButton } from '@/components/ui';
 import type { Locale } from '@/i18n/locale';
 
-const SIZE = 72;
-const STROKE = 8;
+const SIZE = 60;
+const STROKE = 7;
 const RADIUS = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
+/** Раздел «Тренировки» профиля, где задаётся цель дня (R10.1). */
+export const SET_GOAL_HREF = '/profile?section=training';
+
 /**
- * «Сегодня X из Y баллов» ring of the daily goal (F1). `goalPoints === undefined` — not
- * loaded yet (renders nothing); `null` — no goal: a quiet «Поставить цель» link.
+ * Плитка «Цель дня» на дашборде (R10, F1): кольцо «X из Y баллов». `goalPoints === undefined` —
+ * профиль ещё не загружен (пустая плитка того же размера); `null` — цели нет: приглашение
+ * «Поставить цель» в «Профиль → Тренировки», пояснение под «i».
  */
 export default function DailyGoalRing({
   donePoints,
   goalPoints,
   locale,
+  className,
 }: {
   donePoints: number;
   goalPoints: number | null | undefined;
   locale: Locale;
+  className?: string;
 }) {
-  const text = dailyGoalMessages[locale];
-  if (goalPoints === undefined) return null;
+  const goalText = dailyGoalMessages[locale];
+  const text = dashboardLiteMessages[locale];
+
+  if (goalPoints === undefined) {
+    return (
+      <div className={className} aria-busy="true">
+        <div style={label}>{text.goalTile}</div>
+        <div style={placeholder} aria-hidden="true">—</div>
+      </div>
+    );
+  }
 
   if (goalPoints === null || goalPoints <= 0) {
     return (
-      <Link href="/profile#daily-goal" style={setGoalCard} prefetch={false}>
-        <span style={setGoalIcon} aria-hidden="true">🎯</span>
-        <span style={{ display: 'grid', gap: 2, minWidth: 0 }}>
-          <span style={setGoalTitle}>{text.setGoal}</span>
-          <span style={setGoalHint}>{text.setGoalHint}</span>
-        </span>
-      </Link>
+      <div className={className} style={setGoalTile}>
+        <div style={labelRow}>
+          <span style={label}>{text.goalTile}</span>
+          <InfoButton title={text.setGoalInfoTitle}>{goalText.setGoalHint}. {goalText.sectionHint}</InfoButton>
+        </div>
+        <Link href={SET_GOAL_HREF} style={setGoalLink} prefetch={false} data-testid="dashboard-set-goal">
+          <span style={setGoalIcon} aria-hidden="true">🎯</span>
+          <span>{text.setGoal}</span>
+        </Link>
+      </div>
     );
   }
 
@@ -44,10 +64,12 @@ export default function DailyGoalRing({
   const color = progress.reached ? '#16a34a' : '#f97316';
   const done = formatGoalPoints(progress.done, locale);
   const goal = formatGoalPoints(progress.goal, locale);
+  const caption = progress.reached ? goalText.ringReached : fillDailyGoalText(goalText.ringProgress, { done, goal });
 
   return (
-    <div style={card} role="group" aria-label={text.ringTitle}>
-      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} aria-hidden="true" style={{ flex: '0 0 auto' }}>
+    <div className={className} role="group" aria-label={`${text.goalTile}: ${caption}`} data-testid="dashboard-goal-ring">
+      <div style={label}>{text.goalTile}</div>
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} aria-hidden="true" style={{ justifySelf: 'center' }}>
         <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS} fill="none" stroke="rgba(148, 163, 184, 0.24)" strokeWidth={STROKE} />
         <circle
           cx={SIZE / 2}
@@ -66,70 +88,64 @@ export default function DailyGoalRing({
           {progress.reached ? '✓' : `${progress.percent}%`}
         </text>
       </svg>
-      <div style={{ display: 'grid', gap: 3, minWidth: 0 }}>
-        <div style={eyebrow}>{text.ringTitle}</div>
-        <div style={{ ...headline, color: progress.reached ? '#15803d' : '#0f172a' }}>
-          {progress.reached ? text.ringReached : fillDailyGoalText(text.ringRemaining, { remaining: formatGoalPoints(progress.remaining, locale) })}
-        </div>
-        <div style={caption}>{fillDailyGoalText(text.ringProgress, { done, goal })}</div>
+      <div style={{ ...ringCaption, color: progress.reached ? '#15803d' : '#475569' }}>
+        {progress.reached ? `${goal} · ${text.goalReached}` : text.goalProgress.replace('{done}', done).replace('{goal}', goal)}
       </div>
     </div>
   );
 }
 
-const card: React.CSSProperties = {
+const label: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+  color: '#64748b',
+  lineHeight: 1.15,
+};
+
+const labelRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: 14,
-  minWidth: 0,
-  padding: '12px 14px',
-  borderRadius: 22,
-  border: '1px solid rgba(255, 255, 255, 0.86)',
-  background: 'rgba(255, 255, 255, 0.64)',
-  boxShadow: '0 18px 40px rgba(15, 23, 42, 0.08)',
+  justifyContent: 'center',
+  gap: 4,
+};
+
+const placeholder: React.CSSProperties = {
+  fontSize: 24,
+  fontWeight: 900,
+  color: '#cbd5e1',
 };
 
 const ringPercent: React.CSSProperties = {
-  fontSize: 15,
+  fontSize: 13,
   fontWeight: 900,
   fill: '#0f172a',
 };
 
-const eyebrow: React.CSSProperties = {
-  fontSize: 11,
+const ringCaption: React.CSSProperties = {
+  fontSize: 12,
   fontWeight: 800,
-  letterSpacing: '0.08em',
-  textTransform: 'uppercase',
-  color: '#c2410c',
-};
-
-const headline: React.CSSProperties = {
-  fontSize: 18,
-  fontWeight: 900,
   lineHeight: 1.15,
+  fontVariantNumeric: 'tabular-nums',
 };
 
-const caption: React.CSSProperties = {
+const setGoalTile: React.CSSProperties = {
+  borderStyle: 'dashed',
+  borderColor: 'rgba(148, 163, 184, 0.5)',
+};
+
+const setGoalLink: React.CSSProperties = {
+  display: 'grid',
+  justifyItems: 'center',
+  alignContent: 'center',
+  gap: 4,
+  minHeight: 44,
+  color: '#0f172a',
   fontSize: 13,
-  fontWeight: 700,
-  color: '#64748b',
-};
-
-const setGoalCard: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 12,
-  minWidth: 0,
-  padding: '12px 14px',
-  borderRadius: 22,
-  border: '1px dashed rgba(148, 163, 184, 0.5)',
-  background: 'rgba(255, 255, 255, 0.4)',
-  color: '#334155',
+  fontWeight: 800,
+  lineHeight: 1.15,
   textDecoration: 'none',
 };
 
 const setGoalIcon: React.CSSProperties = { fontSize: 22, lineHeight: 1 };
-
-const setGoalTitle: React.CSSProperties = { fontSize: 14, fontWeight: 800, color: '#0f172a' };
-
-const setGoalHint: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: '#64748b' };

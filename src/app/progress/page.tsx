@@ -1,12 +1,10 @@
 'use client';
 
-import { createPortal } from 'react-dom';
 import {
   startTransition,
   useDeferredValue,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -32,7 +30,10 @@ import { fillTemplate, toExerciseType } from '@/lib/analytics/utils';
 import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
-import { streakFreezeMessages } from '@/lib/day-stats';
+import { localTodayKey, streakFreezeMessages } from '@/lib/day-stats';
+import { InfoButton } from '@/components/ui';
+import { dashboardLiteMessages } from '@/i18n/messages/features/dashboard-lite';
+import PeriodStatsPanel from './PeriodStatsPanel';
 import { EXERCISE_ORDER, isTimedExercise } from '@/lib/exercises';
 import { achievementsMessages } from '@/i18n/messages/features/achievements';
 import AchievementsPanel from './AchievementsPanel';
@@ -175,18 +176,23 @@ function resolveInsightTone(tone: Insight['tone']) {
   return { border: '#cbd5e1', background: '#f8fafc' };
 }
 
+/** Раздел «Аналитики»; пояснение к разделу (`subtitle`) — под «i» рядом с заголовком (R11). */
 function Section({
   title,
   subtitle,
+  id,
   children,
 }: {
   title: string;
   subtitle?: string;
+  id?: string;
   children: ReactNode;
 }) {
   return (
     <section
+      id={id}
       style={{
+        scrollMarginTop: 'calc(var(--app-header-h, 64px) + var(--safe-top, 0px) + 12px)',
         border: '1px solid #e2e8f0',
         borderRadius: 24,
         background: 'linear-gradient(180deg, #ffffff 0%, #f7fafc 100%)',
@@ -196,9 +202,9 @@ function Section({
         boxShadow: '0 16px 48px rgba(15, 23, 42, 0.05)',
       }}
     >
-      <div style={{ display: 'grid', gap: 4 }}>
-        <div style={{ fontSize: 18, fontWeight: 900, color: '#0f172a' }}>{title}</div>
-        {subtitle ? <div style={{ fontSize: 13, color: '#475569' }}>{subtitle}</div> : null}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 900, color: '#0f172a' }}>{title}</h2>
+        {subtitle ? <InfoButton title={title}>{subtitle}</InfoButton> : null}
       </div>
       {children}
     </section>
@@ -251,6 +257,9 @@ function FilterPill({
   );
 }
 
+/** Подписи с цифрами (среднее подходов, база сравнения) остаются на виду; пояснения — под «i». */
+const KPI_NOTES_ON_VIEW = new Set<KpiCard['id']>(['totalSets', 'periodProgress']);
+
 function KpiGrid({
   cards,
   localeTag,
@@ -274,7 +283,10 @@ function KpiGrid({
             gap: 8,
           }}
         >
-          <div style={{ fontSize: 12, letterSpacing: 0.3, fontWeight: 800, color: '#475569' }}>{card.label}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, letterSpacing: 0.3, fontWeight: 800, color: '#475569' }}>
+            <span>{card.label}</span>
+            {card.note && !KPI_NOTES_ON_VIEW.has(card.id) ? <InfoButton title={card.label}>{card.note}</InfoButton> : null}
+          </div>
           <div style={{ fontSize: 28, lineHeight: 1, fontWeight: 900, color: '#0f172a' }}>
             {formatMetricValue(card.metric, localeTag, exercise, { signed: card.id === 'periodProgress' })}
           </div>
@@ -284,7 +296,7 @@ function KpiGrid({
               {formatMetricValue({ value: card.comparison.delta, kind: card.metric.kind }, localeTag, exercise, { signed: true })}
             </div>
           ) : null}
-          {card.note ? <div style={{ fontSize: 12, color: '#475569' }}>{card.note}</div> : null}
+          {card.note && KPI_NOTES_ON_VIEW.has(card.id) ? <div style={{ fontSize: 12, color: '#475569' }}>{card.note}</div> : null}
         </article>
       ))}
     </div>
@@ -312,99 +324,11 @@ function MetricBadge({
         minWidth: 0,
       }}
     >
-      <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>{label}</div>
-      <div style={{ fontSize: 17, color: '#0f172a', fontWeight: 900, marginTop: 2 }} title={hint}>{value}</div>
-      {hint ? <div style={{ fontSize: 11, color: '#0369a1', fontWeight: 600, marginTop: 2 }}>{hint}</div> : null}
-    </div>
-  );
-}
-
-function InfoHint({
-  label,
-  title,
-  body,
-}: {
-  label: string;
-  title: string;
-  body: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-  const buttonRef = useRef<HTMLButtonElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const updatePosition = () => {
-      const rect = buttonRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const tooltipWidth = 240;
-      const viewportPadding = 12;
-      const left = Math.min(
-        Math.max(viewportPadding, rect.right - tooltipWidth),
-        window.innerWidth - tooltipWidth - viewportPadding,
-      );
-      const top = rect.bottom + 8;
-      setPosition({ top, left });
-    };
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [open]);
-
-  return (
-    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-      <button
-        type="button"
-        ref={buttonRef}
-        aria-label={label}
-        onClick={() => setOpen((value) => !value)}
-        style={{
-          width: 18,
-          height: 18,
-          borderRadius: 999,
-          border: '1px solid rgba(15, 23, 42, 0.2)',
-          background: '#ffffffcc',
-          color: '#0f172a',
-          fontSize: 11,
-          fontWeight: 900,
-          lineHeight: 1,
-          padding: 0,
-          cursor: 'pointer',
-        }}
-      >
-        i
-      </button>
-      {open && position && typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              style={{
-                position: 'fixed',
-                top: position.top,
-                left: position.left,
-                zIndex: 99999,
-                width: 240,
-                borderRadius: 14,
-                border: '1px solid #cbd5e1',
-                background: '#ffffff',
-                boxShadow: '0 12px 32px rgba(15, 23, 42, 0.12)',
-                padding: 12,
-                display: 'grid',
-                gap: 6,
-              }}
-            >
-              <div style={{ fontSize: 12, fontWeight: 900, color: '#0f172a' }}>{title}</div>
-              <div style={{ fontSize: 12, lineHeight: 1.45, color: '#475569' }}>{body}</div>
-            </div>,
-            document.body,
-          )
-        : null}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#64748b', fontWeight: 800 }}>
+        <span>{label}</span>
+        {hint ? <InfoButton title={label}>{hint}</InfoButton> : null}
+      </div>
+      <div style={{ fontSize: 17, color: '#0f172a', fontWeight: 900, marginTop: 2 }}>{value}</div>
     </div>
   );
 }
@@ -602,7 +526,6 @@ function Heatmap({
   localeTag: string;
   labels: {
     weekdays: string[];
-    eachSquareDay: string;
     selectedDay: string;
     workload: string;
     less: string;
@@ -625,7 +548,6 @@ function Heatmap({
   const activeCell = cells.find((cell) => cell.key === activeKey) ?? cells.find((cell) => cell.key === getLastActiveKey(cells)) ?? cells[cells.length - 1];
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <div style={{ fontSize: 12, color: '#475569' }}>{labels.eachSquareDay}</div>
       <div style={{ overflowX: 'auto', paddingBottom: 2 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '34px max-content', gap: 8, alignItems: 'start', width: 'max-content' }}>
           <div style={{ display: 'grid', gap: 6, paddingTop: 20 }}>
@@ -770,11 +692,15 @@ function QualityPanel({
             gap: 6,
           }}
         >
-          <div style={{ fontSize: 12, color: '#64748b', fontWeight: 800 }}>{metric.label}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#64748b', fontWeight: 800 }}>
+            <span>{metric.label}</span>
+            {metric.state === 'ok' && metric.note ? <InfoButton title={metric.label}>{metric.note}</InfoButton> : null}
+          </div>
           <div style={{ fontSize: 24, fontWeight: 900, color: '#0f172a' }}>
             {metric.state === 'ok' ? formatMetricValue(metric.metric, localeTag, exercise, { signed: false }) : insufficientDataLabel}
           </div>
-          <div style={{ fontSize: 12, color: '#475569' }}>{metric.note}</div>
+          {/* Почему данных мало — на виду (пустое состояние). */}
+          {metric.state !== 'ok' ? <div style={{ fontSize: 12, color: '#475569' }}>{metric.note}</div> : null}
         </article>
       ))}
     </div>
@@ -923,6 +849,17 @@ export default function ProgressPage() {
     return ['all', ...EXERCISE_ORDER.filter((type) => present.has(type) || type === exercise)];
   }, [workouts, exercise]);
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
+  const lite = dashboardLiteMessages[locale];
+  // «Сегодня» таблицы периодов — день в сохранённом поясе пользователя, как на дашборде.
+  const todayKey = localTodayKey(user?.timeZone);
+  const periodStatsReady = !loading && !error;
+
+  // «Вся статистика →» с дашборда: блок появляется после загрузки, тогда и прокручиваем к нему.
+  useEffect(() => {
+    if (!periodStatsReady || typeof window === 'undefined' || window.location.hash !== '#period-stats') return;
+    const frame = window.requestAnimationFrame(() => document.getElementById('period-stats')?.scrollIntoView({ block: 'start' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [periodStatsReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1062,11 +999,9 @@ export default function ProgressPage() {
                 <div style={{ fontSize: 34, lineHeight: 0.95, fontWeight: 900, color: '#0f172a' }}>{summaryLoadNumber}</div>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
                   <span style={{ fontSize: 13, color: '#334155', fontWeight: 800 }}>{progress.header.loadUnit}</span>
-                  <InfoHint
-                    label={progress.header.loadInfoLabel}
-                    title={progress.header.loadInfoTitle}
-                    body={progress.header.loadInfoBody}
-                  />
+                  <InfoButton title={progress.header.loadInfoTitle} label={progress.header.loadInfoLabel}>
+                    {progress.header.loadInfoBody}
+                  </InfoButton>
                 </div>
               </div>
             ) : (
@@ -1086,7 +1021,7 @@ export default function ProgressPage() {
           <MetricBadge
             label={progress.header.activeStreak}
             value={`${analytics.streakDays.toLocaleString(localeTag)} ${progress.header.daysShort}${analytics.streakFreezeUsed ? ` ${streakFreezeMessages[locale].badge}` : ''}`}
-            hint={analytics.streakFreezeUsed ? streakFreezeMessages[locale].short : undefined}
+            hint={analytics.streakFreezeUsed ? streakFreezeMessages[locale].hint : undefined}
             accent={accent}
           />
           <MetricBadge label={progress.header.recordNote} value={bestSetNote} accent={accent} />
@@ -1155,7 +1090,7 @@ export default function ProgressPage() {
             </Section>
           ) : null}
 
-          <Section title={progress.sections.activityCalendar}>
+          <Section title={progress.sections.activityCalendar} subtitle={progress.chart.eachSquareDay}>
             <Heatmap
               cells={analytics.heatmap}
               accent={accent}
@@ -1171,7 +1106,6 @@ export default function ProgressPage() {
                   progress.weekdays.sat,
                   progress.weekdays.sun,
                 ],
-                eachSquareDay: progress.chart.eachSquareDay,
                 selectedDay: progress.chart.selectedDay,
                 workload: progress.chart.workload,
                 less: progress.chart.less,
@@ -1230,6 +1164,10 @@ export default function ProgressPage() {
 
           <Section title={progress.sections.insights}>
             <InsightsPanel insights={analytics.insights} />
+          </Section>
+
+          <Section id="period-stats" title={lite.periodStatsTitle} subtitle={lite.periodStatsInfo}>
+            <PeriodStatsPanel workouts={workouts} today={todayKey} locale={locale} />
           </Section>
         </>
       ) : null}

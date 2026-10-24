@@ -27,7 +27,9 @@
 }
 
 .heroStat {
+  position: relative;
   min-width: 0;
+  align-content: start;
   padding: 14px 16px;
   border-radius: 22px;
   border: 1px solid rgba(255, 255, 255, 0.86);
@@ -55,12 +57,80 @@
   letter-spacing: -0.04em;
 }
 
-.todayRow {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: 10px;
-  width: 100%;
+.heroStatLabelRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 20px;
+}
+
+.heroStatCaption {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  line-height: 1.15;
+}
+
+/* «N ккал сегодня» / приглашение указать вес — одной строкой под плитками. */
+.kcalLine,
+.kcalPrompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #9a3412;
+}
+
+.kcalPrompt {
+  justify-self: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px dashed rgba(234, 88, 12, 0.4);
+  background: rgba(255, 247, 237, 0.7);
+  text-decoration: none;
+}
+
+.programLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 10px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.64);
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.programLineText {
+  flex: 1 1 auto;
   min-width: 0;
+}
+
+.allStatsRow {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inlineLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #c2410c;
+  text-decoration: none;
+}
+
+.inlineLink:hover {
+  text-decoration: underline;
 }
 
 .entryCard {

@@ -5,7 +5,18 @@ process.env.TZ = 'America/New_York';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildProgressAnalytics } from './analytics/selectors';
-import { computePeriodStats, dayPointsTotal, localTodayKey, workoutDayKey, type DayStatsWorkout } from './day-stats';
+import {
+  computePeriodStats,
+  computePeriodStatsTable,
+  dayKcalTotal,
+  dayPointsTotal,
+  localTodayKey,
+  weekPointsTotal,
+  workoutDayKey,
+  workoutKcal,
+  type DayStatsWorkout,
+} from './day-stats';
+import { estimateActiveEnergy } from './health/energy';
 
 function w(day: string, reps: number, exerciseType = 'pushups', extra: Partial<DayStatsWorkout> = {}): DayStatsWorkout {
   return { date: `${day}T00:00:00.000Z`, reps, exerciseType, ...extra };
@@ -88,4 +99,76 @@ test('client «today» is the day in the user\'s saved zone; the browser zone on
   assert.equal(localTodayKey(undefined, now), '2026-10-09');
   assert.equal(localTodayKey(null, now), '2026-10-09');
   assert.equal(localTodayKey('Not/A_Zone', now), '2026-10-09');
+});
+
+// R10: плитка «Неделя» — баллы с понедельника по сегодня по всем упражнениям.
+test('R10: week points — Mon..today in points across all exercises', () => {
+  const workouts = [
+    w('2026-10-04', 100, 'pushups'), // Sun, previous week
+    w('2026-10-05', 20, 'pushups'), // Mon: 20
+    w('2026-10-07', 10, 'pullups'), // Wed: 10 × 3 = 30
+    w('2026-10-07', 60, 'plank'), // Wed: 60 × 0.1 = 6
+    w('2026-10-09', 15, 'pushups'), // Fri (today): 15
+    w('2026-10-10', 50, 'pushups'), // Sat: after today, not counted
+  ];
+  assert.equal(weekPointsTotal(workouts, '2026-10-09'), 71);
+  // Monday: the week has just begun — only Monday counts.
+  assert.equal(weekPointsTotal(workouts, '2026-10-05'), 20);
+  assert.equal(weekPointsTotal([], '2026-10-09'), 0);
+});
+
+test('R10: week points use the calendar week across the DST change', () => {
+  // US clocks moved forward on Sun 8 March 2026; week of Mon 9 March.
+  const workouts = [w('2026-03-08', 40), w('2026-03-09', 10), w('2026-03-10', 5)];
+  assert.equal(weekPointsTotal(workouts, '2026-03-10'), 15);
+});
+
+test('R01.4: calories of a workout — the stored value; a queued entry is estimated by the body', () => {
+  const body = { weightKg: 80 };
+  assert.equal(workoutKcal({ ...w('2026-10-09', 50), activeKcal: 12.3 }, body), 12.3);
+  // A server record without calories is not guessed on the client.
+  assert.equal(workoutKcal({ ...w('2026-10-09', 50), activeKcal: null }, body), null);
+  // A queued entry (not on the server yet) — the same pure function as the server.
+  const queued = workoutKcal(w('2026-10-09', 50), body, true);
+  assert.equal(queued, estimateActiveEnergy({ exerciseType: 'pushups', reps: 50 }, body, '2026-10-09'));
+  assert.ok(queued != null && queued >= 10 && queued <= 20, `50 push-ups at 80 kg ≈ 10–20 kcal, got ${queued}`);
+  // Without weight nothing is estimated.
+  assert.equal(workoutKcal(w('2026-10-09', 50), { weightKg: null }, true), null);
+  assert.equal(workoutKcal(w('2026-10-09', 50), null, true), null);
+});
+
+test('R01.4: day calories — the sum of known values; null when none is known', () => {
+  const body = { weightKg: 80 };
+  const day = [
+    { ...w('2026-10-09', 20), activeKcal: 5.5 },
+    { ...w('2026-10-09', 60, 'plank'), activeKcal: 4.2 },
+    { ...w('2026-10-09', 10), activeKcal: null },
+  ];
+  assert.equal(dayKcalTotal(day, body), 9.7);
+  assert.equal(dayKcalTotal([{ ...w('2026-10-09', 10), activeKcal: null }], body), null);
+  assert.equal(dayKcalTotal([], body), null);
+});
+
+// R10.3: «Статистика по периодам» в «Аналитике» — те же цифры, что считал дашборд.
+test('R10.3: the period stats table matches computePeriodStats overall and per exercise', () => {
+  const workouts = [
+    w('2026-09-30', 30, 'pushups'),
+    w('2026-10-05', 20, 'pushups'),
+    w('2026-10-07', 10, 'pullups'),
+    w('2026-10-08', 45, 'plank'),
+    w('2026-10-09', 15, 'pushups'),
+    w('2026-10-09', 5, 'pullups'),
+    { date: '2026-10-09T00:00:00.000Z', reps: 7, exerciseType: 'unknown_type' }, // counts as push-ups, as on the dashboard
+  ];
+  const table = computePeriodStatsTable(workouts, '2026-10-09');
+  assert.deepEqual(table.all, computePeriodStats(workouts, '2026-10-09'));
+  const pushups = workouts.filter((x) => x.exerciseType === 'pushups' || x.exerciseType === 'unknown_type');
+  assert.deepEqual(table.byExercise.pushups, computePeriodStats(pushups, '2026-10-09'));
+  assert.deepEqual(table.byExercise.pullups, computePeriodStats(workouts.filter((x) => x.exerciseType === 'pullups'), '2026-10-09'));
+  // Hand-checked: push-ups this week (Mon 5 – Fri 9) = 20 + 15 + 7; this month = 42; all = 72.
+  assert.equal(table.byExercise.pushups.totalWeek, 42);
+  assert.equal(table.byExercise.pushups.totalMonth, 42);
+  assert.equal(table.byExercise.pushups.totalAll, 72);
+  assert.equal(table.byExercise.plank.totalToday, 0);
+  assert.equal(table.byExercise.squats.totalAll, 0);
 });

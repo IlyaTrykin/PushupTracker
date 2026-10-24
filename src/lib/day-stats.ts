@@ -8,6 +8,8 @@
 
 import { dayKeyInZone, dbDateToDayKey, diffDays, parseDayKey, weekStart, type DayKey } from './calendar-day';
 import { calculateExercisePoints, pointsToTenths, tenthsToPoints } from './exercise-points';
+import { createByExercise, toExerciseType, type ExerciseType } from './exercises';
+import { estimateActiveEnergy, type BodyMetrics } from './health/energy';
 import { computeStreak } from './streak';
 
 export type DayStatsWorkout = {
@@ -137,6 +139,89 @@ export function computePeriodStats(workouts: Iterable<DayStatsWorkout>, today: D
     streak: streak.current,
     streakFreezeUsed: streak.freezeUsedThisWeek,
   };
+}
+
+/**
+ * Points of the current week (Mon–Sun of `today`, the user's day) across all exercises (R10,
+ * the «Неделя» tile). Workouts after `today` do not count, as in `computePeriodStats`.
+ */
+export function weekPointsTotal(workouts: Iterable<DayStatsWorkout>, today: DayKey): number {
+  const week = weekStart(today);
+  let tenths = 0;
+  for (const workout of workouts) {
+    const day = workoutDayKey(workout);
+    if (diffDays(day, week) < 0 || diffDays(day, today) > 0) continue;
+    tenths += pointsToTenths(workoutPoints(workout));
+  }
+  return tenthsToPoints(tenths);
+}
+
+/** «Статистика по периодам» (R10.3): the dashboard's former «Всего» table — overall and per exercise. */
+export type PeriodStatsTable = {
+  all: PeriodStats;
+  byExercise: Record<ExerciseType, PeriodStats>;
+};
+
+/** Per exercise by `toExerciseType` (an unknown type counts as push-ups, as everywhere in the UI). */
+export function computePeriodStatsTable(workouts: Iterable<DayStatsWorkout>, today: DayKey): PeriodStatsTable {
+  const list = Array.from(workouts);
+  const groups = new Map<ExerciseType, DayStatsWorkout[]>();
+  for (const workout of list) {
+    const type = toExerciseType(workout.exerciseType);
+    const group = groups.get(type);
+    if (group) group.push(workout);
+    else groups.set(type, [workout]);
+  }
+  return {
+    all: computePeriodStats(list, today),
+    byExercise: createByExercise((type) => computePeriodStats(groups.get(type) ?? [], today)),
+  };
+}
+
+/** A workout of the owner's own screens with its stored calories (`GET /api/workouts`, R01.4). */
+export type KcalWorkout = DayStatsWorkout & {
+  activeKcal?: number | null;
+  durationSeconds?: number | null;
+  repsLeft?: number | null;
+  repsRight?: number | null;
+};
+
+/**
+ * Active calories of a workout for the owner: the value the server stored. An entry still in the
+ * offline queue (`estimate`) has none yet — it is estimated by the same pure function from the
+ * cached body (R01.8). Without weight — `null`.
+ */
+export function workoutKcal(workout: KcalWorkout, body: BodyMetrics | null | undefined, estimate = false): number | null {
+  if (typeof workout.activeKcal === 'number' && Number.isFinite(workout.activeKcal)) return workout.activeKcal;
+  if (!estimate || !body?.weightKg) return null;
+  return estimateActiveEnergy(
+    {
+      exerciseType: workout.exerciseType ?? '',
+      reps: Number(workout.reps) || 0,
+      durationSeconds: workout.durationSeconds ?? null,
+      loadKg: workout.loadKg ?? null,
+      repsLeft: workout.repsLeft ?? null,
+      repsRight: workout.repsRight ?? null,
+    },
+    body,
+    workoutDayKey(workout),
+  );
+}
+
+/** Calories of a day: the sum of the known values (1 decimal); `null` when none is known. */
+export function dayKcalTotal(
+  workouts: Iterable<KcalWorkout & { estimate?: boolean }>,
+  body: BodyMetrics | null | undefined,
+): number | null {
+  let tenths = 0;
+  let known = false;
+  for (const workout of workouts) {
+    const kcal = workoutKcal(workout, body, Boolean(workout.estimate));
+    if (kcal == null) continue;
+    known = true;
+    tenths += Math.round(kcal * 10);
+  }
+  return known ? tenths / 10 : null;
 }
 
 /** Texts of the streak freeze mark (F4). */

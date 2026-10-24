@@ -1,24 +1,29 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
 import { mediaUrl } from '@/lib/platform';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
 import { getIntlLocale, t } from '@/i18n/translate';
-import { exerciseValueLabel, formatCalendarDayValue, formatDistance, formatDuration, formatExerciseValue, isTimedExercise, formatWorkoutValue } from '@/lib/exercise-metrics';
+import { exerciseValueLabel, formatCalendarDayValue, formatDistance, formatDuration, isTimedExercise, formatWorkoutValue } from '@/lib/exercise-metrics';
 import { formatDurationTyping, parseDistanceKm, parseDurationInput } from '@/lib/workout-input';
 import { cardioMessages } from '@/i18n/messages/features/cardio';
 import { getStoredExerciseType, persistExerciseType, subscribeExerciseType, type ExerciseType } from '@/lib/exercise-type-store';
-import { EXERCISE_ORDER, createByExercise, exerciseIcon, exerciseLabel as catalogExerciseLabel, getExercise, toExerciseType } from '@/lib/exercises';
+import { EXERCISE_ORDER, exerciseIcon, exerciseLabel as catalogExerciseLabel, getExercise, toExerciseType } from '@/lib/exercises';
 import { useExerciseLoad } from '@/lib/use-exercise-load';
 import { useFavoriteExercises } from '@/lib/use-favorite-exercises';
 import SideLoadEntry, { WeightPicker } from './SideLoadEntry';
 import RepCounterButtons from './RepCounterButtons';
 import { repCounterMessages } from '@/i18n/messages/features/rep-counter';
 import { useStopwatch } from '@/lib/use-stopwatch';
-import { computePeriodStats, dayPointsTotal, localTodayKey, streakFreezeMessages, workoutDayKey, type PeriodStats } from '@/lib/day-stats';
+import { computePeriodStats, dayKcalTotal, dayPointsTotal, localTodayKey, streakFreezeMessages, weekPointsTotal, workoutDayKey, workoutKcal } from '@/lib/day-stats';
+import type { BodyMetrics } from '@/lib/health/energy';
+import { leaguePointsWord } from '@/i18n/messages/features/league';
+import { dashboardLiteMessages, formatKcal } from '@/i18n/messages/features/dashboard-lite';
+import { InfoButton, Sheet } from '@/components/ui';
 import {
   buildQueueEditPatch,
   queueEntryState,
@@ -49,6 +54,8 @@ type Workout = {
   repsLeft?: number | null;
   repsRight?: number | null;
   durationSeconds?: number | null;
+  /** Активные калории — только у своих тренировок (`GET /api/workouts`, R01.4). */
+  activeKcal?: number | null;
   date: string;
   time?: string;
   exerciseType?: string;
@@ -71,11 +78,9 @@ type DayAggregate = {
   byExercise: Map<string, number>;
   /** «Всего за день» в баллах (B27). */
   totalPoints: number;
+  /** Калории дня (свои тренировки); `null` — ни одна не известна. */
+  totalKcal: number | null;
 };
-
-type Stats = PeriodStats;
-
-type StatBreakdown = Record<ExerciseType, number | string>;
 
 type WorkoutReactionPayload = {
   summary: Array<{ emoji: string; count: number }>;
@@ -277,37 +282,6 @@ async function fetchJsonSafe(url: string, init?: RequestInit) {
     throw new Error(details ? `${base}: ${details}` : base);
   }
   return data;
-}
-
-// Пустые значения в статистике: ноль и прочерки средних без данных.
-function hasBreakdownValue(value: number | string | undefined) {
-  if (value == null) return false;
-  if (typeof value === 'number') return value !== 0;
-  const trimmed = value.trim();
-  return trimmed !== '' && trimmed !== '-' && trimmed !== '—' && Number(trimmed) !== 0;
-}
-
-function Stat({ label, value, breakdown, locale, metric = true }: { label: string; value: number | string; breakdown?: StatBreakdown; locale: string; metric?: boolean }) {
-  // В плитке — только упражнения, по которым за период есть записи.
-  const breakdownTypes = breakdown ? EXERCISE_ORDER.filter((type) => hasBreakdownValue(breakdown[type])) : [];
-  return (
-    <div className={`app-tile${breakdown ? ' app-tile--breakdown' : ''}`}>
-      <div className="app-tile__title">{label}</div>
-      {!breakdown ? <div className="app-tile__value">{value}</div> : null}
-      {breakdown ? (
-        <div style={statBreakdownWrap}>
-          {breakdownTypes.length ? breakdownTypes.map((type) => (
-            <span key={`${label}-${type}`} style={statBreakdownItem}>
-              <Image src={exerciseFeedIcon(type)} alt="" aria-hidden="true" width={20} height={20} style={statBreakdownIcon} unoptimized />
-              <span style={statBreakdownValue}>{metric ? formatExerciseValue(breakdown[type], type, true, locale).replace(/ (сек|sec)$/, '') : breakdown[type]}</span>
-            </span>
-          )) : (
-            <span style={statBreakdownValue}>—</span>
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function normalizeExerciseType(type: string | undefined): ExerciseType {
@@ -537,29 +511,42 @@ export default function DashboardPage() {
   );
   const activeProgramExercises = user?.activeProgramExercises;
   const showRecommendation = Array.isArray(activeProgramExercises) && !activeProgramExercises.includes(exerciseType);
+  // При активной программе по упражнению — строка программы вместо рекомендации (R10.2).
+  const programExercise = Array.isArray(activeProgramExercises) && activeProgramExercises.includes(exerciseType);
   const todayRecommendation = useMemo(
     () => (showRecommendation ? recommendToday(countedWorkouts, exerciseType, userDayKey) : null),
     [countedWorkouts, exerciseType, showRecommendation, userDayKey],
   );
-  const statsByExercise = useMemo<Record<ExerciseType, Stats>>(
-    () => createByExercise((type) => computePeriodStats(countedWorkouts.filter((w) => normalizeExerciseType(w.exerciseType) === type), todayKey)),
-    [countedWorkouts, todayKey],
-  );
   const freezeText = streakFreezeMessages[locale];
-  const streakBreakdown: StatBreakdown = createByExercise((type) => {
-    const s = statsByExercise[type];
-    return s.streakFreezeUsed ? `${s.streak} ${freezeText.badge}` : s.streak;
-  });
-
-  const breakdownFromStats = (pick: (s: Stats) => number): StatBreakdown =>
-    createByExercise((type) => pick(statsByExercise[type]));
-  const selectedStats = statsByExercise[exerciseType];
+  const lite = dashboardLiteMessages[locale];
+  // «Неделя» — баллы с понедельника по сегодня по всем упражнениям (R10).
+  const weekPoints = useMemo(() => weekPointsTotal(countedWorkouts, todayKey), [countedWorkouts, todayKey]);
+  // Тело для калорий записей из очереди (R01.8); `undefined` вес — профиль ещё не загружен.
+  const bodyMetrics = useMemo<BodyMetrics | null>(() => {
+    if (!user || user.weightKg === undefined) return null;
+    return {
+      weightKg: user.weightKg ?? null,
+      heightCm: user.heightCm ?? null,
+      birthDate: user.birthDate ? user.birthDate.slice(0, 10) : null,
+      sex: user.gender ?? null,
+    };
+  }, [user]);
+  const weightKnown = typeof bodyMetrics?.weightKg === 'number' && bodyMetrics.weightKg > 0;
+  const weightMissing = Boolean(bodyMetrics) && !weightKnown;
+  const kcalOf = useCallback((w: Workout) => workoutKcal(w, bodyMetrics, Boolean(w.queueStatus)), [bodyMetrics]);
+  const todayKcal = useMemo(
+    () => dayKcalTotal(
+      countedWorkouts.filter((w) => workoutDayKey(w) === todayKey).map((w) => ({ ...w, estimate: Boolean(w.queueStatus) })),
+      bodyMetrics,
+    ),
+    [bodyMetrics, countedWorkouts, todayKey],
+  );
 
   const dayMap = useMemo(() => {
     const map = new Map<string, DayAggregate>();
     allWorkouts.forEach((w) => {
       const key = workoutDayKey(w);
-      const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalPoints: 0 };
+      const row = map.get(key) || { items: [], byExercise: new Map<string, number>(), totalPoints: 0, totalKcal: null };
       row.items.push(w);
       if (!isUncounted(w)) {
         const t = normalizeExerciseType(w.exerciseType);
@@ -569,12 +556,14 @@ export default function DashboardPage() {
     });
 
     for (const row of map.values()) {
-      row.totalPoints = dayPointsTotal(row.items.filter((w) => !isUncounted(w)));
+      const counted = row.items.filter((w) => !isUncounted(w));
+      row.totalPoints = dayPointsTotal(counted);
+      row.totalKcal = dayKcalTotal(counted.map((w) => ({ ...w, estimate: Boolean(w.queueStatus) })), bodyMetrics);
       row.items.sort((a, b) => new Date(b.time || b.date).getTime() - new Date(a.time || a.date).getTime());
     }
 
     return map;
-  }, [allWorkouts]);
+  }, [allWorkouts, bodyMetrics]);
 
   const calendarCells = useMemo(() => {
     const year = calendarMonth.getFullYear();
@@ -1028,6 +1017,9 @@ export default function DashboardPage() {
               {outbox.deletingCount > 0 ? (
                 <span style={queuePill}>🗑 {queueText.deletingCounter.replace('{count}', String(outbox.deletingCount))}</span>
               ) : null}
+              {outbox.pendingCount > 0 || outbox.deletingCount > 0 ? (
+                <InfoButton title={lite.queueInfoTitle}>{lite.queueInfo}</InfoButton>
+              ) : null}
               {firstRejected ? (
                 <button
                   type="button"
@@ -1326,23 +1318,30 @@ export default function DashboardPage() {
         </div>
 
         <div className={styles.heroStats}>
-          <div className={styles.heroStat}>
-            <div className={styles.heroStatLabel}>{tt('Сегодня')}</div>
-            <div className={styles.heroStatValue}>{formatExerciseValue(selectedStats.totalToday, exerciseType, true, locale)}</div>
+          <DailyGoalRing
+            className={styles.heroStat}
+            donePoints={userDayPoints}
+            goalPoints={initialLoadReady ? user?.dailyGoalPoints : undefined}
+            locale={locale}
+          />
+          <div className={styles.heroStat} data-testid="dashboard-week">
+            <div className={styles.heroStatLabelRow}>
+              <span className={styles.heroStatLabel}>{lite.weekTile}</span>
+              <InfoButton title={lite.weekInfoTitle}>{lite.weekInfo}</InfoButton>
+            </div>
+            <div className={styles.heroStatValue}>{weekPoints.toLocaleString(localeTag, { maximumFractionDigits: 1 })}</div>
+            <div className={styles.heroStatCaption}>{leaguePointsWord(weekPoints, locale)}</div>
           </div>
-          <div className={styles.heroStat}>
-            <div className={styles.heroStatLabel}>{tt('Текущая неделя')}</div>
-            <div className={styles.heroStatValue}>{formatExerciseValue(selectedStats.totalWeek, exerciseType, true, locale)}</div>
-          </div>
-          <div className={styles.heroStat}>
-            <div className={styles.heroStatLabel}>{tt('Серия дней подряд')}</div>
+          <div className={styles.heroStat} data-testid="dashboard-streak">
+            <div className={styles.heroStatLabelRow}>
+              <span className={styles.heroStatLabel}>{lite.streakTile}</span>
+              {stats.streakFreezeUsed ? <InfoButton title={lite.freezeInfoTitle}>{freezeText.hint}</InfoButton> : null}
+            </div>
             <div className={styles.heroStatValue}>
               {stats.streak}
-              {stats.streakFreezeUsed ? (
-                <span title={freezeText.hint} aria-label={freezeText.hint} style={freezeBadge}> {freezeText.badge}</span>
-              ) : null}
+              {stats.streakFreezeUsed ? <span aria-label={freezeText.short} style={freezeBadge}> {freezeText.badge}</span> : null}
             </div>
-            {stats.streakFreezeUsed ? <div style={freezeCaption}>{freezeText.short}</div> : null}
+            <div className={styles.heroStatCaption}>{lite.streakDays}</div>
             {stats.streak >= MIN_SHARE_STREAK ? (
               <div style={streakShare}>
                 <ShareButton input={{ kind: 'streak', days: stats.streak }} iconOnly />
@@ -1351,42 +1350,39 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {initialLoadReady && (user?.dailyGoalPoints !== undefined || showRecommendation) ? (
-          <div className={styles.todayRow}>
-            <DailyGoalRing donePoints={userDayPoints} goalPoints={user?.dailyGoalPoints} locale={locale} />
-            {showRecommendation ? (
-              <TodayRecommendation
-                recommendation={todayRecommendation}
-                exerciseName={catalogExerciseLabel(exerciseType, locale)}
-                locale={locale}
-              />
-            ) : null}
+        {weightKnown ? (
+          <div className={styles.kcalLine} data-testid="dashboard-kcal">
+            <span aria-hidden="true">🔥</span>
+            <span>{lite.kcalToday.replace('{kcal}', formatKcal(todayKcal ?? 0, locale))}</span>
+            <InfoButton title={lite.kcalInfoTitle}>{lite.kcalInfo}</InfoButton>
+          </div>
+        ) : weightMissing ? (
+          <Link href="/profile?section=personal" className={styles.kcalPrompt} prefetch={false} data-testid="dashboard-weight-prompt">
+            <span aria-hidden="true">⚖️</span>
+            <span>{lite.weightPrompt} →</span>
+          </Link>
+        ) : null}
+
+        {initialLoadReady && showRecommendation ? (
+          <TodayRecommendation
+            recommendation={todayRecommendation}
+            exerciseName={catalogExerciseLabel(exerciseType, locale)}
+            locale={locale}
+          />
+        ) : null}
+        {initialLoadReady && programExercise ? (
+          <div className={styles.programLine}>
+            <span aria-hidden="true">📋</span>
+            <span className={styles.programLineText}>{lite.programLine}</span>
+            <Link href="/program" prefetch={false} className={styles.inlineLink}>{lite.programLink}</Link>
           </div>
         ) : null}
-      </section>
 
-      <section className={styles.sectionCard}>
-        <div className={styles.sectionHeader}>
-          <div className={styles.sectionTitleBlock}>
-            <h2 className={styles.sectionTitle}>{tt('Всего')}</h2>
-          </div>
+        <div className={styles.allStatsRow}>
+          <Link href="/progress#period-stats" prefetch={false} className={styles.inlineLink} data-testid="dashboard-all-stats">
+            {lite.allStats}
+          </Link>
         </div>
-
-        {initialLoadReady ? (
-          <section className="app-tiles">
-            <Stat label={tt('Сегодня')} value={stats.totalToday} breakdown={breakdownFromStats((s) => s.totalToday)} locale={locale} />
-            <Stat label={tt('Всего')} value={stats.totalAll} breakdown={breakdownFromStats((s) => s.totalAll)} locale={locale} />
-            <Stat label={tt('Текущий год')} value={stats.totalYear} breakdown={breakdownFromStats((s) => s.totalYear)} locale={locale} />
-            <Stat label={tt('Текущий месяц')} value={stats.totalMonth} breakdown={breakdownFromStats((s) => s.totalMonth)} locale={locale} />
-            <Stat label={tt('Текущая неделя')} value={stats.totalWeek} breakdown={breakdownFromStats((s) => s.totalWeek)} locale={locale} />
-            <Stat label={tt('Среднее/день (месяц)')} value={stats.avgPerDayMonth || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayMonth)} locale={locale} />
-            <Stat label={tt('Среднее/день (год)')} value={stats.avgPerDayYear || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayYear)} locale={locale} />
-            <Stat label={tt('Среднее/день (всего)')} value={stats.avgPerDayAll || '-'} breakdown={breakdownFromStats((s) => s.avgPerDayAll)} locale={locale} />
-            <Stat label={tt('Серия дней подряд')} value={stats.streak} breakdown={streakBreakdown} locale={locale} metric={false} />
-          </section>
-        ) : (
-          <div className={styles.sectionLoading}>{messages.common.loading}</div>
-        )}
       </section>
 
       <section style={card} className={styles.sectionCard}>
@@ -1494,30 +1490,22 @@ export default function DashboardPage() {
         )}
       </section>
 
-      {detailsVisible ? (
-        <div
-          style={modalBackdrop}
-          onClick={closeDetails}
-        >
-          <section style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <div style={modalTop}>
-              <h2 style={{ margin: 0 }}>{tt('Подходы за день')}</h2>
-              <button
-                type="button"
-                style={btnSecondary}
-                onClick={closeDetails}
-              >
-                {tt('Закрыть')}
-              </button>
-            </div>
-
+      {/* Окно дня — общий Sheet: над шапкой, «Закрыть» закреплён, список прокручивается внутри (R07). */}
+      <Sheet open={detailsVisible} onClose={closeDetails} title={lite.dayTitle} wide testId="dashboard-day-sheet">
             {!detailDay || !selectedDayData ? (
               <div style={{ color: '#6b7280' }}>{tt('Нет записей на выбранный день.')}</div>
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ color: '#111827', fontWeight: 800 }}>
+                <div style={{ color: '#111827', fontWeight: 800 }} data-testid="dashboard-day-total">
                   {formatDateWithWeekday(detailDay, localeTag)} · {formatDayPointsTotal(selectedDayData.totalPoints, locale)}
+                  {selectedDayData.totalKcal != null ? ` · ${lite.kcal.replace('{kcal}', formatKcal(selectedDayData.totalKcal, locale))}` : ''}
                 </div>
+                {weightMissing ? (
+                  <Link href="/profile?section=personal" className={styles.kcalPrompt} prefetch={false}>
+                    <span aria-hidden="true">⚖️</span>
+                    <span>{lite.weightPrompt} →</span>
+                  </Link>
+                ) : null}
 
                 {selectedDayData.items.map((w) => {
                   const reaction = workoutReactions[w.id];
@@ -1609,12 +1597,16 @@ export default function DashboardPage() {
                                   {w.queueStatus === 'rejected'
                                     ? `${queueText.rejectedBadge}${w.queueError ? `: ${w.queueError}` : ''}. ${queueText.rejectedHint}`
                                     : w.queueStatus === 'deleting'
-                                      ? `${queueText.deletingBadge}${w.queueError ? `: ${queueReasonText(w.queueError)}` : ''}`
+                                      ? `${lite.deletingShort}${w.queueError ? `: ${queueReasonText(w.queueError)}` : ''}`
                                       : `${w.queueStatus === 'sending' ? queueText.sendingBadge : queueText.pendingBadge}${w.queueError ? `: ${queueReasonText(w.queueError)}` : ''}`}
                                 </div>
                               ) : null}
                               <div>{tt('Время')}: <b>{formatTimeHHMM(w.time || w.date, localeTag, entryZone)}</b></div>
                               <div>{getExercise(w.exerciseType).unit === 'distance' ? cardioMessages[locale].valueLabel : tt(exerciseValueLabel(w.exerciseType))}: <b>{formatWorkoutValue(w, locale)}</b></div>
+                              {(() => {
+                                const kcal = isUncounted(w) ? null : kcalOf(w);
+                                return kcal != null ? <div style={kcalRow}>🔥 {lite.kcal.replace('{kcal}', formatKcal(kcal, locale))}</div> : null;
+                              })()}
                             </div>
 
                             {w.queueStatus === 'deleting' ? null : (
@@ -1654,9 +1646,7 @@ export default function DashboardPage() {
                 })}
               </div>
             )}
-          </section>
-        </div>
-      ) : null}
+      </Sheet>
     </div>
   );
 }
@@ -1820,45 +1810,6 @@ const exerciseTypePickerIcon: React.CSSProperties = {
   display: 'block',
 };
 
-const statBreakdownWrap: React.CSSProperties = {
-  marginTop: 2,
-  width: '100%',
-  display: 'grid',
-  gap: 2,
-  alignContent: 'start',
-  justifyItems: 'start',
-};
-
-const statBreakdownItem: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'clamp(16px, 1.2vw, 20px) auto',
-  alignItems: 'center',
-  justifyContent: 'start',
-  justifyItems: 'start',
-  gap: 'clamp(3px, 0.3vw, 6px)',
-  minWidth: 0,
-  lineHeight: 1,
-  width: '100%',
-};
-
-const statBreakdownIcon: React.CSSProperties = {
-  width: 'clamp(16px, 1.2vw, 20px)',
-  height: 'clamp(16px, 1.2vw, 20px)',
-  objectFit: 'contain',
-  display: 'block',
-  flex: '0 0 auto',
-  justifySelf: 'center',
-};
-
-const statBreakdownValue: React.CSSProperties = {
-  fontSize: 'clamp(11px, 0.9vw, 15px)',
-  fontWeight: 900,
-  color: '#0f172a',
-  lineHeight: 1,
-  fontVariantNumeric: 'tabular-nums',
-  textAlign: 'left',
-};
-
 const smallInput: React.CSSProperties = {
   minHeight: 52,
   padding: '10px 14px',
@@ -2005,13 +1956,6 @@ const freezeBadge: React.CSSProperties = {
 };
 
 const streakShare: React.CSSProperties = { justifySelf: 'center' };
-
-const freezeCaption: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 600,
-  color: '#0369a1',
-  marginTop: 2,
-};
 
 const timerActionsGrid: React.CSSProperties = {
   width: '100%',
@@ -2225,35 +2169,10 @@ const rowCard: React.CSSProperties = {
   boxShadow: '0 14px 32px rgba(15, 23, 42, 0.05)',
 };
 
-const modalBackdrop: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(17, 24, 39, 0.45)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 14,
-  zIndex: 50,
-};
-
-const modalCard: React.CSSProperties = {
-  width: 'min(820px, 100%)',
-  maxHeight: '88vh',
-  overflowY: 'auto',
-  border: '1px solid rgba(226, 232, 240, 0.92)',
-  borderRadius: 24,
-  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.94) 100%)',
-  padding: 18,
-  boxShadow: '0 30px 80px rgba(15, 23, 42, 0.18)',
-};
-
-const modalTop: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: 8,
-  marginBottom: 10,
-  flexWrap: 'wrap',
+const kcalRow: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 700,
+  color: '#c2410c',
 };
 
 const editGrid: React.CSSProperties = {
