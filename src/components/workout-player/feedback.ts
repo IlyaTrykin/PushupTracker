@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { getLocaleTimerAudio, type Locale } from '@/i18n/locale';
+import { isNativeApp } from '@/lib/platform';
 
 /**
  * Звук, вибрация и «не гасить экран» для таймеров занятия (перенесено со страницы занятия
@@ -21,12 +22,34 @@ type NavigatorWithWakeLock = Navigator & {
 type WindowWithWebkitAudioContext = Window & { webkitAudioContext?: typeof AudioContext };
 
 /**
- * Вибрация конца таймера. `@capacitor/haptics` в проекте нет, поэтому и в приложении —
- * `navigator.vibrate` (Android WebView; в iOS WebView API нет — тогда только звук).
+ * Вибрация конца таймера. В приложении — `@capacitor/haptics` (в iOS WebView `navigator.vibrate`
+ * нет): шаблон «вкл, пауза, вкл…» раскладывается на отдельные `Haptics.vibrate` по времени.
+ * На сайте — `navigator.vibrate` (где его нет — только звук).
  */
 export function vibrate(pattern: number | number[] = [180, 90, 180]): void {
+  if (isNativeApp()) {
+    void vibrateNative(Array.isArray(pattern) ? pattern : [pattern]);
+    return;
+  }
   try {
     if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(pattern);
+  } catch {}
+}
+
+async function vibrateNative(pattern: number[]): Promise<void> {
+  try {
+    const { Haptics } = await import('@capacitor/haptics');
+    let offset = 0;
+    pattern.forEach((ms, i) => {
+      const duration = Math.max(0, Math.round(ms));
+      if (i % 2 === 0 && duration > 0) {
+        const at = offset;
+        const run = () => void Haptics.vibrate({ duration }).catch(() => {});
+        if (at === 0) run();
+        else setTimeout(run, at);
+      }
+      offset += duration;
+    });
   } catch {}
 }
 
