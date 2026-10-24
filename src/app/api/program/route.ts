@@ -3,9 +3,12 @@ import { AuthError, requireUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
   ProgramError,
+  createCircuitTrainingProgram,
   createTrainingProgram,
   deriveAgeFromBirthDate,
   getProgramOverview,
+  isCircuitProgramBody,
+  parseCircuitProgramCreateBody,
   parseProgramCreateBody,
 } from '@/lib/program';
 
@@ -39,14 +42,17 @@ export async function POST(request: Request) {
       select: { birthDate: true, gender: true, weightKg: true },
     });
 
-    // Неизвестное упражнение — 400 (PROGRAM_EXERCISE_INVALID), без подмены на отжимания.
-    const payload = parseProgramCreateBody(body, {
+    const profile = {
       ageYears: deriveAgeFromBirthDate(me?.birthDate ?? null) ?? 25,
       weightKg: me?.weightKg ?? 70,
       sex: me?.gender || 'unknown',
-    });
+    };
 
-    const program = await createTrainingProgram(user.id, payload);
+    // Круговая программа-ротация (`programType: 'circuit'`, `circuitPlanId`) — 400 CIRCUIT_PLAN_INVALID
+    // для неизвестного плана. Иначе — по упражнению: неизвестное — 400 (PROGRAM_EXERCISE_INVALID).
+    const program = isCircuitProgramBody(body)
+      ? await createCircuitTrainingProgram(user.id, parseCircuitProgramCreateBody(body, profile))
+      : await createTrainingProgram(user.id, parseProgramCreateBody(body, profile));
 
     return NextResponse.json({ ok: true, program });
   } catch (e) {

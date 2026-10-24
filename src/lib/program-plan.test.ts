@@ -7,6 +7,9 @@ import {
   ProgramError,
   buildDistancePlan,
   buildProgramDraft,
+  buildCircuitProgramDraft,
+  parseCircuitProgramCreateBody,
+  isCircuitProgramBody,
   canAutofillProgram,
   isProgramExerciseType,
   nextKettlebellLoad,
@@ -509,4 +512,100 @@ test('R08.9: reminders and stop notices name the program by its label', async ()
   assert.match(missed.body ?? '', /Side plank/);
   const stopped = programStoppedMessage('ru', { programId: 'p1', exerciseType: 'kettlebell_press', loadKg: 12 });
   assert.match(stopped.body ?? '', /«Жим гири · 12 кг»/);
+});
+
+test('R09: program label finds the circuit plan title by circuitPlanId', () => {
+  assert.equal(programLabel({ exerciseType: 'circuit', programType: 'circuit', circuitPlanId: 'home_three' }, 'ru'), 'Круговая · Дом, 3 раза в неделю');
+  assert.equal(programLabel({ exerciseType: 'circuit', programType: 'circuit', circuitPlanId: 'kettlebells' }, 'en'), 'Circuit · Kettlebells');
+  assert.equal(programLabel({ exerciseType: 'circuit', programType: 'circuit', circuitPlanId: 'gone' }, 'ru'), 'Круговая');
+});
+
+test('program-plan does not pull a database module into the client bundle', async () => {
+  const { readFileSync, existsSync } = await import('node:fs');
+  const path = await import('node:path');
+  const root = path.resolve(process.cwd(), 'src');
+  const seen = new Set<string>();
+  const offenders: string[] = [];
+  const resolve = (from: string, spec: string) => {
+    const base = spec.startsWith('@/') ? path.join(root, spec.slice(2)) : path.resolve(path.dirname(from), spec);
+    for (const cand of [base, `${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')]) if (existsSync(cand) && cand.match(/\.tsx?$/)) return cand;
+    return null;
+  };
+  const walk = (file: string) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    const src = readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/(?:from\s+|import\()\s*['"]([^'"]+)['"]/g)) {
+      const spec = m[1];
+      if (spec === '@prisma/client' && !/import\s+type/.test(src.slice(Math.max(0, (m.index ?? 0) - 80), m.index))) offenders.push(`${file} → ${spec}`);
+      if (!spec.startsWith('.') && !spec.startsWith('@/')) continue;
+      if (/(^|\/)prisma$/.test(spec)) offenders.push(`${file} → ${spec}`);
+      const next = resolve(file, spec);
+      if (next) walk(next);
+    }
+  };
+  walk(path.join(root, 'lib', 'program-plan.ts'));
+  assert.deepEqual(offenders, []);
+});
+
+test('R09.3/R09.4/G01: circuit program — test circuit first, then rotation days with station/round/exercise sets', () => {
+  const clock = { now: new Date('2026-10-24T09:00:00Z'), timeZone: MOSCOW };
+  const draft = buildCircuitProgramDraft({ circuitPlanId: 'home_three', durationWeeks: 4, frequencyPerWeek: 3, startDate: '2026-10-26' }, clock);
+  assert.equal(draft.clean.programType, 'circuit');
+  assert.equal(draft.clean.exerciseType, 'circuit');
+  assert.equal(draft.clean.circuitPlanId, 'home_three');
+  assert.equal(draft.clean.durationWeeks, 4);
+  assert.equal(draft.clean.frequencyPerWeek, 3);
+  assert.equal(draft.sessions.length, 12);
+
+  const [testSession, first] = draft.sessions;
+  assert.equal(testSession.sessionKind, 'test');
+  assert.equal(testSession.dayLabel, 'A');
+  assert.equal(testSession.circuitTemplateId, 'home_full_body');
+  assert.equal(testSession.day, '2026-10-26');
+  assert.equal(testSession.scheduledAt.toISOString(), '2026-10-26T16:00:00.000Z');
+  assert.deepEqual(testSession.sets.map((st) => st.exerciseType), ['squats', 'pushups', 'glute_bridge', 'australian_pullups', 'superman', 'side_plank']);
+  assert.ok(testSession.sets.every((st) => st.round === 1 && st.restSeconds === 0));
+  assert.deepEqual(testSession.sets.map((st) => st.station), [1, 2, 3, 4, 5, 6]);
+
+  // дни по ротации после теста (тест — день A): B, C, A, B, C…
+  assert.deepEqual(draft.sessions.map((s) => s.dayLabel).join(''), 'ABCABCABCABC');
+  assert.deepEqual(draft.sessions.slice(0, 4).map((s) => s.day), ['2026-10-26', '2026-10-28', '2026-10-30', '2026-11-02']);
+  assert.ok(draft.sessions.every((s) => !s.isFinalTest));
+
+  // день B (home_cardio): 6 станций × 3 круга, отдых 15 с между станциями, 90 с между кругами
+  assert.equal(first.circuitTemplateId, 'home_cardio');
+  assert.equal(first.sessionKind ?? null, null);
+  assert.equal(first.sets.length, 18);
+  assert.deepEqual(first.sets.slice(0, 6).map((st) => st.restSeconds), [15, 15, 15, 15, 15, 90]);
+  assert.equal(first.sets[17].restSeconds, 0);
+  assert.deepEqual([first.sets[6].round, first.sets[6].station, first.sets[6].setNumber], [2, 1, 7]);
+  // до теста — 70% целей шаблона: бёрпи 8 → 6, выпады 10/н → 7
+  assert.equal(first.sets[0].targetReps, 6);
+  assert.equal(first.sets[3].exerciseType, 'lunges');
+  assert.equal(first.sets[3].targetReps, 7);
+
+  // через неделю тот же день — цели выше
+  const nextB = draft.sessions[4];
+  assert.equal(nextB.dayLabel, 'B');
+  assert.ok(nextB.sets[1].targetReps > first.sets[1].targetReps);
+});
+
+test('R09.3: circuit program body — plan is checked, 4–12 weeks, 2–4 a week; kettlebell days carry the weight', () => {
+  const profile = { ageYears: 30, weightKg: 80, sex: 'male' };
+  assert.equal(isCircuitProgramBody({ programType: 'circuit' }), true);
+  assert.equal(isCircuitProgramBody({ exerciseType: 'pushups' }), false);
+  const parsed = parseCircuitProgramCreateBody({ programType: 'circuit', circuitPlanId: 'kettlebells', durationWeeks: 30, frequencyPerWeek: 7 }, profile);
+  assert.equal(parsed.circuitPlanId, 'kettlebells');
+  assert.throws(
+    () => parseCircuitProgramCreateBody({ programType: 'circuit', circuitPlanId: 'nope' }, profile),
+    (e: unknown) => e instanceof ProgramError && e.code === 'CIRCUIT_PLAN_INVALID' && e.status === 400,
+  );
+  const draft = buildCircuitProgramDraft(parsed, { now: new Date('2026-10-24T09:00:00Z'), timeZone: MOSCOW });
+  assert.equal(draft.clean.durationWeeks, 12);
+  assert.equal(draft.clean.frequencyPerWeek, 4);
+  assert.equal(draft.sessions.length, 48);
+  const swing = draft.sessions[1].sets[0];
+  assert.equal(swing.exerciseType, 'kettlebell_swing');
+  assert.equal(swing.loadKg, 16);
 });

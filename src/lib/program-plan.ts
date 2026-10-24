@@ -18,6 +18,7 @@ import {
 import {
   addDays,
   dayKeyInZone,
+  dbDateToDayKey,
   dayKeyToDbDate,
   diffDays,
   localHHMM,
@@ -27,8 +28,17 @@ import {
   type DayKey,
 } from './calendar-day';
 import { MAX_DISTANCE_METERS, MAX_DURATION_SECONDS, normalizeLoadKg } from './workout-input';
-import { workoutActiveKcal } from './workout-energy';
-import type { BodyMetrics } from './health/energy';
+// Только чистые модули: файл импортирует и клиент (мастер программ), БД сюда не тянется.
+import { estimateActiveEnergy, type BodyMetrics } from './health/energy';
+import {
+  CIRCUIT_PLANS,
+  circuitSessionSets,
+  circuitTestSpec,
+  getCircuitPlan,
+  getCircuitTemplate,
+  planCircuitSession,
+  type CircuitDayLabel,
+} from './circuits';
 
 // Программа строится по любому упражнению каталога, у которого есть вид программы
 // (`programKind`): повторы, время, гиря с весом, дистанция. Вид определяет единицы цели
@@ -536,14 +546,20 @@ export function parseProgramCreateBody(
 // ---------------------------------------------------------------------------
 
 export type DistanceSessionKind = 'easy' | 'interval' | 'long';
+/** Вид занятия: дистанция — лёгкое/интервалы/длинное; круговая — `test` (тест-круг). */
+export type ProgramSessionKind = DistanceSessionKind | 'test';
 
 export type ProgramDraftSet = {
   setNumber: number;
   targetReps: number;
   restSeconds: number;
   isKeySet: boolean;
-  /** Вес гири подхода (гиревые программы). */
+  /** Вес гири подхода (гиревые программы, станции кругов с гирей). */
   loadKg?: number | null;
+  /** Круговая: упражнение станции, номер круга и станции (с 1). */
+  exerciseType?: ExerciseType | null;
+  round?: number | null;
+  station?: number | null;
 };
 
 export type ProgramDraftSession = {
@@ -552,8 +568,11 @@ export type ProgramDraftSession = {
   day: DayKey;
   scheduledAt: Date;
   isFinalTest: boolean;
-  /** Дистанция: лёгкое / интервалы / длинное. */
-  sessionKind?: DistanceSessionKind | null;
+  /** Дистанция: лёгкое / интервалы / длинное; круговая: `test` — тест-круг. */
+  sessionKind?: ProgramSessionKind | null;
+  /** Круговая: день ротации и шаблон круга. */
+  dayLabel?: CircuitDayLabel | null;
+  circuitTemplateId?: string | null;
   sets: ProgramDraftSet[];
 };
 
@@ -856,6 +875,117 @@ export function buildProgramDraft(input: ProgramCreateInput, clock: ProgramClock
     clean: {
       ...clean,
       durationWeeks: effectiveDurationWeeks,
+    },
+    startDay,
+    sessions,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Круговая программа-ротация (R09.3–R09.6)
+// ---------------------------------------------------------------------------
+
+/** Недели и частота круговой программы. */
+export const CIRCUIT_PROGRAM_WEEKS = { min: 4, max: 12, default: 8 } as const;
+export const CIRCUIT_PROGRAM_FREQUENCY = { min: 2, max: 4, default: 3 } as const;
+
+export type CircuitProgramCreateInput = {
+  circuitPlanId: string;
+  durationWeeks?: number | null;
+  frequencyPerWeek?: number | null;
+  ageYears?: number | null;
+  weightKg?: number | null;
+  sex?: string | null;
+  startDate?: string | Date | null;
+};
+
+/** Тело запроса создания программы — круговая (`programType: 'circuit'`)? */
+export function isCircuitProgramBody(body: Record<string, unknown> | null | undefined): boolean {
+  return Boolean(body) && body?.programType === 'circuit';
+}
+
+function circuitPlanOrThrow(id: unknown) {
+  const plan = typeof id === 'string' ? getCircuitPlan(id.trim()) : null;
+  if (!plan) throw new ProgramError('Неизвестная круговая программа', 400, 'CIRCUIT_PLAN_INVALID');
+  return plan;
+}
+
+/** Тело запроса круговой программы (личной и назначенной в группе); возраст/вес/пол — из профиля, если их нет. */
+export function parseCircuitProgramCreateBody(
+  body: Record<string, unknown>,
+  profile: { ageYears: number; weightKg: number; sex: string },
+): CircuitProgramCreateInput {
+  const plan = circuitPlanOrThrow(body.circuitPlanId);
+  return {
+    circuitPlanId: plan.id,
+    durationWeeks: bodyNumber(body.durationWeeks),
+    frequencyPerWeek: bodyNumber(body.frequencyPerWeek),
+    ageYears: bodyNumber(body.ageYears) || profile.ageYears,
+    weightKg: bodyNumber(body.weightKg) || profile.weightKg,
+    sex: String(body.sex || profile.sex || 'unknown').trim().toLowerCase(),
+    startDate: body.startDate ? String(body.startDate) : null,
+  };
+}
+
+function circuitDraftSets(sets: ReturnType<typeof circuitSessionSets>): ProgramDraftSet[] {
+  return sets.map((st) => ({ ...st }));
+}
+
+/**
+ * Расписание круговой программы: `durationWeeks × frequencyPerWeek` занятий в дни недели по
+ * частоте (как у дистанции). Первое — тест-круг дня A (один круг на максимум, без отдыха); дальше
+ * дни ротации по кругу, продолжая после A: B, C, A… Цели до теста — 70% целей шаблона, рост ~10%
+ * в неделю (`progressCircuit`); после теста их пересчитывает сервер от результатов (`planCircuitSession`).
+ * Финального теста нет: программа завершается, когда пройдены все занятия.
+ */
+export function buildCircuitProgramDraft(input: CircuitProgramCreateInput, clock: ProgramClock) {
+  const timeZone = normalizeTimeZone(clock.timeZone);
+  const plan = circuitPlanOrThrow(input.circuitPlanId);
+  const durationWeeks = clampInt(Number(input.durationWeeks ?? CIRCUIT_PROGRAM_WEEKS.default), CIRCUIT_PROGRAM_WEEKS.min, CIRCUIT_PROGRAM_WEEKS.max);
+  const frequencyPerWeek = clampInt(
+    Number(input.frequencyPerWeek ?? CIRCUIT_PROGRAM_FREQUENCY.default),
+    CIRCUIT_PROGRAM_FREQUENCY.min,
+    CIRCUIT_PROGRAM_FREQUENCY.max,
+  );
+  const startDay = resolveProgramStartDay(input.startDate ?? null, { now: clock.now, timeZone });
+  const offsets = DISTANCE_DAY_OFFSETS[frequencyPerWeek];
+  const firstDay = plan.days[0];
+  const testTemplate = getCircuitTemplate(firstDay.templateId);
+  if (!testTemplate) throw new ProgramError('Неизвестная круговая программа', 400, 'CIRCUIT_PLAN_INVALID');
+
+  const sessions: ProgramDraftSession[] = [];
+  const total = durationWeeks * frequencyPerWeek;
+  for (let i = 0; i < total; i += 1) {
+    const day = addDays(startDay, Math.floor(i / frequencyPerWeek) * 7 + (offsets[i % frequencyPerWeek] ?? 0));
+    const weekNumber = weekNumberFor(day, startDay);
+    const rotation = plan.days[i % plan.days.length];
+    const sets = i === 0
+      ? circuitSessionSets(circuitTestSpec(testTemplate))
+      : planCircuitSession(rotation.templateId, weekNumber, null) ?? [];
+    sessions.push({
+      weekNumber,
+      sessionNumber: i + 1,
+      day,
+      scheduledAt: programSessionInstant(day, timeZone),
+      isFinalTest: false,
+      sessionKind: i === 0 ? 'test' : null,
+      dayLabel: rotation.label,
+      circuitTemplateId: rotation.templateId,
+      sets: circuitDraftSets(sets),
+    });
+  }
+
+  const sexRaw = String(input.sex || 'unknown').trim().toLowerCase();
+  return {
+    clean: {
+      programType: 'circuit' as const,
+      exerciseType: 'circuit' as const,
+      circuitPlanId: plan.id,
+      durationWeeks,
+      frequencyPerWeek,
+      ageYears: clampInt(Number(input.ageYears ?? 25), 8, 90),
+      weightKg: clampInt(Number(input.weightKg ?? 70), 30, 250),
+      sex: ['male', 'female', 'other', 'unknown'].includes(sexRaw) ? sexRaw : 'unknown',
     },
     startDay,
     sessions,
@@ -1345,7 +1475,7 @@ export function restoredSetWorkoutRows(args: {
       trainingSessionId: args.sessionId,
       clientRequestId: input.clientRequestId,
     };
-    return { ...row, activeKcal: workoutActiveKcal(row, args.body) };
+    return { ...row, activeKcal: estimateActiveEnergy(row, args.body, dbDateToDayKey(row.date)) };
   });
 }
 
@@ -1370,7 +1500,8 @@ export function programLabel(program: ProgramLabelSource, locale: string = 'ru')
   const en = locale === 'en';
   if (program.programType === 'circuit' || program.exerciseType === 'circuit') {
     const head = en ? 'Circuit' : 'Круговая';
-    const title = program.circuitTitle ? program.circuitTitle[en ? 'en' : 'ru'] : null;
+    const source = program.circuitTitle ?? CIRCUIT_PLANS.find((p) => p.id === program.circuitPlanId)?.title ?? null;
+    const title = source ? source[en ? 'en' : 'ru'] : null;
     return title ? `${head} · ${title}` : head;
   }
   const name = exerciseLabel(program.exerciseType, en ? 'en' : 'ru');

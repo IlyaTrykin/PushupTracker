@@ -4,9 +4,12 @@ import { GroupError, recordGroupAuditLog, requireManagedGroupMemberAccess } from
 import { prisma } from '@/lib/prisma';
 import {
   ProgramError,
+  createCircuitTrainingProgram,
   createTrainingProgram,
   deriveAgeFromBirthDate,
   getManagedProgramOverview,
+  isCircuitProgramBody,
+  parseCircuitProgramCreateBody,
   parseProgramCreateBody,
 } from '@/lib/program';
 
@@ -54,17 +57,18 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       select: { birthDate: true, gender: true, weightKg: true },
     });
 
-    // Неизвестное упражнение — 400 (PROGRAM_EXERCISE_INVALID), без подмены на отжимания.
-    const payload = parseProgramCreateBody(body, {
+    const profile = {
       ageYears: deriveAgeFromBirthDate(targetUser?.birthDate ?? null) ?? 25,
       weightKg: targetUser?.weightKg ?? 70,
       sex: targetUser?.gender || 'unknown',
-    });
+    };
+    const scope = { managedByGroupId: id, assignedByUserId: actor.id };
 
-    const program = await createTrainingProgram(targetUserId, payload, {
-      managedByGroupId: id,
-      assignedByUserId: actor.id,
-    });
+    // Круговая программа-ротация (R09.6) — тот же путь назначения с `programType: 'circuit'`.
+    // По упражнению: неизвестное — 400 (PROGRAM_EXERCISE_INVALID), без подмены на отжимания.
+    const program = isCircuitProgramBody(body)
+      ? await createCircuitTrainingProgram(targetUserId, parseCircuitProgramCreateBody(body, profile), scope)
+      : await createTrainingProgram(targetUserId, parseProgramCreateBody(body, profile), scope);
 
     if (!program) return jsonError('Не удалось создать программу', 500, 'GROUP_PROGRAM_CREATE_FAILED');
 
@@ -77,6 +81,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       entityId: program.id,
       metadata: {
         exerciseType: program.exerciseType,
+        programType: program.programType,
+        circuitPlanId: program.circuitPlanId,
         loadKg: program.loadKg,
         baselineMaxReps: program.baselineMaxReps,
         targetReps: program.targetReps,

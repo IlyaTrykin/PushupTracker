@@ -5,7 +5,11 @@ import { WorkoutCreateError, createWorkoutForUser, type WorkoutCreateResult } fr
 import { addDays, dayKeyToDbDate, dbDateToDayKey, diffDays, normalizeTimeZone, type DayKey } from '@/lib/calendar-day';
 import { programKind } from '@/lib/exercises';
 import { ENERGY_BODY_SELECT, toBodyMetrics } from '@/lib/workout-energy';
+import { planCircuitSession } from '@/lib/circuits';
 import {
+  buildCircuitProgramDraft,
+  type CircuitProgramCreateInput,
+  type ProgramDraftSession,
   type SetResult,
   ProgramError,
   autofilledDays,
@@ -34,13 +38,16 @@ import {
 
 export {
   ProgramError,
+  isCircuitProgramBody,
   isProgramExerciseType,
+  parseCircuitProgramCreateBody,
   parseProgramCreateBody,
   programLabel,
   suggestDurationWeeks,
   suggestFrequencyPerWeek,
 } from '@/lib/program-plan';
 export type {
+  CircuitProgramCreateInput,
   ProgramCreateInput,
   ProgramExerciseType,
   ProgramGoalType,
@@ -117,8 +124,9 @@ function buildRecoveryWarnings(args: {
     }
   }
 
+  // У круговой нет одной базы повторов (0): «тяжёлый день» по сумме подходов не определить.
   const hardDayThreshold = args.baselineMaxReps * 3;
-  const heavySessions = args.completedSessions
+  const heavySessions = hardDayThreshold <= 0 ? [] : args.completedSessions
     .filter((s) => s.completedAt)
     .map((s) => ({
       day: programDayOf(s.completedAt as Date, args.timeZone),
@@ -286,6 +294,37 @@ async function getProgramByWhere(where: Prisma.TrainingProgramWhereInput) {
   };
 }
 
+type DraftSet = ProgramDraftSession['sets'][number];
+
+/** Строка подхода из черновика: вес гири, у круговой — упражнение, круг и станция. */
+function setCreateData(st: DraftSet) {
+  return {
+    setNumber: st.setNumber,
+    targetReps: st.targetReps,
+    restSeconds: st.restSeconds,
+    isKeySet: st.isKeySet,
+    loadKg: st.loadKg ?? null,
+    exerciseType: st.exerciseType ?? null,
+    round: st.round ?? null,
+    station: st.station ?? null,
+  };
+}
+
+/** Занятие из черновика со всеми подходами (вид дистанции, день ротации и шаблон круга). */
+function sessionCreateData(programId: string, s: ProgramDraftSession): Prisma.TrainingSessionUncheckedCreateInput {
+  return {
+    programId,
+    weekNumber: s.weekNumber,
+    sessionNumber: s.sessionNumber,
+    scheduledAt: s.scheduledAt,
+    isFinalTest: s.isFinalTest,
+    sessionKind: s.sessionKind ?? null,
+    dayLabel: s.dayLabel ?? null,
+    circuitTemplateId: s.circuitTemplateId ?? null,
+    sets: { create: s.sets.map(setCreateData) },
+  };
+}
+
 export async function createTrainingProgram(
   userId: string,
   input: ProgramCreateInput,
@@ -327,27 +366,63 @@ export async function createTrainingProgram(
     });
 
     for (const s of draft.sessions) {
-      await tx.trainingSession.create({
-        data: {
-          programId: program.id,
-          weekNumber: s.weekNumber,
-          sessionNumber: s.sessionNumber,
-          scheduledAt: s.scheduledAt,
-          isFinalTest: s.isFinalTest,
-          sessionKind: s.sessionKind ?? null,
-          sets: {
-            create: s.sets.map((st) => ({
-              setNumber: st.setNumber,
-              targetReps: st.targetReps,
-              restSeconds: st.restSeconds,
-              isKeySet: st.isKeySet,
-              loadKg: st.loadKg ?? null,
-            })),
-          },
-        },
-      });
+      await tx.trainingSession.create({ data: sessionCreateData(program.id, s) });
     }
 
+    return program;
+  });
+
+  return getProgramById(userId, created.id);
+}
+
+/**
+ * Круговая программа-ротация (личная или назначенная владельцем группы): тест-круг дня A, затем
+ * занятия по дням ротации. Заменяет прежнюю активную круговую программу того же владельца
+ * (личную — личная, групповую — группа), как и однокомпонентная.
+ */
+export async function createCircuitTrainingProgram(
+  userId: string,
+  input: CircuitProgramCreateInput,
+  options?: {
+    managedByGroupId?: string | null;
+    assignedByUserId?: string | null;
+  },
+) {
+  const timeZone = await getUserTimeZone(userId);
+  const draft = buildCircuitProgramDraft(input, { now: new Date(), timeZone });
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.trainingProgram.updateMany({
+      where: programReplacementWhere(userId, draft.clean.exerciseType, options?.managedByGroupId),
+      data: { isActive: false, status: 'inactive' },
+    });
+
+    const program = await tx.trainingProgram.create({
+      data: {
+        userId,
+        exerciseType: draft.clean.exerciseType,
+        programType: draft.clean.programType,
+        circuitPlanId: draft.clean.circuitPlanId,
+        loadKg: null,
+        goalType: 'circuit_plan',
+        targetReps: null,
+        durationWeeks: draft.clean.durationWeeks,
+        frequencyPerWeek: draft.clean.frequencyPerWeek,
+        baselineMaxReps: 0,
+        ageYears: draft.clean.ageYears,
+        weightKg: draft.clean.weightKg,
+        sex: draft.clean.sex,
+        startDate: dayKeyToDbDate(draft.startDay),
+        isActive: true,
+        status: 'active',
+        managedByGroupId: options?.managedByGroupId ?? null,
+        assignedByUserId: options?.assignedByUserId ?? null,
+      },
+      select: { id: true },
+    });
+
+    for (const s of draft.sessions) {
+      await tx.trainingSession.create({ data: sessionCreateData(program.id, s) });
+    }
     return program;
   });
 
@@ -527,6 +602,90 @@ async function getExternalPerformanceRatios(
   return ratios;
 }
 
+type CircuitSetRow = {
+  setNumber: number;
+  targetReps: number;
+  restSeconds: number;
+  exerciseType: string | null;
+  loadKg: number | null;
+  round: number | null;
+  station: number | null;
+};
+
+function sameCircuitSets(current: CircuitSetRow[], planned: NonNullable<ReturnType<typeof planCircuitSession>>): boolean {
+  if (current.length !== planned.length) return false;
+  return planned.every((p, i) => {
+    const c = current[i];
+    return c.setNumber === p.setNumber && c.targetReps === p.targetReps && c.restSeconds === p.restSeconds
+      && c.exerciseType === p.exerciseType && (c.loadKg ?? null) === p.loadKg && c.round === p.round && c.station === p.station;
+  });
+}
+
+/**
+ * Круговая программа: после тест-круга цели всех ещё не начатых занятий строятся от его
+ * результатов (старт 70%, рост ~10% в неделю, при потолке — плюс круг; `planCircuitSession`).
+ * Занятие, в котором уже записан подход, не трогается. Все занятия пройдены — программа завершена.
+ */
+async function recalculateCircuitProgram(programId: string, now: Date) {
+  const program = await prisma.trainingProgram.findUnique({
+    where: { id: programId },
+    select: {
+      id: true,
+      sessions: {
+        orderBy: { sessionNumber: 'asc' },
+        select: {
+          id: true,
+          weekNumber: true,
+          sessionKind: true,
+          circuitTemplateId: true,
+          completed: true,
+          sets: {
+            orderBy: { setNumber: 'asc' },
+            select: {
+              setNumber: true,
+              targetReps: true,
+              actualReps: true,
+              restSeconds: true,
+              exerciseType: true,
+              loadKg: true,
+              round: true,
+              station: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!program) return;
+
+  const test = program.sessions.find((s) => s.sessionKind === 'test');
+  const results = test?.completed
+    ? test.sets.map((st) => ({ exerciseType: st.exerciseType ?? '', target: st.targetReps, actual: st.actualReps }))
+    : null;
+  const allDone = program.sessions.length > 0 && program.sessions.every((s) => s.completed);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const s of program.sessions) {
+        if (s.completed || s.sessionKind === 'test' || s.sets.some((st) => st.actualReps != null)) continue;
+        const planned = planCircuitSession(s.circuitTemplateId, s.weekNumber, results);
+        if (!planned || sameCircuitSets(s.sets, planned)) continue;
+        // Подход, записанный параллельно, не удалится, и вставка упрётся в уникальность — откат.
+        await tx.trainingSet.deleteMany({ where: { sessionId: s.id, actualReps: null } });
+        await tx.trainingSet.createMany({ data: planned.map((st) => ({ sessionId: s.id, ...st })) });
+      }
+      await tx.trainingProgram.update({
+        where: { id: program.id },
+        data: allDone
+          ? { lastRecalculatedAt: now, status: 'completed', isActive: false }
+          : { lastRecalculatedAt: now },
+      });
+    });
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+  }
+}
+
 export async function recalculateUpcomingSessions(programId: string, now: Date = new Date()) {
   const program = await prisma.trainingProgram.findUnique({
     where: { id: programId },
@@ -545,6 +704,10 @@ export async function recalculateUpcomingSessions(programId: string, now: Date =
   });
 
   if (!program) return;
+  if (program.programType === 'circuit') {
+    await recalculateCircuitProgram(program.id, now);
+    return;
+  }
 
   const clock: ProgramClock = { now, timeZone: normalizeTimeZone(program.user?.timeZone) };
   const targetReps = program.targetReps || program.baselineMaxReps;
@@ -630,25 +793,7 @@ export async function recalculateUpcomingSessions(programId: string, now: Date =
           });
 
         for (const s of extension) {
-          await tx.trainingSession.create({
-            data: {
-              programId: program.id,
-              weekNumber: s.weekNumber,
-              sessionNumber: s.sessionNumber,
-              scheduledAt: s.scheduledAt,
-              isFinalTest: s.isFinalTest,
-              sessionKind: s.sessionKind ?? null,
-              sets: {
-                create: s.sets.map((st) => ({
-                  setNumber: st.setNumber,
-                  targetReps: st.targetReps,
-                  restSeconds: st.restSeconds,
-                  isKeySet: st.isKeySet,
-                  loadKg: st.loadKg ?? null,
-                })),
-              },
-            },
-          });
+          await tx.trainingSession.create({ data: sessionCreateData(program.id, s) });
         }
 
         await tx.trainingProgram.update({
