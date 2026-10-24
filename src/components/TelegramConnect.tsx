@@ -5,6 +5,7 @@ import { useI18n } from '@/i18n/provider';
 import { getIntlLocale } from '@/i18n/translate';
 import { fillTelegramText, telegramMessages } from '@/i18n/messages/features/telegram';
 import { isNativeApp, openExternal } from '@/lib/platform';
+import { InfoButton } from '@/components/ui';
 
 type LinkState = { linked: boolean; linkedAt: string | null };
 type PendingLink = { url: string; expiresAt: number };
@@ -114,14 +115,16 @@ export default function TelegramConnect() {
 
   return (
     <section style={card} data-testid="telegram-connect">
-      <div style={title}>{text.sectionTitle}</div>
+      <div style={titleRow}>
+        <span style={title}>{text.sectionTitle}</span>
+        <InfoButton title={text.sectionTitle}>{state.linked ? text.connectedHint : text.sectionHint}</InfoButton>
+      </div>
       {state.linked ? (
         <>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8 }}>
             <span style={badge}>✓ {text.connected}</span>
             {since ? <span style={hint}>{since}</span> : null}
           </div>
-          <div style={hint}>{text.connectedHint}</div>
           <div>
             <button type="button" onClick={disconnect} disabled={busy !== null} style={{ ...buttonSecondary, opacity: busy ? 0.6 : 1 }}>
               {busy === 'disconnect' ? text.disconnecting : text.disconnect}
@@ -130,7 +133,6 @@ export default function TelegramConnect() {
         </>
       ) : (
         <>
-          <div style={hint}>{text.sectionHint}</div>
           {pending ? (
             <div style={{ display: 'grid', gap: 10 }}>
               <div>
@@ -176,6 +178,8 @@ const card: React.CSSProperties = {
 };
 
 const title: React.CSSProperties = { fontSize: 18, fontWeight: 900, color: '#0f172a' };
+
+const titleRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 4 };
 
 const hint: React.CSSProperties = { fontSize: 13, color: '#64748b', lineHeight: 1.5 };
 

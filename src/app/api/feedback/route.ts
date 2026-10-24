@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { AuthError, requireUser } from '@/lib/auth';
-import { FEEDBACK_MAX_LENGTH, sendFeedbackEmail } from '@/lib/feedback';
+import { parseFeedbackInput, sendFeedbackEmail } from '@/lib/feedback';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,14 +32,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Внутренняя ошибка сервера' }, { status: 500 });
   }
 
-  const body = await request.json().catch(() => null);
-  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Некорректный JSON' }, { status: 400 });
-
-  const message = String((body as Record<string, unknown>).message ?? '').trim();
-  if (!message) return NextResponse.json({ error: 'Сообщение не может быть пустым' }, { status: 400 });
-  if (message.length > FEEDBACK_MAX_LENGTH) {
-    return NextResponse.json({ error: 'Сообщение слишком длинное' }, { status: 400 });
-  }
+  // { message, type? }: type — bug | idea | complaint (без него — bug), идёт в тему письма.
+  const input = parseFeedbackInput(await request.json().catch(() => null));
+  if (!input.ok) return NextResponse.json({ error: input.error, code: input.code }, { status: 400 });
 
   if (isRateLimited(user.id)) {
     return NextResponse.json({ error: 'Слишком много сообщений, попробуйте позже' }, { status: 429 });
@@ -47,7 +42,8 @@ export async function POST(request: Request) {
 
   try {
     const { sent } = await sendFeedbackEmail({
-      message,
+      message: input.message,
+      type: input.type,
       username: user.username,
       userEmail: user.email,
       userId: user.id,

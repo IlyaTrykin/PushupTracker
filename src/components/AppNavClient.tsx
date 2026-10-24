@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { clearClientDataCaches } from '@/lib/client-cache';
 import { clearToken } from '@/lib/native-auth';
@@ -13,13 +13,14 @@ import { useOutboxLogoutGuard } from '@/lib/offline/logout-guard';
 import { useOutboxSync } from '@/lib/offline/use-outbox';
 import { hardNavigate, isNativeApp, mediaUrl, openExternal, publicLink } from '@/lib/platform';
 import { SUPPORT_URL } from '@/lib/support';
-import ExerciseFavoritesSheet from '@/components/ExerciseFavoritesSheet';
 import FeedbackSheet from '@/components/FeedbackSheet';
 import LanguageSelect from '@/components/LanguageSelect';
+import { pushLayer } from '@/components/ui/layers';
 import { type Locale, normalizeLocale } from '@/i18n/locale';
 import { useI18n } from '@/i18n/provider';
-import { growthMessages } from '@/i18n/messages/features/growth';
 import { nativeHealthMessages } from '@/i18n/messages/features/native-health';
+import { profileSectionsMessages } from '@/i18n/messages/features/profile-sections';
+import { uiKitMessages } from '@/i18n/messages/features/ui-kit';
 import styles from './AppNavClient.module.css';
 
 type PageTitleOverrideDetail = string | { title?: string | null } | null;
@@ -112,23 +113,112 @@ function LeaveGroupIcon() {
   );
 }
 
+/**
+ * Выход из аккаунта — общий для бокового меню и «Профиль → Аккаунт»: неотправленные тренировки
+ * (спросить), фоновые копии, push этого устройства, сессия, токен, кэши, затем /login.
+ */
+export function useLogout(): () => Promise<void> {
+  const { setUser } = useAuth();
+  const router = useRouter();
+  const { checkBeforeLogout } = useOutboxLogoutGuard();
+  return useCallback(async () => {
+    // Unsent workouts on this device: try to send, then «sign out and delete» / «stay».
+    if ((await checkBeforeLogout()) === 'stay') return;
+    // Their native background copies must not go out after the user chose to delete them.
+    await cancelAllBackground();
+    // Отписать это устройство от push до выхода (B19): иначе на общем устройстве
+    // продолжат приходить уведомления вышедшего пользователя.
+    if (!isNativeApp()) await unsubscribeThisDeviceFromPush();
+    try {
+      // В приложении запрос идёт с Bearer и закрывает только эту сессию; без связи не ждём.
+      // Токен пушей этого телефона: сервер снимает устройство, чтобы уведомления вышедшего не приходили.
+      const pushToken = isNativeApp() ? currentPushToken() : null;
+      const request = fetch('/api/logout', {
+        method: 'POST',
+        credentials: 'include',
+        ...(pushToken ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pushToken }) } : {}),
+      });
+      await (isNativeApp() ? withTimeout(request, 5000) : request);
+    } catch {}
+    // Приложение: токен стирается с устройства даже без связи.
+    await clearToken();
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_RUNTIME_CACHES' });
+    } catch {}
+    clearClientDataCaches();
+    setUser(null);
+    window.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
+    hardNavigate('/login', router);
+  }, [checkBeforeLogout, router, setUser]);
+}
+
+/** Смена языка интерфейса с сохранением в профиль — общая для меню и «Персональной информации». */
+export function useLanguageSwitch(): { change: (next: Locale) => Promise<void>; updating: boolean } {
+  const { locale, setLocale } = useI18n();
+  const { user: me, setUser, refreshUser } = useAuth();
+  const [updating, setUpdating] = useState(false);
+  const change = useCallback(
+    async (nextLocale: Locale) => {
+      if (!me?.username || updating || nextLocale === locale) return;
+      const previousLocale = locale;
+      setUpdating(true);
+      setLocale(nextLocale);
+      try {
+        const res = await fetch('/api/profile', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ language: nextLocale }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || 'Failed to update language');
+        if (data?.user) {
+          setUser((prev) => ({
+            ...prev,
+            id: data.user.id,
+            email: data.user.email,
+            username: data.user.username,
+            isAdmin: data.user.isAdmin,
+            avatarPath: data.user.avatarPath,
+            language: data.user.language,
+          }));
+        } else {
+          await refreshUser();
+        }
+      } catch {
+        setLocale(previousLocale);
+        await refreshUser();
+      } finally {
+        setUpdating(false);
+      }
+    },
+    [locale, me?.username, refreshUser, setLocale, setUser, updating],
+  );
+  return { change, updating };
+}
+
+type MenuView = 'root' | 'admin';
+
 export default function AppNavClient() {
   const { locale, messages, setLocale } = useI18n();
-  const { user: me, setUser, refreshUser } = useAuth();
+  const { user: me } = useAuth();
   const pathname = usePathname();
-  const router = useRouter();
   // '/' is the public landing — signed-in users are redirected to /dashboard on the server.
   const isAuthRoute = pathname === '/' || Boolean(pathname?.startsWith('/invite/')) || pathname === '/login' || pathname === '/register' || pathname === '/forgot-password' || pathname === '/reset-password';
   const [open, setOpen] = useState(false);
+  // Уровень бокового меню: корень или «Админка» (R12.1); направление — для анимации въезда.
+  const [menuView, setMenuView] = useState<MenuView>('root');
+  const [menuDirection, setMenuDirection] = useState<'forward' | 'back' | 'none'>('none');
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [favoritesOpen, setFavoritesOpen] = useState(false);
-  const [updatingLanguage, setUpdatingLanguage] = useState(false);
   const [pageTitleOverride, setPageTitleOverride] = useState<string | null>(null);
   const [pageHeaderActionLabel, setPageHeaderActionLabel] = useState<string | null>(null);
   const navIconVersion = '20260225';
+  const menuText = profileSectionsMessages[locale].menu;
+  const kitText = uiKitMessages[locale];
   // The workout queue goes out from any screen (the navigation is on all of them).
   useOutboxSync();
-  const { checkBeforeLogout } = useOutboxLogoutGuard();
+  const logout = useLogout();
+  const { change: handleLanguageChange, updating: updatingLanguage } = useLanguageSwitch();
   const pageTitle = useMemo(
     () => pageTitleOverride || resolvePageTitle(pathname, messages.nav.pageTitles, locale),
     [locale, messages.nav.pageTitles, pageTitleOverride, pathname],
@@ -188,70 +278,35 @@ export default function AppNavClient() {
     void prewarm();
   }, [me?.id, me?.isAdmin, me?.username]);
 
-  const logout = async () => {
-    // Unsent workouts on this device: try to send, then «sign out and delete» / «stay».
-    if ((await checkBeforeLogout()) === 'stay') return;
-    // Their native background copies must not go out after the user chose to delete them.
-    await cancelAllBackground();
-    // Отписать это устройство от push до выхода (B19): иначе на общем устройстве
-    // продолжат приходить уведомления вышедшего пользователя.
-    if (!isNativeApp()) await unsubscribeThisDeviceFromPush();
-    try {
-      // В приложении запрос идёт с Bearer и закрывает только эту сессию; без связи не ждём.
-      // Токен пушей этого телефона: сервер снимает устройство, чтобы уведомления вышедшего не приходили.
-      const pushToken = isNativeApp() ? currentPushToken() : null;
-      const request = fetch('/api/logout', {
-        method: 'POST',
-        credentials: 'include',
-        ...(pushToken ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pushToken }) } : {}),
-      });
-      await (isNativeApp() ? withTimeout(request, 5000) : request);
-    } catch {}
-    // Приложение: токен стирается с устройства даже без связи.
-    await clearToken();
-    try {
-      navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_RUNTIME_CACHES' });
-    } catch {}
-    clearClientDataCaches();
-    setUser(null);
-    window.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
-    hardNavigate('/login', router);
+  const openMenu = () => {
+    setMenuView('root');
+    setMenuDirection('none');
+    setOpen(true);
+  };
+  const closeMenu = useCallback(() => setOpen(false), []);
+  const showMenuLevel = (view: MenuView) => {
+    setMenuDirection(view === 'root' ? 'back' : 'forward');
+    setMenuView(view);
   };
 
-  const handleLanguageChange = async (nextLocale: Locale) => {
-    if (!me?.username || updatingLanguage || nextLocale === locale) return;
-    const previousLocale = locale;
-    setUpdatingLanguage(true);
-    setLocale(nextLocale);
-    try {
-      const res = await fetch('/api/profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ language: nextLocale }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Failed to update language');
-      if (data?.user) {
-        setUser((prev) => ({
-          ...prev,
-          id: data.user.id,
-          email: data.user.email,
-          username: data.user.username,
-          isAdmin: data.user.isAdmin,
-          avatarPath: data.user.avatarPath,
-          language: data.user.language,
-        }));
+  // Открытое меню — слой UI-кита: Escape и аппаратная «назад» Android сначала возвращают из
+  // «Админки» на корень меню, потом закрывают меню (а не уводят со страницы).
+  const menuViewRef = useRef<MenuView>('root');
+  useEffect(() => {
+    menuViewRef.current = menuView;
+  }, [menuView]);
+  useEffect(() => {
+    if (!open) return;
+    const layer = pushLayer(() => {
+      if (menuViewRef.current !== 'root') {
+        setMenuDirection('back');
+        setMenuView('root');
       } else {
-        await refreshUser();
+        setOpen(false);
       }
-    } catch {
-      setLocale(previousLocale);
-      await refreshUser();
-    } finally {
-      setUpdatingLanguage(false);
-    }
-  };
+    });
+    return () => layer.remove();
+  }, [open]);
 
   // Админка и внешние сайты в приложении открываются в системном браузере.
   const openOutside = (url: string) => (event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -296,8 +351,9 @@ export default function AppNavClient() {
             <button
               type="button"
               className={`${styles.menuButton} app-menu-btn`}
-              onClick={() => setOpen(true)}
+              onClick={openMenu}
               aria-label={messages.nav.menuAria}
+              aria-expanded={open}
             >
               <Image src="/icons/bottom-nav/menu.svg" className="bottom-nav__icon" alt="" aria-hidden="true" width={22} height={22} />
             </button>
@@ -343,114 +399,124 @@ export default function AppNavClient() {
       </nav>
 
       {open ? (
-        <div className="app-drawer-overlay" onClick={() => setOpen(false)}>
-          <div className="app-drawer" style={isNativeApp() ? NATIVE_DRAWER_STYLE : undefined} onClick={(e) => e.stopPropagation()}>
+        <div className={`app-drawer-overlay ${styles.drawerOverlay}`} onClick={closeMenu}>
+          <div
+            className={`app-drawer ${styles.drawer}`}
+            style={isNativeApp() ? NATIVE_DRAWER_STYLE : undefined}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={messages.nav.menuAria}
+            data-testid="app-drawer"
+          >
             <div className="app-drawer__top">
-              <div className={styles.drawerIdentity}>
-                <div className={styles.drawerName}>{me?.username || messages.nav.unauthorized}</div>
-              </div>
+              {menuView === 'admin' ? (
+                <div className={styles.drawerLevelHead}>
+                  <button type="button" className={styles.drawerBack} onClick={() => showMenuLevel('root')} data-testid="drawer-back">
+                    <span aria-hidden="true">‹</span> {kitText.back}
+                  </button>
+                  <div className={styles.drawerName}>{menuText.admin}</div>
+                </div>
+              ) : (
+                <div className={styles.drawerIdentity}>
+                  <div className={styles.drawerName}>{me?.username || messages.nav.unauthorized}</div>
+                </div>
+              )}
 
-              <button type="button" className="app-drawer__close" onClick={() => setOpen(false)} aria-label={messages.nav.closeAria}>
+              <button type="button" className="app-drawer__close" onClick={closeMenu} aria-label={messages.nav.closeAria}>
                 ✕
               </button>
             </div>
 
-            <div className="app-drawer__links">
-              {me?.username ? (
-                <Link className={linkClass('/profile')} href="/profile" onClick={() => setOpen(false)}>
-                  {messages.nav.drawer.profile}
-                </Link>
-              ) : null}
-
-              {me?.username ? (
-                <button
-                  type="button"
-                  className="app-drawer__btn"
-                  onClick={() => {
-                    setFavoritesOpen(true);
-                    setOpen(false);
-                  }}
-                >
-                  {messages.nav.drawer.favoriteExercises}
-                </button>
-              ) : null}
-
-              {me?.isAdmin ? (
-                isNativeApp() ? (
-                  <a className="app-drawer__btn" href={publicLink('/admin/users')} onClick={openOutside(publicLink('/admin/users'))}>
-                    {messages.nav.drawer.admin}
-                  </a>
-                ) : (
-                  <Link className={linkClass('/admin/users')} href="/admin/users" onClick={() => setOpen(false)}>
-                    {messages.nav.drawer.admin}
+            {menuView === 'admin' && me?.isAdmin ? (
+              <div key="admin" className={`app-drawer__links ${styles.drawerLinks} ui-slide-in`}>
+                {[
+                  { href: '/admin/users', label: menuText.adminUsers },
+                  { href: '/admin/growth', label: menuText.adminGrowth },
+                ].map((item) =>
+                  isNativeApp() ? (
+                    <a key={item.href} className="app-drawer__btn" href={publicLink(item.href)} onClick={openOutside(publicLink(item.href))}>
+                      {item.label}
+                    </a>
+                  ) : (
+                    <Link key={item.href} className={linkClass(item.href)} href={item.href} onClick={closeMenu}>
+                      {item.label}
+                    </Link>
+                  ),
+                )}
+              </div>
+            ) : (
+              <div key="root" className={`app-drawer__links ${styles.drawerLinks} ${menuDirection === 'back' ? 'ui-slide-back' : ''}`}>
+                {me?.username ? (
+                  <Link className={linkClass('/profile')} href="/profile" onClick={closeMenu}>
+                    {messages.nav.drawer.profile}
                   </Link>
-                )
-              ) : null}
+                ) : null}
 
-              {me?.isAdmin ? (
-                isNativeApp() ? (
-                  <a className="app-drawer__btn" href={publicLink('/admin/growth')} onClick={openOutside(publicLink('/admin/growth'))}>
-                    {growthMessages[locale === 'en' ? 'en' : 'ru'].navLabel}
-                  </a>
-                ) : (
-                  <Link className={linkClass('/admin/growth')} href="/admin/growth" onClick={() => setOpen(false)}>
-                    {growthMessages[locale === 'en' ? 'en' : 'ru'].navLabel}
-                  </Link>
-                )
-              ) : null}
+                {me?.isAdmin ? (
+                  <button
+                    type="button"
+                    className={`app-drawer__btn ${styles.drawerNext} ${pathname?.startsWith('/admin') ? 'app-drawer__btn--active' : ''}`}
+                    onClick={() => showMenuLevel('admin')}
+                    data-testid="drawer-admin"
+                  >
+                    <span>{menuText.admin}</span>
+                    <span className={styles.drawerChevron} aria-hidden="true">›</span>
+                  </button>
+                ) : null}
 
-              {me?.username ? (
-                <button
-                  type="button"
+                {me?.username ? (
+                  <button
+                    type="button"
+                    className="app-drawer__btn"
+                    onClick={() => {
+                      setFeedbackOpen(true);
+                      setOpen(false);
+                    }}
+                  >
+                    {messages.nav.drawer.feedback}
+                  </button>
+                ) : null}
+
+                <a
                   className="app-drawer__btn"
-                  onClick={() => {
-                    setFeedbackOpen(true);
-                    setOpen(false);
-                  }}
+                  href={SUPPORT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={openOutside(SUPPORT_URL)}
                 >
-                  {messages.nav.drawer.feedback}
-                </button>
-              ) : null}
+                  {messages.nav.drawer.support}
+                </a>
 
-              <a
-                className="app-drawer__btn"
-                href={SUPPORT_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={openOutside(SUPPORT_URL)}
-              >
-                {messages.nav.drawer.support}
-              </a>
+                {me?.username ? (
+                  <div className={styles.languageWrap}>
+                    <LanguageSelect
+                      value={locale}
+                      onChange={handleLanguageChange}
+                      label={messages.common.language}
+                      disabled={updatingLanguage}
+                    />
+                  </div>
+                ) : null}
 
-              {me?.username ? (
-                <div className={styles.languageWrap}>
-                  <LanguageSelect
-                    value={locale}
-                    onChange={handleLanguageChange}
-                    label={messages.common.language}
-                    disabled={updatingLanguage}
-                  />
-                </div>
-              ) : null}
+                <div style={{ height: 8 }} />
 
-              <div style={{ height: 8 }} />
-
-              {me?.username ? (
-                <button type="button" className="app-drawer__btn app-drawer__btn--danger" onClick={logout}>
-                  {messages.nav.drawer.logout}
-                </button>
-              ) : (
-                <Link className={linkClass('/login')} href="/login" onClick={() => setOpen(false)}>
-                  {messages.nav.drawer.login}
-                </Link>
-              )}
-            </div>
+                {me?.username ? (
+                  <button type="button" className="app-drawer__btn app-drawer__btn--danger" onClick={logout}>
+                    {messages.nav.drawer.logout}
+                  </button>
+                ) : (
+                  <Link className={linkClass('/login')} href="/login" onClick={closeMenu}>
+                    {messages.nav.drawer.login}
+                  </Link>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ) : null}
 
       <FeedbackSheet open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
-      <ExerciseFavoritesSheet open={favoritesOpen} onClose={() => setFavoritesOpen(false)} />
     </>
   );
 }

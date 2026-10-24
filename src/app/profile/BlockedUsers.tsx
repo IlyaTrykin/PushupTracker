@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '@/i18n/provider';
 import { fillModeration, moderationText } from '@/i18n/messages/features/moderation';
 import { mediaUrl } from '@/lib/platform';
+import { InfoButton } from '@/components/ui';
 
 type BlockedUser = { userId: string; username: string; avatarPath: string | null; createdAt: string };
 
@@ -57,8 +58,10 @@ export default function BlockedUsers() {
 
   return (
     <section style={panelCard} data-testid="blocked-users">
-      <div style={sectionTitle}>{text.blockedTitle}</div>
-      <div style={fieldHint}>{text.blockedHint}</div>
+      <div style={{ ...sectionTitle, display: 'flex', alignItems: 'center', gap: 4 }}>
+        {text.blockedTitle}
+        <InfoButton title={text.blockedTitle}>{text.blockedHint}</InfoButton>
+      </div>
       {error ? <div style={{ color: '#b91c1c', fontSize: 14 }}>{error}</div> : null}
       {info ? <div style={{ color: '#047857', fontSize: 14 }}>{info}</div> : null}
       {blocks && blocks.length === 0 ? <div style={fieldHint}>{text.blockedEmpty}</div> : null}

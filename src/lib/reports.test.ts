@@ -6,6 +6,7 @@ import {
   REPORT_TEXT_MAX_LENGTH,
   buildReportEmail,
   parseReportStatus,
+  sendReportEmail,
   submitReport,
   type ReportDeps,
   type ReportEmailData,
@@ -162,4 +163,46 @@ test('report status accepts only new and reviewed', () => {
   assert.equal(parseReportStatus('reviewed'), 'reviewed');
   assert.equal(parseReportStatus('closed'), null);
   assert.equal(parseReportStatus(undefined), null);
+});
+
+test('G05.1: a report is mailed to FEEDBACK_TO; the subject says it is a report, the letter names the reason', async () => {
+  // Общий почтовый слой с тестовым ключом Resend; запрос к его API перехватывается — наружу ничего не уходит.
+  const keys = ['FEEDBACK_TO', 'FEEDBACK_PROJECT_LABEL', 'APP_URL', 'MAIL_PROVIDER', 'RESEND_API_KEY', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS'];
+  const savedEnv = new Map(keys.map((key) => [key, process.env[key]]));
+  const savedFetch = globalThis.fetch;
+  const sent: { url: string; body: { to: string[]; subject: string; text: string } }[] = [];
+  for (const key of keys) delete process.env[key];
+  Object.assign(process.env, { FEEDBACK_TO: 'owner@example.test', RESEND_API_KEY: 'test-key', APP_URL: 'https://tracker.example.test', FEEDBACK_PROJECT_LABEL: 'PushUp Tracker' });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    sent.push({ url: String(input instanceof Request ? input.url : input), body: JSON.parse(String(init?.body)) });
+    return new Response('{"id":"stub"}', { status: 200 });
+  }) as typeof fetch;
+  try {
+    const result = await sendReportEmail({
+      id: 'rep1',
+      reporter: { id: 'ann', username: 'ann' },
+      target: { id: 'bob', username: 'bob' },
+      context: 'profile',
+      contextLabel: null,
+      reason: 'cheating',
+      text: null,
+    });
+    assert.equal(result.sent, true);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].url, 'https://api.resend.com/emails');
+    assert.deepEqual(sent[0].body.to, ['owner@example.test']);
+    assert.match(sent[0].body.subject, /^\[PushUp Tracker\] Жалоба/);
+    assert.match(sent[0].body.text, /Причина: накрутка результатов/);
+    assert.match(sent[0].body.text, /https:\/\/tracker\.example\.test\/admin\/reports/);
+
+    delete process.env.FEEDBACK_TO;
+    assert.deepEqual(await sendReportEmail({ id: 'rep2', reporter: { id: 'ann', username: 'ann' }, target: { id: 'bob', username: 'bob' }, context: 'profile', contextLabel: null, reason: 'spam', text: null }), { sent: false });
+    assert.equal(sent.length, 1);
+  } finally {
+    globalThis.fetch = savedFetch;
+    for (const [key, value] of savedEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 });

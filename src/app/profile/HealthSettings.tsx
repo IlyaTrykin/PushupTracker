@@ -31,8 +31,9 @@ const noSubscribe = () => () => undefined;
  * copies the whole history with a progress line; on the site the block is not shown at all.
  * «Передавать калории в Health» (по умолчанию включён) — против задвоения с часами: переключение
  * переписывает записи истории с энергией или без. Без веса в профиле — приглашение его указать.
+ * `showTitle={false}` — внутри раздела «Профиль → Здоровье», где заголовок уже в шапке уровня.
  */
-export default function HealthSettings() {
+export default function HealthSettings({ showTitle = true }: { showTitle?: boolean } = {}) {
   const { locale } = useI18n();
   const { user, refreshUser } = useAuth();
   const text = nativeHealthMessages[locale === 'en' ? 'en' : 'ru'];
@@ -127,29 +128,40 @@ export default function HealthSettings() {
   const apple = platform === 'apple_health';
   const summary = platform === 'apple_health' ? text.summaryAppleHealth : text.summaryHealthConnect;
 
+  // Пояснения — под «i» (R11): что уходит в Health, калории, данные тела, кольца, импорт.
+  const info = (
+    <InfoButton title={text.infoTitle}>
+      <p>{summary}</p>
+      <p>{text.infoCalories}</p>
+      <p>{apple ? text.infoBodyAppleHealth : text.infoBodyHealthConnect}</p>
+      <p>{apple ? text.infoRingsAppleHealth : text.infoRingsHealthConnect}</p>
+      <p>{apple ? text.importLinkHintAppleHealth : text.importLinkHintHealthConnect}</p>
+    </InfoButton>
+  );
+
   return (
     <section style={panelCard} data-testid="health-settings">
-      <div style={titleRow}>
-        <div style={sectionTitle}>{text.sectionTitle}</div>
-        <InfoButton title={text.infoTitle}>
-          <p>{text.infoCalories}</p>
-          <p>{apple ? text.infoBodyAppleHealth : text.infoBodyHealthConnect}</p>
-          <p>{apple ? text.infoRingsAppleHealth : text.infoRingsHealthConnect}</p>
-        </InfoButton>
+      {showTitle ? (
+        <div style={titleRow}>
+          <div style={sectionTitle}>{text.sectionTitle}</div>
+          {info}
+        </div>
+      ) : null}
+      <div style={{ ...titleRow, justifyContent: 'flex-start' }}>
+        <label style={switchRow}>
+          <input
+            type="checkbox"
+            role="switch"
+            aria-checked={on}
+            checked={on}
+            disabled={busy}
+            onChange={(e) => void toggle(e.target.checked)}
+            style={{ width: 22, height: 22, accentColor: '#ea580c' }}
+          />
+          <span style={{ fontWeight: 800, color: '#0f172a' }}>{label}</span>
+        </label>
+        {showTitle ? null : info}
       </div>
-      <div style={fieldHint}>{summary}</div>
-      <label style={switchRow}>
-        <input
-          type="checkbox"
-          role="switch"
-          aria-checked={on}
-          checked={on}
-          disabled={busy}
-          onChange={(e) => void toggle(e.target.checked)}
-          style={{ width: 22, height: 22, accentColor: '#ea580c' }}
-        />
-        <span style={{ fontWeight: 800, color: '#0f172a' }}>{label}</span>
-      </label>
       {on ? (
         <div style={{ display: 'grid', gap: 2 }}>
           <label style={switchRow}>
@@ -184,9 +196,8 @@ export default function HealthSettings() {
           {notice.text}
         </div>
       ) : null}
-      <div style={{ display: 'grid', gap: 4 }}>
+      <div>
         <Link href="/health-import" style={importLinkStyle} data-testid="health-import-link">{text.importLink}</Link>
-        <div style={fieldHint}>{platform === 'apple_health' ? text.importLinkHintAppleHealth : text.importLinkHintHealthConnect}</div>
       </div>
       {notice?.action ? (
         <div>
