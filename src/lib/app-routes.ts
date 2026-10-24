@@ -10,6 +10,8 @@ export type RouteTarget = 'web' | 'native';
 export type GroupTab = 'challenges' | 'manage' | 'members';
 
 const GROUP_TABS: readonly GroupTab[] = ['challenges', 'manage', 'members'];
+/** Статические экраны раздела «Программа» (не id программы). */
+const PROGRAM_STATIC_ROUTES: readonly string[] = ['view', 'session', 'circuits'];
 
 function resolveTarget(target?: RouteTarget): RouteTarget {
   return target ?? (isNativeApp() ? 'native' : 'web');
@@ -72,7 +74,8 @@ function nativePathFor(segments: string[]): string | null {
   if (rest.length > 0) return null;
   if (section === 'challenges' && a && a !== 'view' && b === undefined) return challengeHref(safeDecode(a), 'native');
   if (section === 'program' && a === 'session' && b && c === undefined) return programSessionHref(safeDecode(b), 'native');
-  if (section === 'program' && a && a !== 'view' && a !== 'session' && b === undefined) return programHref(safeDecode(a), 'native');
+  // `/program/circuits` — статический экран «Круговые», а не программа с id «circuits».
+  if (section === 'program' && a && !PROGRAM_STATIC_ROUTES.includes(a) && b === undefined) return programHref(safeDecode(a), 'native');
   if (section === 'groups' && a && a !== 'view' && a !== 'member') {
     const id = safeDecode(a);
     if (b === undefined) return groupHref(id, undefined, 'native');
@@ -100,4 +103,14 @@ export function toAppRoute(webPath: string): string {
 /** Ссылка с сервера (`Notification.link`, пуш): на сайте — как есть, в приложении — маршрут приложения. */
 export function linkHref(link: string, target?: RouteTarget): string {
   return resolveTarget(target) === 'native' ? toAppRoute(link) : link;
+}
+
+/** Экран «Круговые» (`?section=` — уровень внутри: шаблон, конструктор, проход). Один маршрут на сайте и в приложении. */
+export function circuitsHref(section?: string): string {
+  return section ? `/program/circuits?${query({ section })}` : '/program/circuits';
+}
+
+/** Мастер круговой программы на странице «Программа» (необязательно — с выбранной ротацией). */
+export function circuitProgramWizardHref(planId?: string): string {
+  return `/program?${query({ wizard: 'circuit', plan: planId })}`;
 }

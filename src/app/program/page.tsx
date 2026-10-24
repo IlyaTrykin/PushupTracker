@@ -5,11 +5,13 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
-import { programHref, programSessionHref } from '@/lib/app-routes';
+import { circuitsHref, programHref, programSessionHref } from '@/lib/app-routes';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
 import {
+  CIRCUIT_PROGRAM_FREQUENCY,
+  CIRCUIT_PROGRAM_WEEKS,
   PROGRAM_EXERCISE_TYPES,
   programLabel,
   programStartAlternatives,
@@ -28,7 +30,9 @@ import {
   type ProgramKind,
 } from '@/lib/exercises';
 import { programsMessages } from '@/i18n/messages/features/programs';
+import { circuitsMessages } from '@/i18n/messages/features/circuits';
 import { InfoButton, Sheet } from '@/components/ui';
+import { CIRCUIT_PLANS, getCircuitPlan, getCircuitTemplate } from '@/lib/circuits';
 
 type TrainingSet = {
   id: string;
@@ -38,6 +42,7 @@ type TrainingSet = {
   restSeconds: number;
   isKeySet: boolean;
   loadKg?: number | null;
+  round?: number | null;
 };
 
 type TrainingSession = {
@@ -49,7 +54,10 @@ type TrainingSession = {
   completed: boolean;
   completedAt: string | null;
   isFinalTest?: boolean;
-  sessionKind?: DistanceSessionKind | null;
+  sessionKind?: DistanceSessionKind | 'test' | null;
+  /** Круговая: буква дня ротации и шаблон круга. */
+  dayLabel?: string | null;
+  circuitTemplateId?: string | null;
   sets: TrainingSet[];
 };
 
@@ -269,7 +277,17 @@ function formatDayTitle(dayKey: string, locale: string) {
   });
 }
 
-function renderSessionSetPlan(session: TrainingSession, exerciseType: string | undefined, locale: string) {
+function isCircuitSession(exerciseType: string | undefined): boolean {
+  return exerciseType === 'circuit';
+}
+
+function renderSessionSetPlan(session: TrainingSession, exerciseType: string | undefined, locale: 'ru' | 'en') {
+  if (isCircuitSession(exerciseType)) {
+    // Круговая: «Дом: всё тело · кругов: 3» (буква дня — в заголовке занятия).
+    const template = getCircuitTemplate(session.circuitTemplateId);
+    const rounds = Math.max(1, ...session.sets.map((s) => s.round ?? 1));
+    return [template?.title[locale], circuitsMessages[locale].program.rounds(rounds)].filter(Boolean).join(' · ');
+  }
   const distance = programKind(exerciseType) === 'distance';
   return session.sets
     .slice()
@@ -320,6 +338,7 @@ export default function ProgramPage() {
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
   const text = programsMessages[locale];
+  const circuitText = circuitsMessages[locale];
   const cacheKey = useMemo(() => getUserScopedCacheKey('program', user?.id, user?.username), [user?.id, user?.username]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -339,6 +358,13 @@ export default function ProgramPage() {
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
   // Дистанция вводится в километрах; в форме — метры.
   const [kmDrafts, setKmDrafts] = useState<{ baseline: string; target: string }>({ baseline: '3', target: '5' });
+  // Мастер круговой программы: ротация дней A/B/C, недели 4–12, занятий в неделю 2–4.
+  const [circuitWizard, setCircuitWizard] = useState(false);
+  const [circuitForm, setCircuitForm] = useState({
+    planId: CIRCUIT_PLANS[0].id,
+    weeks: CIRCUIT_PROGRAM_WEEKS.default as number,
+    frequency: CIRCUIT_PROGRAM_FREQUENCY.default as number,
+  });
 
   const [form, setForm] = useState<CreateForm>({
     exerciseType: 'pushups',
@@ -533,15 +559,53 @@ export default function ProgramPage() {
     openWizard(2);
   }, [chooseExercise, openWizard]);
 
-  // `/program?start=<упражнение>&loadKg=<кг>` — ссылка «следующая гиря» со страницы программы.
+  // `/program?start=<упражнение>&loadKg=<кг>` — ссылка «следующая гиря» со страницы программы;
+  // `/program?wizard=circuit&plan=<ротация>` — «Взять программу» с экрана «Круговые».
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
+    if (params.get('wizard') === 'circuit') {
+      const plan = getCircuitPlan(params.get('plan'));
+      setCircuitForm((f) => ({ ...f, planId: plan?.id ?? f.planId }));
+      setCircuitWizard(true);
+      return;
+    }
     const start = params.get('start');
     if (!start || !isExerciseType(start)) return;
     const kg = Number(params.get('loadKg'));
     startProgramFor(start, Number.isFinite(kg) && kg > 0 ? kg : null);
   }, [startProgramFor]);
+
+  const closeCircuitWizard = () => {
+    setCircuitWizard(false);
+    // Параметры мастера из ссылки не должны открыть его снова при обновлении страницы.
+    if (new URLSearchParams(window.location.search).get('wizard')) window.history.replaceState(null, '', window.location.pathname);
+  };
+
+  const submitCircuitProgram = async () => {
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      await fetchJson('/api/program', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          programType: 'circuit',
+          circuitPlanId: circuitForm.planId,
+          durationWeeks: circuitForm.weeks,
+          frequencyPerWeek: circuitForm.frequency,
+        }),
+      });
+      closeCircuitWizard();
+      setInfo(circuitText.program.created);
+      await load();
+    } catch (e) {
+      setError(getErrorMessage(e) || circuitText.program.failed);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const cancelCreate = () => {
     setShowCreate(false);
@@ -692,17 +756,36 @@ export default function ProgramPage() {
   }, [activePrograms, history]);
 
   const sessionTitle = (session: SessionRow) => {
-    const label = programLabel(session, locale);
-    return session.sessionKind ? `${label} · ${text.sessionKind[session.sessionKind]}` : label;
+    const parts = [programLabel(session, locale)];
+    if (session.dayLabel) parts.push(circuitText.program.day(session.dayLabel));
+    if (session.sessionKind === 'test') parts.push(circuitText.program.testCircuit);
+    else if (session.sessionKind) parts.push(text.sessionKind[session.sessionKind]);
+    return parts.join(' · ');
   };
+
+  // Круговые занятия в показанном месяце — для легенды календаря (буква дня вместо иконки).
+  const calendarHasCircuit = calendarCells.some(
+    (cell) => cell && (sessionsByDay.get(cell.key)?.sessions || []).some((session) => isCircuitSession(session.exerciseType)),
+  );
 
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button type="button" style={btnSecondary} onClick={() => setCircuitWizard(true)} data-testid="circuit-program-open">
+          {circuitText.program.title}
+        </button>
         <button type="button" style={btnPrimary} onClick={beginCreate}>
           {tt('Новая программа тренировок')}
         </button>
       </div>
+
+      <Link href={circuitsHref()} style={circuitsEntry} data-testid="circuits-entry">
+        <span>
+          <b style={{ display: 'block', fontSize: 17 }}>{circuitText.screen.entry}</b>
+          <span style={{ color: '#4b5563', fontSize: 14 }}>{circuitText.screen.entryHint}</span>
+        </span>
+        <span aria-hidden="true" style={{ fontSize: 26, color: '#9ca3af' }}>›</span>
+      </Link>
 
       {error ? <p style={{ color: '#dc2626' }}>{error}</p> : null}
       {info ? <p style={{ color: '#16a34a' }}>{info}</p> : null}
@@ -797,6 +880,17 @@ export default function ProgramPage() {
                   const dayContent = (
                     <>
                       <div style={{ fontWeight: 900, color: '#000' }}>{cell.day}</div>
+                      {(row?.sessions || []).some((s) => isCircuitSession(s.exerciseType)) ? (
+                        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                          {(row?.sessions || [])
+                            .filter((s) => isCircuitSession(s.exerciseType))
+                            .map((s) => (
+                              <span key={s.id} style={dayLetterBadge} title={s.dayLabel ? circuitText.program.day(s.dayLabel) : circuitText.program.legend}>
+                                {s.dayLabel || '○'}
+                              </span>
+                            ))}
+                        </div>
+                      ) : null}
                       {exerciseTypes.length ? (
                         <div style={{ display: 'flex', gap: 'clamp(4px, 0.5vw, 8px)', flexWrap: 'wrap', marginLeft: -1 }}>
                           {exerciseTypes.map((exerciseType) => (
@@ -842,6 +936,12 @@ export default function ProgramPage() {
               </div>
 
               <div style={calendarLegendWrap}>
+                {calendarHasCircuit ? (
+                  <div style={calendarLegendItem}>
+                    <span style={dayLetterBadge}>A</span>
+                    <span>{circuitText.program.legend}</span>
+                  </div>
+                ) : null}
                 {calendarTypes.map((exerciseType) => (
                   <div key={exerciseType} style={calendarLegendItem}>
                     <Image src={exerciseFeedIcon(exerciseType)} alt={tt(exerciseLabel(exerciseType))} width={24} height={24} style={calendarLegendIcon} unoptimized />
@@ -876,9 +976,19 @@ export default function ProgramPage() {
                           {programLabel(program, locale)}
                         </div>
                       </div>
-                      <div style={{ marginTop: 4, color: '#111827' }}>
-                        {tt('База')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true, locale)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true, locale)}</b> · {tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')}
-                      </div>
+                      {isCircuitSession(program.exerciseType) ? (
+                        <div style={{ marginTop: 4, color: '#111827' }}>
+                          {(getCircuitPlan(program.circuitPlanId)?.days ?? [])
+                            .map((d) => `${circuitText.program.day(d.label)}: ${getCircuitTemplate(d.templateId)?.title[locale] ?? d.templateId}`)
+                            .join(' · ')}
+                          {' · '}
+                          {tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')}
+                        </div>
+                      ) : (
+                        <div style={{ marginTop: 4, color: '#111827' }}>
+                          {tt('База')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true, locale)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true, locale)}</b> · {tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')}
+                        </div>
+                      )}
                       <div style={{ marginTop: 4, color: '#111827' }}>
                         {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')} · {tt('Прогресс')}: <b>{program.stats.completionPercent}%</b>
                       </div>
@@ -1251,9 +1361,114 @@ export default function ProgramPage() {
           </div>
         ) : null}
       </Sheet>
+
+      <Sheet
+        open={circuitWizard}
+        onClose={closeCircuitWizard}
+        title={circuitText.program.title}
+        testId="circuit-program-wizard"
+        footer={(
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" style={btnSecondary} onClick={closeCircuitWizard} disabled={busy}>{tt('Отмена')}</button>
+            <button type="button" style={btnPrimary} onClick={() => void submitCircuitProgram()} disabled={busy} data-testid="circuit-program-create">
+              {busy ? circuitText.program.creating : circuitText.program.create}
+            </button>
+          </div>
+        )}
+      >
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div style={labelRow}>
+            <b>{circuitText.program.plan}</b>
+            <InfoButton title={circuitText.program.title}>
+              <p>{circuitText.program.info}</p>
+              <p>{circuitText.screen.safety}</p>
+            </InfoButton>
+          </div>
+          <div style={{ display: 'grid', gap: 8 }} role="radiogroup" aria-label={circuitText.program.plan}>
+            {CIRCUIT_PLANS.map((plan) => {
+              const selected = circuitForm.planId === plan.id;
+              return (
+                <label key={plan.id} style={{ ...programCard, display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', borderColor: selected ? '#2563eb' : '#e5e7eb' }}>
+                  <input
+                    type="radio"
+                    name="circuit-plan"
+                    value={plan.id}
+                    checked={selected}
+                    onChange={() => setCircuitForm((f) => ({ ...f, planId: plan.id }))}
+                    style={{ marginTop: 4 }}
+                  />
+                  <span>
+                    <b>{plan.title[locale]}</b>
+                    <span style={{ display: 'block', ...hint }}>
+                      {plan.days.map((d) => `${circuitText.program.day(d.label)}: ${getCircuitTemplate(d.templateId)?.title[locale] ?? d.templateId}`).join(' · ')}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <div style={grid2}>
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span>{circuitText.program.weeks}</span>
+              <select
+                value={circuitForm.weeks}
+                onChange={(e) => setCircuitForm((f) => ({ ...f, weeks: Number(e.target.value) }))}
+                style={inputStyle}
+                data-testid="circuit-program-weeks"
+              >
+                {Array.from({ length: CIRCUIT_PROGRAM_WEEKS.max - CIRCUIT_PROGRAM_WEEKS.min + 1 }, (_, i) => CIRCUIT_PROGRAM_WEEKS.min + i).map((w) => (
+                  <option key={w} value={w}>{w}</option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span>{circuitText.program.frequency}</span>
+              <select
+                value={circuitForm.frequency}
+                onChange={(e) => setCircuitForm((f) => ({ ...f, frequency: Number(e.target.value) }))}
+                style={inputStyle}
+                data-testid="circuit-program-frequency"
+              >
+                {Array.from({ length: CIRCUIT_PROGRAM_FREQUENCY.max - CIRCUIT_PROGRAM_FREQUENCY.min + 1 }, (_, i) => CIRCUIT_PROGRAM_FREQUENCY.min + i).map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      </Sheet>
     </div>
   );
 }
+
+const circuitsEntry: React.CSSProperties = {
+  marginTop: 14,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 10,
+  minHeight: 56,
+  border: '1px solid #e5e7eb',
+  borderRadius: 12,
+  background: '#fff',
+  padding: '10px 14px',
+  color: '#111827',
+  textDecoration: 'none',
+};
+
+const dayLetterBadge: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minWidth: 18,
+  height: 18,
+  borderRadius: 999,
+  background: '#4f46e5',
+  color: '#fff',
+  fontSize: 11,
+  fontWeight: 900,
+  padding: '0 4px',
+};
 
 const card: React.CSSProperties = {
   marginTop: 14,

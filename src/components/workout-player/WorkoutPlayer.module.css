@@ -1,0 +1,291 @@
+.card {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #f9fafb;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.lead {
+  margin: 0;
+  font-weight: 800;
+}
+
+.planTitle {
+  font-weight: 900;
+}
+
+.planList {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 4px;
+  color: #111827;
+}
+
+.planDone {
+  color: #9ca3af;
+  text-decoration: line-through;
+}
+
+.planCurrent {
+  font-weight: 900;
+}
+
+.progressRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #475569;
+}
+
+.progressBar {
+  height: 6px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.progressBar > span {
+  display: block;
+  height: 100%;
+  background: #22c55e;
+  transition: width 0.2s ease;
+}
+
+.timerWrap {
+  min-height: 46vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.stepTitle {
+  font-weight: 900;
+  font-size: 20px;
+}
+
+.moves {
+  margin: 0;
+  padding-left: 20px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  color: #374151;
+}
+
+.clock {
+  font-weight: 900;
+  line-height: 1;
+  font-size: clamp(72px, 22vw, 170px);
+  letter-spacing: 2px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.clockDanger {
+  color: #dc2626;
+}
+
+.buttonsRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.exercise {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+}
+
+.meta {
+  font-size: 14px;
+  font-weight: 800;
+  color: #475569;
+}
+
+.exerciseHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+}
+
+.exerciseIcon {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
+.exerciseName {
+  font-size: clamp(26px, 7vw, 40px);
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.targetLine {
+  font-size: 18px;
+  color: #111827;
+}
+
+.load {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #3730a3;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.inputs {
+  width: min(100%, 520px);
+  display: grid;
+  gap: 12px;
+}
+
+.sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.stepper {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inputLabel {
+  font-size: 12px;
+  font-weight: 800;
+  color: #475569;
+  text-align: center;
+}
+
+.bigInput {
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+  font-weight: 800;
+  font-size: clamp(48px, 14vw, 120px);
+  line-height: 1.05;
+  padding: 10px 8px;
+  border-radius: 16px;
+  border: 2px solid #e5e7eb;
+  outline: none;
+  color: #000;
+  background: #fff;
+}
+
+.sides .bigInput {
+  font-size: clamp(40px, 11vw, 90px);
+}
+
+.pmRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.minus,
+.plus {
+  min-height: clamp(56px, 15vw, 96px);
+  width: 100%;
+  border-radius: 14px;
+  border: none;
+  color: #000;
+  font-weight: 800;
+  font-size: clamp(26px, 7vw, 44px);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.minus {
+  background: #fca5a5;
+}
+
+.plus {
+  background: #86efac;
+}
+
+.minus:disabled,
+.plus:disabled,
+.primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sideName {
+  font-weight: 900;
+  font-size: 18px;
+}
+
+.timeField {
+  display: grid;
+  gap: 6px;
+}
+
+.timeInput {
+  width: 100%;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 800;
+  padding: 10px;
+  border-radius: 12px;
+  border: 2px solid #e5e7eb;
+  background: #fff;
+}
+
+.primary {
+  border: none;
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 900;
+  font-size: 20px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.secondary {
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 10px 14px;
+  min-height: 44px;
+  background: #fff;
+  color: #111827;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.error {
+  margin: 0;
+  color: #dc2626;
+  font-weight: 700;
+  text-align: center;
+}
+
+.next {
+  border-top: 1px dashed #d1d5db;
+  padding-top: 10px;
+  font-size: 15px;
+  color: #374151;
+}
+
+.nextLabel {
+  font-weight: 900;
+}

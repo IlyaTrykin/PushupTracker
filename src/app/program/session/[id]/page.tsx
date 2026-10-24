@@ -3,23 +3,35 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { useRouteParam } from '@/lib/use-route-param';
-import { getLocaleTimerAudio } from '@/i18n/locale';
-import { t } from '@/i18n/translate';
 import { programSessionMessages } from '@/i18n/messages/features/program-session';
-import { exerciseValueLabel, formatExerciseValue, isTimedExercise } from '@/lib/exercise-metrics';
-import type { ExerciseType } from '@/lib/exercises';
+import { programsMessages } from '@/i18n/messages/features/programs';
+import { circuitsMessages } from '@/i18n/messages/features/circuits';
+import { BackButton, InfoButton } from '@/components/ui';
+import { WorkoutPlayer } from '@/components/workout-player';
+import { getCircuitTemplate } from '@/lib/circuits';
+import { isDistanceExercise } from '@/lib/exercises';
 import { syncWorkoutToHealth } from '@/lib/health/health';
 import { programSetHealthSource } from '@/lib/health/mapping';
+import { programLabel, programSetWorkoutReps, type ProgramSessionKind } from '@/lib/program-plan';
+import { programSessionSteps, programSetBody, type PlayerStep, type StepResult } from '@/lib/workout-player';
 
 type TrainingSet = {
   id: string;
   setNumber: number;
   targetReps: number;
   actualReps: number | null;
+  actualLeft?: number | null;
+  actualRight?: number | null;
+  actualSeconds?: number | null;
   restSeconds: number;
   isKeySet: boolean;
+  exerciseType?: string | null;
+  loadKg?: number | null;
+  round?: number | null;
+  station?: number | null;
 };
 
 type TrainingSession = {
@@ -28,6 +40,9 @@ type TrainingSession = {
   sessionNumber: number;
   scheduledAt: string;
   isFinalTest?: boolean;
+  sessionKind?: ProgramSessionKind | null;
+  dayLabel?: string | null;
+  circuitTemplateId?: string | null;
   startedAt: string | null;
   completed: boolean;
   completedAt: string | null;
@@ -37,6 +52,9 @@ type TrainingSession = {
 type ProgramDetail = {
   id: string;
   exerciseType: string;
+  programType?: string | null;
+  loadKg?: number | null;
+  circuitPlanId?: string | null;
   sessions: TrainingSession[];
 };
 
@@ -45,21 +63,6 @@ type JsonObject = Record<string, unknown>;
 type ApiError = Error & {
   code?: string;
   status?: number;
-};
-
-type WakeLockSentinelLike = {
-  release: () => Promise<void>;
-  addEventListener?: (type: 'release', listener: () => void) => void;
-};
-
-type NavigatorWithWakeLock = Navigator & {
-  wakeLock?: {
-    request?: (type: 'screen') => Promise<WakeLockSentinelLike>;
-  };
-};
-
-type WindowWithWebkitAudioContext = Window & {
-  webkitAudioContext?: typeof AudioContext;
 };
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -89,90 +92,49 @@ async function fetchJson(url: string, init?: RequestInit) {
   return data;
 }
 
-function exerciseLabel(exerciseType: string, labels: Record<ExerciseType, string>) {
-  return (labels as Record<string, string>)[exerciseType] ?? exerciseType;
+function numOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function sanitizePositiveInt(value: string): number {
-  const onlyDigits = value.replace(/[^\d]/g, '');
-  const n = Number(onlyDigits || 0);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.min(5000, Math.round(n));
-}
-
-function formatText(template: string, values: Record<string, string | number>) {
-  return Object.entries(values).reduce(
-    (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
-    template,
-  );
-}
-
+/** Занятие программы: пошаговый проигрыватель (обычная, гиревая, «на сторону», дистанция, круговая). */
 export default function ProgramSessionPage() {
   const { locale, messages } = useI18n();
+  const { user } = useAuth();
   const router = useRouter();
   const sessionId = useRouteParam('id') || '';
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-
   const [program, setProgram] = useState<ProgramDetail | null>(null);
   const [session, setSession] = useState<TrainingSession | null>(null);
-
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [actualRepsInput, setActualRepsInput] = useState('');
-  const [plankSecondsLeft, setPlankSecondsLeft] = useState(0);
-  const [plankActive, setPlankActive] = useState(false);
-
-  const [restSeconds, setRestSeconds] = useState(0);
-  const [restPaused, setRestPaused] = useState(false);
-
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   // Synchronous guard: a second tap arrives before `saving` re-renders the disabled button.
   const busyRef = useRef(false);
   const finishCopy = programSessionMessages[locale].finish;
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const lastBeepSecondRef = useRef<number | null>(null);
-  const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
-  const prepareAudioRef = useRef<HTMLAudioElement | null>(null);
-  const startAudioRef = useRef<HTMLAudioElement | null>(null);
-  const prevRestSecondsRef = useRef(0);
-
-  const currentSet = useMemo(() => {
-    if (!session) return null;
-    return session.sets[currentIdx] || null;
-  }, [session, currentIdx]);
-  const isFinalCountdown = restSeconds > 0 && restSeconds <= 5;
-  const isPlank = isTimedExercise(program?.exerciseType);
-  const isPlankFinalCountdown = plankActive && plankSecondsLeft > 0 && plankSecondsLeft <= 3;
-  const timerAudio = useMemo(() => getLocaleTimerAudio(locale), [locale]);
-  const metricInputLabel = useMemo(
-    () => exerciseValueLabel(program?.exerciseType),
-    [program?.exerciseType],
-  );
-  const plankElapsedSeconds = useMemo(() => {
-    if (!currentSet || !isPlank) return 0;
-    return Math.max(0, currentSet.targetReps - plankSecondsLeft);
-  }, [currentSet, isPlank, plankSecondsLeft]);
-  const currentSetId = currentSet?.id ?? null;
-  const allSetsRecorded = Boolean(session && session.sets.length > 0 && session.sets.every((x) => x.actualReps != null));
-  const currentTargetReps = currentSet?.targetReps ?? 0;
+  const circuitText = circuitsMessages[locale];
 
   // A network failure has no server message ("Failed to fetch") — show our own text then.
-  const finishErrorText = (e: unknown) => ((e as ApiError).status ? getErrorMessage(e, finishCopy.failed) : finishCopy.failed);
+  const finishErrorText = useCallback(
+    (e: unknown) => ((e as ApiError).status ? getErrorMessage(e, finishCopy.failed) : finishCopy.failed),
+    [finishCopy.failed],
+  );
 
-  const completeSession = async (id: string) => {
-    try {
-      await fetchJson(`/api/program/session/${id}/complete`, { method: 'POST' });
-      setDone(true);
-      setInfo(messages.programSession.complete.info);
-      return true;
-    } catch (e: unknown) {
-      setError(finishErrorText(e));
-      return false;
-    }
-  };
+  const completeSession = useCallback(
+    async (id: string) => {
+      try {
+        await fetchJson(`/api/program/session/${id}/complete`, { method: 'POST' });
+        setDone(true);
+        setInfo(messages.programSession.complete.info);
+        return true;
+      } catch (e: unknown) {
+        setError(finishErrorText(e));
+        return false;
+      }
+    },
+    [finishErrorText, messages.programSession.complete.info],
+  );
 
   const finishSession = async () => {
     if (!session || busyRef.current) return;
@@ -190,39 +152,25 @@ export default function ProgramSessionPage() {
 
   const load = async (forceStartEarly = false) => {
     if (!sessionId) return;
-
     setLoading(true);
     setError(null);
     try {
       const init: RequestInit = forceStartEarly
-        ? {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ forceStartEarly: true }),
-          }
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ forceStartEarly: true }) }
         : { method: 'POST' };
       const res = await fetchJson(`/api/program/session/${sessionId}/start`, init);
       const response = isJsonObject(res) ? res : null;
       const p = response && isJsonObject(response.program) ? (response.program as ProgramDetail) : null;
       setProgram(p);
-
       const s = p?.sessions.find((x) => x.id === sessionId) || null;
       setSession(s);
-
       if (!s) {
         setError(messages.programSession.errors.sessionNotFound);
       } else if (s.completed) {
         setDone(true);
-      } else {
-        const idx = s.sets.findIndex((x) => x.actualReps == null);
-        const firstIdx = idx >= 0 ? idx : s.sets.length - 1;
-        setCurrentIdx(firstIdx);
-        const target = s.sets[firstIdx]?.targetReps ?? 1;
-        setActualRepsInput(String(target));
-        if (idx < 0 && s.sets.length > 0) {
-          // Every set is recorded but the earlier /complete did not go through — finish now.
-          await completeSession(s.id);
-        }
+      } else if (s.sets.length > 0 && s.sets.every((x) => x.actualReps != null)) {
+        // Every set is recorded but the earlier /complete did not go through — finish now.
+        await completeSession(s.id);
       }
     } catch (e: unknown) {
       const apiError = e as ApiError;
@@ -242,496 +190,185 @@ export default function ProgramSessionPage() {
   };
 
   useEffect(() => {
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  useEffect(() => {
-    if (restSeconds <= 0 || restPaused) return;
-    const t = window.setInterval(() => setRestSeconds((x) => (x > 0 ? x - 1 : 0)), 1000);
-    return () => window.clearInterval(t);
-  }, [restSeconds, restPaused]);
+  const steps = useMemo<PlayerStep[]>(
+    () =>
+      program && session
+        ? programSessionSteps({ exerciseType: program.exerciseType, programType: program.programType, loadKg: program.loadKg, sets: session.sets })
+        : [],
+    [program, session],
+  );
+  const doneIds = useMemo(
+    () => new Set((session?.sets ?? []).filter((s) => s.actualReps != null).map((s) => `set:${s.id}`)),
+    [session],
+  );
+  const allSetsRecorded = Boolean(session && session.sets.length > 0 && session.sets.every((x) => x.actualReps != null));
+  const isCircuit = program?.programType === 'circuit' || program?.exerciseType === 'circuit';
 
-  useEffect(() => {
-    if (!isPlank || currentSetId == null) {
-      setPlankActive(false);
-      setPlankSecondsLeft(0);
-      return;
-    }
-    setPlankActive(false);
-    setPlankSecondsLeft(Math.max(1, currentTargetReps));
-  }, [currentSetId, currentTargetReps, isPlank]);
-
-  useEffect(() => {
-    if (!isPlank || !plankActive || plankSecondsLeft <= 0 || saving) return;
-    const t = window.setInterval(() => setPlankSecondsLeft((x) => (x > 0 ? x - 1 : 0)), 1000);
-    return () => window.clearInterval(t);
-  }, [isPlank, plankActive, plankSecondsLeft, saving]);
-
-  const releaseWakeLock = useCallback(async () => {
-    const sentinel = wakeLockRef.current;
-    wakeLockRef.current = null;
-    if (!sentinel) return;
-    try {
-      await sentinel.release();
-    } catch {}
-  }, []);
-
-  const requestWakeLock = useCallback(async () => {
-    if (typeof window === 'undefined' || typeof document === 'undefined') return;
-    if (document.visibilityState !== 'visible') return;
-    if (wakeLockRef.current) return;
-
-    const wakeLockApi = (navigator as NavigatorWithWakeLock).wakeLock;
-    if (!wakeLockApi?.request) return;
-
-    try {
-      const sentinel = await wakeLockApi.request('screen');
-      wakeLockRef.current = sentinel;
-      sentinel?.addEventListener?.('release', () => {
-        if (wakeLockRef.current === sentinel) wakeLockRef.current = null;
-      });
-    } catch {}
-  }, []);
-
-  const getAudioElements = useCallback(() => {
-    if (typeof window === 'undefined') return null;
-    const prepareSrc = timerAudio.prepare;
-    const startSrc = timerAudio.start;
-
-    if (!prepareAudioRef.current) {
-      prepareAudioRef.current = new Audio(prepareSrc);
-      prepareAudioRef.current.preload = 'auto';
-      prepareAudioRef.current.dataset.clipSrc = prepareSrc;
-    } else if (prepareAudioRef.current.dataset.clipSrc !== prepareSrc) {
-      prepareAudioRef.current.pause();
-      prepareAudioRef.current.src = prepareSrc;
-      prepareAudioRef.current.load();
-      prepareAudioRef.current.dataset.clipSrc = prepareSrc;
-    }
-    if (!startAudioRef.current) {
-      startAudioRef.current = new Audio(startSrc);
-      startAudioRef.current.preload = 'auto';
-      startAudioRef.current.dataset.clipSrc = startSrc;
-    } else if (startAudioRef.current.dataset.clipSrc !== startSrc) {
-      startAudioRef.current.pause();
-      startAudioRef.current.src = startSrc;
-      startAudioRef.current.load();
-      startAudioRef.current.dataset.clipSrc = startSrc;
-    }
-    const mediaSession = navigator.mediaSession;
-    const MediaMetadataCtor = window.MediaMetadata;
-    if (mediaSession && MediaMetadataCtor) {
-      mediaSession.metadata = new MediaMetadataCtor({
-        title: messages.programSession.rest.mediaTitle,
-        artist: messages.common.appName,
-        album: messages.programSession.rest.mediaAlbum,
-        artwork: [
-          { src: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icons/icon-1024.png', sizes: '1024x1024', type: 'image/png' },
-        ],
-      });
-    }
-    return { prepare: prepareAudioRef.current, start: startAudioRef.current };
-  }, [messages.common.appName, messages.programSession.rest.mediaAlbum, messages.programSession.rest.mediaTitle, timerAudio.prepare, timerAudio.start]);
-
-  const primeAudioPlayback = useCallback(async () => {
-    if (typeof window !== 'undefined') {
-      const AudioCtor = window.AudioContext || (window as WindowWithWebkitAudioContext).webkitAudioContext;
-      if (AudioCtor) {
-        if (!audioContextRef.current) audioContextRef.current = new AudioCtor();
-        if (audioContextRef.current.state === 'suspended') {
-          try {
-            await audioContextRef.current.resume();
-          } catch {}
-        }
+  /** «Готово» подхода: запись на сервер, тренировка подхода сразу в Health (вес, стороны, время). */
+  const onStepDone = useCallback(
+    async (step: PlayerStep, result: StepResult) => {
+      if (step.kind !== 'exercise' || !session || !step.setId) return;
+      const body = programSetBody(step, result);
+      if (!body) {
+        throw new Error(isDistanceExercise(step.exerciseType) ? circuitText.player.invalidDistance : circuitText.player.invalid);
       }
-    }
-
-    const audio = getAudioElements();
-    if (!audio) return;
-
-    await Promise.all(Object.values(audio).map(async (clip) => {
+      setError(null);
+      setInfo(null);
+      let saved: JsonObject | null;
       try {
-        clip.muted = true;
-        clip.currentTime = 0;
-        await clip.play();
-        clip.pause();
-        clip.currentTime = 0;
-        clip.muted = false;
-      } catch {}
-    }));
-  }, [getAudioElements]);
-
-  const playCountdownBeep = useCallback(() => {
-    const ctx = audioContextRef.current;
-    if (!ctx || ctx.state !== 'running') return;
-
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 920;
-
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.14);
-
-    oscillator.connect(gain);
-    gain.connect(ctx.destination);
-
-    oscillator.start();
-    oscillator.stop(ctx.currentTime + 0.15);
-  }, []);
-
-  const playVoiceAnnouncement = useCallback((kind: 'prepare' | 'start') => {
-    const audio = getAudioElements()?.[kind];
-    if (!audio) return;
-    try {
-      audio.pause();
-      audio.currentTime = 0;
-      void audio.play().catch(() => {});
-    } catch {}
-  }, [getAudioElements]);
-
-  useEffect(() => {
-    const prevRestSeconds = prevRestSecondsRef.current;
-    prevRestSecondsRef.current = restSeconds;
-
-    if (!restPaused && prevRestSeconds > 0 && restSeconds === 0) {
-      playVoiceAnnouncement('start');
-    }
-    if (restPaused || restSeconds <= 0) {
-      lastBeepSecondRef.current = null;
-      return;
-    }
-    if (restSeconds === 5 && prevRestSeconds !== 5) {
-      playVoiceAnnouncement('prepare');
-    }
-    if (restSeconds <= 3 && lastBeepSecondRef.current !== restSeconds) {
-      lastBeepSecondRef.current = restSeconds;
-      playCountdownBeep();
-    }
-  }, [restSeconds, restPaused, playVoiceAnnouncement, playCountdownBeep]);
-
-  useEffect(() => {
-    if (!isPlank || !plankActive || plankSecondsLeft <= 0) {
-      return;
-    }
-    if (plankSecondsLeft <= 3) {
-      playCountdownBeep();
-    }
-  }, [isPlank, plankActive, plankSecondsLeft, playCountdownBeep]);
-
-  useEffect(() => {
-    const shouldKeepAwake = (restSeconds > 0 && !restPaused && !done) || (isPlank && plankActive && plankSecondsLeft > 0 && !done);
-    if (shouldKeepAwake) {
-      requestWakeLock();
-    } else {
-      releaseWakeLock();
-    }
-  }, [restSeconds, restPaused, done, requestWakeLock, releaseWakeLock, isPlank, plankActive, plankSecondsLeft]);
-
-  useEffect(() => {
-    const onVisibility = () => {
-      const shouldKeepAwake = (restSeconds > 0 && !restPaused && !done) || (isPlank && plankActive && plankSecondsLeft > 0 && !done);
-      if (!shouldKeepAwake) {
-        releaseWakeLock();
-        return;
+        saved = await fetchJson(`/api/program/session/${session.id}/set/${step.setId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        throw new Error(getErrorMessage(e, messages.programSession.errors.saveSetFailed));
       }
-      if (document.visibilityState === 'visible') {
-        requestWakeLock();
-      } else {
-        releaseWakeLock();
-      }
-    };
-
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [restSeconds, restPaused, done, requestWakeLock, releaseWakeLock, isPlank, plankActive, plankSecondsLeft]);
-
-  useEffect(() => {
-    return () => {
-      prepareAudioRef.current?.pause();
-      startAudioRef.current?.pause();
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-      }
-      releaseWakeLock();
-    };
-  }, [releaseWakeLock]);
-
-  useEffect(() => {
-    if (restSeconds !== 0 || !session) return;
-    if (!session.sets[currentIdx]) return;
-
-    const st = session.sets[currentIdx];
-    if (st.actualReps == null) return;
-
-    const next = session.sets[currentIdx + 1];
-    if (!next) return;
-
-    setActualRepsInput(String(next.targetReps));
-  }, [restSeconds, session, currentIdx]);
-
-  const saveCurrentSet = useCallback(async (actualValue?: number) => {
-    if (!session || !currentSet || busyRef.current) return;
-
-    const actualReps = actualValue ?? sanitizePositiveInt(actualRepsInput);
-    if (!Number.isFinite(actualReps) || actualReps <= 0) {
-      setError(isTimedExercise(program?.exerciseType) ? t(locale, 'Введите корректное количество секунд (> 0)') : messages.programSession.errors.invalidReps);
-      return;
-    }
-
-    busyRef.current = true;
-    setSaving(true);
-    setError(null);
-    setInfo(null);
-
-    try {
-      await primeAudioPlayback();
-      const saved = await fetchJson(`/api/program/session/${session.id}/set/${currentSet.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actualReps }),
-      });
+      const savedSet = saved && isJsonObject(saved.set) ? (saved.set as JsonObject) : null;
+      const record = {
+        id: step.setId,
+        setNumber: session.sets.find((s) => s.id === step.setId)?.setNumber ?? step.setNumber ?? 1,
+        actualReps: numOrNull(savedSet?.actualReps),
+        actualLeft: numOrNull(savedSet?.actualLeft),
+        actualRight: numOrNull(savedSet?.actualRight),
+        actualSeconds: numOrNull(savedSet?.actualSeconds),
+        loadKg: numOrNull(savedSet?.loadKg),
+        completedAt: typeof savedSet?.completedAt === 'string' ? savedSet.completedAt : null,
+      };
       // Apple Health / Health Connect: the set's workout is written at once (app only, when on),
-      // as the server stored it — the next reconcile finds it in place.
-      const savedSet = saved && typeof saved.set === 'object' && saved.set ? (saved.set as Record<string, unknown>) : null;
-      const healthSource = program?.exerciseType && savedSet
-        ? programSetHealthSource(
-            {
-              id: currentSet.id,
-              setNumber: currentSet.setNumber,
-              actualReps: typeof savedSet.actualReps === 'number' ? savedSet.actualReps : null,
-              completedAt: typeof savedSet.completedAt === 'string' ? savedSet.completedAt : null,
-              loadKg: typeof savedSet.loadKg === 'number' ? savedSet.loadKg : null,
-              actualLeft: typeof savedSet.actualLeft === 'number' ? savedSet.actualLeft : null,
-              actualRight: typeof savedSet.actualRight === 'number' ? savedSet.actualRight : null,
-            },
-            program.exerciseType,
-          )
-        : null;
-      if (healthSource) void syncWorkoutToHealth(healthSource);
-
-      setSession((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          sets: prev.sets.map((s) => (s.id === currentSet.id ? { ...s, actualReps } : s)),
-        };
-      });
-
-      const isLast = session.sets.every((s) => s.id === currentSet.id || s.actualReps != null);
-      if (isLast) {
-        // If this fails the set is still saved: the «finish» card below lets the user retry.
-        try {
-          await fetchJson(`/api/program/session/${session.id}/complete`, { method: 'POST' });
-          setDone(true);
-          setInfo(messages.programSession.complete.info);
-        } catch (e: unknown) {
-          setError((e as ApiError).status ? getErrorMessage(e, finishCopy.failed) : finishCopy.failed);
-        }
-        return;
+      // as the server stored it — the sum of sides and the run time, so the next reconcile finds it in place.
+      const source = step.exerciseType ? programSetHealthSource(record, step.exerciseType, user?.timeZone) : null;
+      if (source) {
+        void syncWorkoutToHealth(
+          { ...source, reps: programSetWorkoutReps(record), durationSeconds: record.actualSeconds ?? source.durationSeconds },
+          user?.id,
+        );
       }
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              sets: prev.sets.map((s) =>
+                s.id === step.setId
+                  ? { ...s, actualReps: record.actualReps ?? 0, actualLeft: record.actualLeft, actualRight: record.actualRight, actualSeconds: record.actualSeconds }
+                  : s,
+              ),
+            }
+          : prev,
+      );
+      // Последний подход — занятие завершается сразу (если не вышло — карточка «Завершить» ниже).
+      if (session.sets.every((s) => s.id === step.setId || s.actualReps != null)) {
+        setSaving(true);
+        try {
+          await completeSession(session.id);
+        } finally {
+          setSaving(false);
+        }
+      }
+    },
+    [circuitText.player.invalid, circuitText.player.invalidDistance, completeSession, messages.programSession.errors.saveSetFailed, session, user?.id, user?.timeZone],
+  );
 
-      setRestSeconds(currentSet.restSeconds || 0);
-      setRestPaused(false);
-      setPlankActive(false);
-      setCurrentIdx((x) => x + 1);
-      const nextSet = session.sets[currentIdx + 1];
-      if (nextSet) setActualRepsInput(String(nextSet.targetReps));
-      setInfo(formatText(messages.programSession.set.saved, { setNumber: currentSet.setNumber }));
-    } catch (e: unknown) {
-      setError(getErrorMessage(e, messages.programSession.errors.saveSetFailed));
-    } finally {
-      busyRef.current = false;
-      setSaving(false);
+  // Завершение отправляет сам последний подход (`onStepDone`), проигрыватель к этому моменту уже скрыт.
+  const onComplete = useCallback(() => {}, []);
+
+  const headerTitle = useMemo(() => {
+    if (!program || !session) return '';
+    if (isCircuit) {
+      const template = getCircuitTemplate(session.circuitTemplateId);
+      const title = template ? template.title[locale] : programLabel(program, locale);
+      return session.dayLabel ? circuitText.program.sessionTitle(session.dayLabel, title) : title;
     }
-  }, [session, currentSet, actualRepsInput, program?.exerciseType, locale, messages.programSession.errors.invalidReps, messages.programSession.errors.saveSetFailed, messages.programSession.complete.info, messages.programSession.set.saved, currentIdx, primeAudioPlayback, finishCopy.failed]);
+    return programLabel(program, locale);
+  }, [circuitText.program, isCircuit, locale, program, session]);
 
-  useEffect(() => {
-    if (!isPlank || !plankActive || plankSecondsLeft !== 0 || saving || !currentSet) return;
-    setPlankActive(false);
-    void saveCurrentSet(currentSet.targetReps);
-  }, [isPlank, plankActive, plankSecondsLeft, saving, currentSet, saveCurrentSet]);
-
-  function formatClock(totalSeconds: number): string {
-    const safe = Math.max(0, totalSeconds);
-    const mm = Math.floor(safe / 60);
-    const ss = safe % 60;
-    return `${mm}:${String(ss).padStart(2, '0')}`;
-  }
-
-  if (loading) return <div className="app-page" style={{ maxWidth: 760 }}>{messages.common.loading}</div>;
+  const headerMeta = useMemo(() => {
+    if (!session) return '';
+    const parts = [
+      `${messages.programSession.header.week} ${session.weekNumber}`,
+      `${messages.programSession.header.workout} #${session.sessionNumber}`,
+    ];
+    if (session.isFinalTest) parts.push(messages.programSession.header.finalTest);
+    if (session.sessionKind === 'test') parts.push(circuitText.program.testCircuit);
+    else if (session.sessionKind) parts.push(programsMessages[locale].sessionKind[session.sessionKind]);
+    return parts.join(' · ');
+  }, [circuitText.program.testCircuit, locale, messages.programSession.header, session]);
 
   return (
-    <div className="app-page" style={{ maxWidth: 760 }}>
+    <div className="app-page ui-slide-in" style={{ maxWidth: 760 }}>
+      <div style={headRow}>
+        <BackButton fallbackHref="/program" />
+      </div>
+      {loading ? <p>{messages.common.loading}</p> : null}
+
       {program && session ? (
-        <div style={{ color: '#111827', marginBottom: 12 }}>
-          {exerciseLabel(program.exerciseType, messages.nav.exercise)} · {messages.programSession.header.week} {session.weekNumber} · {messages.programSession.header.workout} #{session.sessionNumber}
-          {session.isFinalTest ? ` · ${messages.programSession.header.finalTest}` : ''}
+        <div style={{ marginBottom: 12 }}>
+          <h1 style={{ margin: '4px 0', fontSize: 22 }} data-testid="session-title">
+            {headerTitle}
+          </h1>
+          <div style={{ color: '#475569', fontSize: 14 }}>{headerMeta}</div>
         </div>
       ) : null}
 
       {error ? <p style={{ color: '#dc2626' }}>{error}</p> : null}
       {info ? <p style={{ color: '#16a34a' }}>{info}</p> : null}
 
-      {!done && session && allSetsRecorded ? (
+      {!loading && !done && session && allSetsRecorded ? (
         <section style={card}>
           <div style={{ display: 'grid', gap: 12, justifyItems: 'center', textAlign: 'center' }}>
             <div style={{ fontWeight: 800 }}>{finishCopy.hint}</div>
-            <button
-              type="button"
-              style={{ ...btnPrimary, width: 'min(100%, 520px)' }}
-              onClick={() => void finishSession()}
-              disabled={saving}
-            >
+            <button type="button" style={{ ...btnPrimary, width: 'min(100%, 520px)' }} onClick={() => void finishSession()} disabled={saving}>
               {saving ? finishCopy.finishing : finishCopy.button}
             </button>
           </div>
         </section>
       ) : null}
 
-      {!done && session && currentSet && !allSetsRecorded ? (
-        <section style={card}>
-          {restSeconds > 0 ? (
-            <div style={restWrap}>
-              <div style={{ fontWeight: 900, fontSize: 18 }}>{messages.programSession.rest.title}</div>
-              <div style={{ ...restTimer, ...(isFinalCountdown ? restTimerDanger : null) }}>
-                {Math.floor(restSeconds / 60)}:{String(restSeconds % 60).padStart(2, '0')}
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-                <button
-                  type="button"
-                  style={btnSecondary}
-                  onClick={async () => {
-                    await primeAudioPlayback();
-                    setRestPaused((x) => !x);
-                  }}
-                >
-                  {restPaused ? messages.programSession.rest.resume : messages.programSession.rest.pause}
-                </button>
-                <button
-                  type="button"
-                  style={btnSecondary}
-                  onClick={async () => {
-                    await primeAudioPlayback();
-                    setRestSeconds(0);
-                  }}
-                >
-                  {messages.programSession.rest.skip}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gap: 12, justifyItems: 'center' }}>
-              <div style={{ fontWeight: 900, textAlign: 'center' }}>
-                {formatText(messages.programSession.set.title, {
-                  current: currentSet.setNumber,
-                  total: session.sets.length,
-                  maxSuffix: currentSet.isKeySet ? messages.programSession.set.maxSuffix : '',
-                })}
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                {isTimedExercise(program?.exerciseType)
-                  ? `${t(locale, 'Цель')}: ${formatExerciseValue(currentSet.targetReps, program?.exerciseType, true, locale)}`
-                  : formatText(messages.programSession.set.target, { reps: currentSet.targetReps })}
-              </div>
-
-              {isPlank ? (
-                <div style={setInputWrap}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: '#475569', textAlign: 'center' }}>{t(locale, 'Осталось')}</div>
-                  <div style={{ ...repsInputStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', ...(isPlankFinalCountdown ? restTimerDanger : null) }}>
-                    {formatClock(plankSecondsLeft)}
-                  </div>
-                  <div style={{ fontSize: 14, color: '#475569', textAlign: 'center', fontWeight: 800 }}>
-                    {t(locale, 'Сделал')}: {formatExerciseValue(plankElapsedSeconds, program?.exerciseType, true, locale)}
-                  </div>
-                  <div style={controlsGrid}>
-                    <button
-                      type="button"
-                      style={minusBtn}
-                      onClick={async () => {
-                        await primeAudioPlayback();
-                        setPlankActive((prev) => !prev);
-                      }}
-                    >
-                      {plankActive ? messages.programSession.rest.pause : plankElapsedSeconds > 0 ? messages.programSession.rest.resume : t(locale, 'Старт')}
-                    </button>
-                    <button
-                      type="button"
-                      style={plusBtn}
-                      onClick={() => {
-                        setPlankActive(false);
-                        void saveCurrentSet(plankElapsedSeconds);
-                      }}
-                      disabled={saving || plankElapsedSeconds <= 0}
-                    >
-                      {saving ? messages.programSession.set.saving : messages.programSession.set.done}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div style={setInputWrap}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: '#475569', textAlign: 'center' }}>{t(locale, metricInputLabel)}</div>
-                  <input
-                    inputMode="numeric"
-                    value={actualRepsInput}
-                    onChange={(e) => setActualRepsInput(String(sanitizePositiveInt(e.target.value)))}
-                    style={repsInputStyle}
-                  />
-
-                  <div style={controlsGrid}>
-                    <button
-                      type="button"
-                      style={minusBtn}
-                      onClick={() => {
-                        const next = Math.max(1, sanitizePositiveInt(actualRepsInput) - 1);
-                        setActualRepsInput(String(next));
-                      }}
-                    >
-                      -
-                    </button>
-                    <button
-                      type="button"
-                      style={plusBtn}
-                      onClick={() => {
-                        const next = Math.min(5000, Math.max(0, sanitizePositiveInt(actualRepsInput)) + 1);
-                        setActualRepsInput(String(next));
-                      }}
-                    >
-                      +
-                    </button>
-                  </div>
-
-                  <button type="button" style={{ ...btnPrimary, width: '100%' }} onClick={() => void saveCurrentSet()} disabled={saving}>
-                    {saving ? messages.programSession.set.saving : messages.programSession.set.done}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
+      {!loading && !done && session && !allSetsRecorded && steps.length ? (
+        <WorkoutPlayer
+          steps={steps}
+          done={doneIds}
+          resumeKey={`program-session-warmup:v1:${session.id}`}
+          onStepDone={onStepDone}
+          onComplete={onComplete}
+          info={
+            isCircuit ? (
+              <InfoButton title={circuitText.screen.safetyTitle}>
+                <p>{circuitText.screen.safety}</p>
+                <p>{circuitText.player.warmup.info}</p>
+              </InfoButton>
+            ) : null
+          }
+        />
       ) : null}
 
       {done ? (
         <section style={card}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>{messages.programSession.complete.title}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Link href="/program" style={btnLink}>{messages.programSession.complete.toProgram}</Link>
-            <button type="button" style={btnSecondary} onClick={() => router.push('/dashboard')}>{messages.programSession.complete.toDashboard}</button>
+            <Link href="/program" style={btnLink}>
+              {messages.programSession.complete.toProgram}
+            </Link>
+            <button type="button" style={btnSecondary} onClick={() => router.push('/dashboard')}>
+              {messages.programSession.complete.toDashboard}
+            </button>
           </div>
         </section>
       ) : null}
-
-      <div style={{ marginTop: 12 }}>
-        <Link href="/program" style={btnLink}>{messages.programSession.complete.backToSchedule}</Link>
-      </div>
     </div>
   );
 }
+
+const headRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  marginBottom: 4,
+};
 
 const card: React.CSSProperties = {
   border: '1px solid #e5e7eb',
@@ -739,80 +376,6 @@ const card: React.CSSProperties = {
   background: '#f9fafb',
   padding: 14,
   overflow: 'hidden',
-};
-
-const setInputWrap: React.CSSProperties = {
-  width: 'min(100%, 520px)',
-  maxWidth: '100%',
-  display: 'grid',
-  gap: 12,
-};
-
-const repsInputStyle: React.CSSProperties = {
-  width: '100%',
-  maxWidth: '100%',
-  minWidth: 0,
-  textAlign: 'center',
-  fontWeight: 800,
-  fontSize: 'clamp(54px, 16vw, 140px)',
-  lineHeight: 1.05,
-  padding: '12px 10px',
-  borderRadius: 16,
-  border: '2px solid #e5e7eb',
-  outline: 'none',
-  color: '#000',
-  background: '#fff',
-};
-
-const controlsGrid: React.CSSProperties = {
-  width: '100%',
-  maxWidth: '100%',
-  display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
-  gap: 12,
-};
-
-const plusMinusBase: React.CSSProperties = {
-  height: 'clamp(64px, 17vw, 110px)',
-  width: '100%',
-  borderRadius: 14,
-  border: 'none',
-  color: '#000',
-  fontWeight: 800,
-  fontSize: 'clamp(40px, 10vw, 64px)',
-  lineHeight: 1,
-  cursor: 'pointer',
-};
-
-const plusBtn: React.CSSProperties = {
-  ...plusMinusBase,
-  background: '#22c55e',
-};
-
-const minusBtn: React.CSSProperties = {
-  ...plusMinusBase,
-  background: '#ef4444',
-};
-
-const restWrap: React.CSSProperties = {
-  minHeight: '52vh',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  textAlign: 'center',
-  gap: 14,
-};
-
-const restTimer: React.CSSProperties = {
-  fontWeight: 900,
-  lineHeight: 1,
-  fontSize: 'clamp(76px, 23vw, 180px)',
-  letterSpacing: 2,
-};
-
-const restTimerDanger: React.CSSProperties = {
-  color: '#dc2626',
 };
 
 const btnPrimary: React.CSSProperties = {

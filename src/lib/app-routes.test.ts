@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   appendQuery,
   challengeHref,
+  circuitProgramWizardHref,
+  circuitsHref,
   groupHref,
   groupMemberHref,
   linkHref,
@@ -93,4 +95,14 @@ test('linkHref opens a server link as is on the site and as an app route in the 
   assert.equal(linkHref('/challenges/c1', 'web'), '/challenges/c1');
   assert.equal(linkHref('/challenges/c1', 'native'), '/challenges/view?id=c1');
   assert.equal(linkHref('/friends', 'native'), '/friends');
+});
+
+test('the circuits screen is one static route for the site and the app, never a program id', () => {
+  assert.equal(circuitsHref(), '/program/circuits');
+  assert.equal(circuitsHref('run'), '/program/circuits?section=run');
+  assert.equal(circuitsHref('t.home_full_body'), '/program/circuits?section=t.home_full_body');
+  assert.equal(toAppRoute('/program/circuits'), '/program/circuits');
+  assert.equal(toAppRoute('/program/circuits?section=run'), '/program/circuits?section=run');
+  assert.equal(circuitProgramWizardHref('home_three'), '/program?wizard=circuit&plan=home_three');
+  assert.equal(circuitProgramWizardHref(), '/program?wizard=circuit');
 });
