@@ -198,6 +198,15 @@ export default function CircuitsScreen() {
     [outbox, run, saveRun, text.player.invalid, user?.timeZone, userId],
   );
 
+  /** «Пропустить станцию»: ничего не записывается, станция отмечена пройденной (продолжение — со следующей). */
+  const onStepSkip = useCallback(
+    (step: PlayerStep) => {
+      if (step.kind !== 'exercise' || !run || run.done.includes(step.id)) return;
+      saveRun({ ...run, done: [...run.done, step.id] });
+    },
+    [run, saveRun],
+  );
+
   const onComplete = useCallback(() => {
     if (!run) return;
     setFinished({ title: run.title, queued: queuedNote });
@@ -427,6 +436,7 @@ export default function CircuitsScreen() {
               done={runDoneSet}
               resumeKey={runWarmupKey(run.runId)}
               onStepDone={onStepDone}
+              onStepSkip={onStepSkip}
               onComplete={onComplete}
               info={safetyInfo}
             />

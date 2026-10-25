@@ -24,33 +24,36 @@ type WindowWithWebkitAudioContext = Window & { webkitAudioContext?: typeof Audio
 /**
  * Вибрация конца таймера. В приложении — `@capacitor/haptics` (в iOS WebView `navigator.vibrate`
  * нет): шаблон «вкл, пауза, вкл…» раскладывается на отдельные `Haptics.vibrate` по времени.
- * На сайте — `navigator.vibrate` (где его нет — только звук).
+ * На сайте и если плагин не загрузился — `navigator.vibrate` (где его нет — только звук).
  */
 export function vibrate(pattern: number | number[] = [180, 90, 180]): void {
   if (isNativeApp()) {
-    void vibrateNative(Array.isArray(pattern) ? pattern : [pattern]);
+    void vibrateNative(Array.isArray(pattern) ? pattern : [pattern]).catch(() => vibrateWeb(pattern));
     return;
   }
+  vibrateWeb(pattern);
+}
+
+function vibrateWeb(pattern: number | number[]): void {
   try {
     if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(pattern);
   } catch {}
 }
 
+/** Сбой загрузки плагина отдаётся наружу (там — откат на `navigator.vibrate`). */
 async function vibrateNative(pattern: number[]): Promise<void> {
-  try {
-    const { Haptics } = await import('@capacitor/haptics');
-    let offset = 0;
-    pattern.forEach((ms, i) => {
-      const duration = Math.max(0, Math.round(ms));
-      if (i % 2 === 0 && duration > 0) {
-        const at = offset;
-        const run = () => void Haptics.vibrate({ duration }).catch(() => {});
-        if (at === 0) run();
-        else setTimeout(run, at);
-      }
-      offset += duration;
-    });
-  } catch {}
+  const { Haptics } = await import('@capacitor/haptics');
+  let offset = 0;
+  pattern.forEach((ms, i) => {
+    const duration = Math.max(0, Math.round(ms));
+    if (i % 2 === 0 && duration > 0) {
+      const at = offset;
+      const run = () => void Haptics.vibrate({ duration }).catch(() => {});
+      if (at === 0) run();
+      else setTimeout(run, at);
+    }
+    offset += duration;
+  });
 }
 
 export function useTimerSound(locale: Locale, media: { title: string; artist: string; album: string }) {

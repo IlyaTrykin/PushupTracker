@@ -156,6 +156,11 @@
   gap: 12px;
 }
 
+.skipStation {
+  width: min(100%, 520px);
+  justify-self: center;
+}
+
 .sides {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AuthError, requireUser } from '@/lib/auth';
+import { AuthError, requestLocale, requireUser } from '@/lib/auth';
 import { GroupError, recordGroupAuditLog, requireManagedGroupMemberAccess } from '@/lib/groups';
 import { prisma } from '@/lib/prisma';
 import {
@@ -12,9 +12,19 @@ import {
   parseCircuitProgramCreateBody,
   parseProgramCreateBody,
 } from '@/lib/program';
+import { distanceTooFarMessage } from '@/lib/program-plan';
 
 function jsonError(message: string, status = 400, code?: string, details?: Record<string, unknown>) {
   return NextResponse.json(code ? { error: message, code, details } : { error: message, details }, { status });
+}
+
+/** Ошибка программы; «цель дистанции дальше плана» — на языке запроса и с пределом в `details` (как `/api/program`). */
+function programErrorResponse(e: ProgramError, request: NextRequest) {
+  const maxTargetMeters = e.details?.maxTargetMeters;
+  if (e.code === 'PROGRAM_DISTANCE_TOO_FAR' && maxTargetMeters != null) {
+    return jsonError(distanceTooFarMessage(maxTargetMeters, requestLocale(request)), e.status, e.code, { maxTargetMeters });
+  }
+  return jsonError(e.message, e.status, e.code);
 }
 
 function getTargetUserId(request: NextRequest): string {
@@ -95,7 +105,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
     if (e instanceof GroupError) return jsonError(e.message, e.status, e.code, e.details);
-    if (e instanceof ProgramError) return jsonError(e.message, e.status, e.code);
+    if (e instanceof ProgramError) return programErrorResponse(e, request);
     console.error('GROUP PROGRAMS POST ERROR:', e);
     return jsonError('Внутренняя ошибка сервера', 500);
   }

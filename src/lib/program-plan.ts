@@ -1308,6 +1308,26 @@ export function isSessionOpenForSets(
   return diffDays(programDayOf(session.scheduledAt, clock.timeZone), programDayOf(clock.now, clock.timeZone)) <= 0;
 }
 
+/**
+ * Today's open session per exercise of the active programs (the dashboard links to it): not
+ * completed and scheduled on the user's current day. The earliest one wins when there are several.
+ */
+export function programSessionsToday(
+  programs: Array<{ exerciseType: string; sessions: Array<{ id: string; scheduledAt: Date; completed: boolean }> }>,
+  clock: ProgramClock,
+): Record<string, string> {
+  const today = programDayOf(clock.now, clock.timeZone);
+  const out: Record<string, string> = {};
+  for (const program of programs) {
+    if (out[program.exerciseType]) continue;
+    const session = program.sessions
+      .filter((s) => !s.completed && programDayOf(s.scheduledAt, clock.timeZone) === today)
+      .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())[0];
+    if (session) out[program.exerciseType] = session.id;
+  }
+  return out;
+}
+
 /** `Workout.time` of a program set: its completion instant plus `setNumber` seconds (keeps sets ordered). */
 export function programSetWorkoutTime(completedAt: Date, setNumber: number): Date {
   return new Date(completedAt.getTime() + setNumber * 1000);

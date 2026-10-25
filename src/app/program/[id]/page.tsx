@@ -2,14 +2,17 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { BackButton } from '@/components/ui';
 import { useI18n } from '@/i18n/provider';
 import { programSessionHref } from '@/lib/app-routes';
+import { getCircuitTemplate } from '@/lib/circuits';
 import { useRouteParam } from '@/lib/use-route-param';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { formatExerciseValue } from '@/lib/exercise-metrics';
-import { programKind } from '@/lib/exercises';
-import { programLabel, type DistanceSessionKind } from '@/lib/program-plan';
+import { exerciseLabel, programKind } from '@/lib/exercises';
+import { programLabel, type ProgramSessionKind } from '@/lib/program-plan';
 import { programsMessages } from '@/i18n/messages/features/programs';
+import { circuitsMessages } from '@/i18n/messages/features/circuits';
 
 type TrainingSet = {
   id: string;
@@ -17,6 +20,10 @@ type TrainingSet = {
   targetReps: number;
   actualReps: number | null;
   isKeySet: boolean;
+  exerciseType?: string | null;
+  loadKg?: number | null;
+  round?: number | null;
+  station?: number | null;
 };
 
 type TrainingSession = {
@@ -27,7 +34,10 @@ type TrainingSession = {
   completed: boolean;
   completedAt: string | null;
   isFinalTest?: boolean;
-  sessionKind?: DistanceSessionKind | null;
+  sessionKind?: ProgramSessionKind | null;
+  /** Круговая: буква дня ротации (A/B/C) и шаблон круга. */
+  dayLabel?: string | null;
+  circuitTemplateId?: string | null;
   sets: TrainingSet[];
 };
 
@@ -95,6 +105,27 @@ function renderSetPlan(session: TrainingSession, exerciseType: string | undefine
     .join('-');
 }
 
+function isCircuitProgram(program: ProgramDetail): boolean {
+  return program.programType === 'circuit' || program.exerciseType === 'circuit';
+}
+
+/** Круговое занятие: «Дом: всё тело · кругов: 3» и станции первого круга «Приседания 15 · Планка 30 с». */
+function circuitSessionLines(session: TrainingSession, locale: 'ru' | 'en'): { title: string; stations: string } {
+  const template = getCircuitTemplate(session.circuitTemplateId);
+  const rounds = Math.max(1, ...session.sets.map((s) => s.round ?? 1));
+  const title = [template?.title[locale], circuitsMessages[locale].program.rounds(rounds)].filter(Boolean).join(' · ');
+  const stations = session.sets
+    .filter((s) => (s.round ?? 1) === 1)
+    .sort((a, b) => (a.station ?? a.setNumber) - (b.station ?? b.setNumber))
+    .map((s) => {
+      const value = formatExerciseValue(s.targetReps, s.exerciseType ?? undefined, true, locale);
+      const load = s.loadKg != null ? ` · ${formatKg(s.loadKg, locale)} ${locale === 'en' ? 'kg' : 'кг'}` : '';
+      return `${exerciseLabel(s.exerciseType, locale)} ${value}${load}`;
+    })
+    .join(' · ');
+  return { title, stations };
+}
+
 function formatKg(kg: number, locale: string): string {
   const text = String(Math.round(kg * 10) / 10);
   return locale === 'en' ? text : text.replace('.', ',');
@@ -105,6 +136,7 @@ export default function ProgramDetailPage() {
   const localeTag = getIntlLocale(locale);
   const tt = useCallback((input: string) => t(locale, input), [locale]);
   const text = programsMessages[locale];
+  const circuitText = circuitsMessages[locale].program;
   const programId = useRouteParam('id') || '';
 
   const [loading, setLoading] = useState(true);
@@ -146,11 +178,24 @@ export default function ProgramDetailPage() {
   );
 
   const sessionsToShow = showCompleted ? completedSessions : upcomingSessions;
+  const isCircuit = program ? isCircuitProgram(program) : false;
+
+  // Ротация круговой: «День A — Дом: всё тело» по первому занятию каждого дня.
+  const rotation = useMemo(() => {
+    if (!program || !isCircuitProgram(program)) return [];
+    const byDay = new Map<string, string>();
+    for (const s of program.sessions) {
+      if (!s.dayLabel || byDay.has(s.dayLabel)) continue;
+      const template = getCircuitTemplate(s.circuitTemplateId);
+      if (template) byDay.set(s.dayLabel, template.title[locale]);
+    }
+    return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [locale, program]);
 
   return (
     <div className="app-page" style={{ maxWidth: 920 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-        <Link href="/program" style={btnLink}>← {tt('К программам')}</Link>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <BackButton fallbackHref="/program" />
       </div>
 
       {loading ? <p>{tt('Загрузка…')}</p> : null}
@@ -161,7 +206,21 @@ export default function ProgramDetailPage() {
           <section style={card}>
             <div style={{ display: 'grid', gap: 4 }}>
               <div>{tt('Упражнение')}: <b>{programLabel(program, locale)}</b></div>
-              <div>{tt('Базовый тест')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true, locale)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true, locale)}</b></div>
+              {isCircuit ? (
+                rotation.length ? (
+                  <div data-testid="program-rotation">
+                    {circuitText.plan}:{' '}
+                    {rotation.map(([day, title], i) => (
+                      <span key={day}>
+                        {i > 0 ? ' · ' : ''}
+                        <b>{circuitText.day(day)}</b> — {title}
+                      </span>
+                    ))}
+                  </div>
+                ) : null
+              ) : (
+                <div>{tt('Базовый тест')}: <b>{formatExerciseValue(program.baselineMaxReps, program.exerciseType, true, locale)}</b> · {tt('Цель')}: <b>{formatExerciseValue(program.targetReps, program.exerciseType, true, locale)}</b></div>
+              )}
               <div>{tt('Длительность')}: <b>{program.durationWeeks}</b> {tt('нед')} · {tt('Темп')}: <b>{program.frequencyPerWeek}</b>/{tt('нед')}</div>
               <div>{tt('Прогресс')}: <b>{program.stats.completedSessions}/{program.stats.totalSessions}</b> ({program.stats.completionPercent}%)</div>
             </div>
@@ -198,12 +257,29 @@ export default function ProgramDetailPage() {
                   <div style={{ display: 'grid', gap: 4 }}>
                     <div style={{ fontWeight: 900 }}>
                       {formatSessionDate(session.scheduledAt, localeTag)} · #{session.sessionNumber}
+                      {session.dayLabel ? ` · ${circuitText.day(session.dayLabel)}` : ''}
                       {session.isFinalTest ? ` · ${tt('финальный тест')}` : ''}
-                      {session.sessionKind ? ` · ${text.sessionKind[session.sessionKind]}` : ''}
+                      {session.sessionKind === 'test'
+                        ? ` · ${circuitText.testCircuit}`
+                        : session.sessionKind
+                          ? ` · ${text.sessionKind[session.sessionKind]}`
+                          : ''}
                     </div>
-                    <div style={{ color: '#111827' }}>
-                      {tt('План подходов')}: <b>{renderSetPlan(session, program.exerciseType, locale)}</b>
-                    </div>
+                    {isCircuit ? (
+                      (() => {
+                        const lines = circuitSessionLines(session, locale);
+                        return (
+                          <>
+                            <div style={{ color: '#111827' }}><b>{lines.title}</b></div>
+                            <div style={{ color: '#374151', fontSize: 14 }}>{lines.stations}</div>
+                          </>
+                        );
+                      })()
+                    ) : (
+                      <div style={{ color: '#111827' }}>
+                        {tt('План подходов')}: <b>{renderSetPlan(session, program.exerciseType, locale)}</b>
+                      </div>
+                    )}
                     <div style={{ color: '#111827' }}>
                       {tt('Статус')}: {session.completed ? tt('Выполнено') : tt('Запланировано')}
                     </div>
@@ -255,16 +331,6 @@ const btnSecondary: React.CSSProperties = {
   color: '#111827',
   fontWeight: 800,
   cursor: 'pointer',
-};
-
-const btnLink: React.CSSProperties = {
-  border: '1px solid #d1d5db',
-  borderRadius: 10,
-  padding: '9px 12px',
-  background: '#fff',
-  color: '#111827',
-  fontWeight: 800,
-  textDecoration: 'none',
 };
 
 const btnPrimaryLink: React.CSSProperties = {

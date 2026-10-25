@@ -39,6 +39,7 @@ export const programsMessages = {
       distanceTooFar: (km: string) => `Цель слишком далека: от текущей дистанции план дорастёт без остановки не дальше ${km}. Укажите цель до ${km} — потом можно взять следующую программу.`,
     },
     sessionKind: { easy: 'лёгкое', interval: 'интервалы', long: 'длинное' },
+    status: { active: 'идёт', inactive: 'остановлена', needs_retest: 'нужен повторный тест', completed: 'пройдена' } as Record<string, string>,
     muscleUps: {
       title: 'С нуля выходы силой не начинают',
       body: 'Пока нет ни одного выхода силой, программа не стартует. Начните с подтягиваний и брусьев — когда получится первый выход, возвращайтесь.',
@@ -103,6 +104,7 @@ export const programsMessages = {
       distanceTooFar: (km: string) => `The goal is too far: from your current distance the plan reaches at most ${km} without stopping. Set a goal up to ${km} — you can take the next program afterwards.`,
     },
     sessionKind: { easy: 'easy', interval: 'intervals', long: 'long' },
+    status: { active: 'in progress', inactive: 'stopped', needs_retest: 'retest needed', completed: 'completed' } as Record<string, string>,
     muscleUps: {
       title: 'Muscle-ups are not started from zero',
       body: 'Until you can do one muscle-up, the program does not start. Begin with pull-ups and dips — come back after your first muscle-up.',

@@ -34,6 +34,7 @@ import {
   setsMissingWorkouts,
   shiftInstantByDays,
   type ProgramOutcomeSession,
+  programSessionsToday,
 } from './program-plan';
 
 const MOSCOW = 'Europe/Moscow';
@@ -640,4 +641,21 @@ test('R09.3: circuit program body — plan is checked, 4–12 weeks, 2–4 a wee
   const swing = draft.sessions[1].sets[0];
   assert.equal(swing.exerciseType, 'kettlebell_swing');
   assert.equal(swing.loadKg, 16);
+});
+
+test('R10.2: dashboard program line — only an open session on the user\'s day', () => {
+  const clock = { now: new Date('2026-10-25T21:30:00Z'), timeZone: MOSCOW }; // 26 Oct 00:30 in Moscow
+  const programs = [
+    {
+      exerciseType: 'pushups',
+      sessions: [
+        { id: 'done', scheduledAt: new Date('2026-10-26T06:00:00Z'), completed: true },
+        { id: 'today', scheduledAt: new Date('2026-10-26T07:00:00Z'), completed: false },
+        { id: 'tomorrow', scheduledAt: new Date('2026-10-27T07:00:00Z'), completed: false },
+      ],
+    },
+    // 25 Oct in UTC, but already yesterday in Moscow
+    { exerciseType: 'squats', sessions: [{ id: 'yesterday', scheduledAt: new Date('2026-10-25T07:00:00Z'), completed: false }] },
+  ];
+  assert.deepEqual(programSessionsToday(programs, clock), { pushups: 'today' });
 });

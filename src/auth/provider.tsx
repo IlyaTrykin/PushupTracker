@@ -29,6 +29,8 @@ export type AuthUserState = {
   dailyReminderTime?: string | null;
   /** Exercises with an active training program. */
   activeProgramExercises?: string[];
+  /** Today's open program session id per exercise (dashboard link). */
+  programSessionToday?: Record<string, string>;
   /** Данные тела из `GET /api/me` (калории без связи; в приложении — в кэше пользователя). */
   weightKg?: number | null;
   heightCm?: number | null;

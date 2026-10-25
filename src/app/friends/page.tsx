@@ -1111,28 +1111,31 @@ export default function FriendsPage() {
         )}
 
         {hiddenFriends.length ? (
-          <details style={hiddenBox} data-testid="comparison-hidden">
-            <summary style={hiddenSummary}>
-              {compareText.hiddenSummary.replace('{n}', String(hiddenFriends.length))}{' '}
-              <InfoButton>{compareText.hint}</InfoButton>
-            </summary>
-            <ul style={hiddenList}>
-              {hiddenFriends.map((f) => (
-                <li key={f.friendshipId} style={hiddenItem}>
-                  <AvatarCircle src={f.avatarPath} size={20} />
-                  <span style={hiddenName}>{f.username}</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleToggleCompare(f.friendshipId, false)}
-                    style={btnSecondary}
-                    aria-label={compareText.showAria.replace('{name}', f.username)}
-                  >
-                    {compareText.show}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </details>
+          <div style={hiddenRow}>
+            <details style={hiddenBox} data-testid="comparison-hidden">
+              <summary style={hiddenSummary}>
+                {compareText.hiddenSummary.replace('{n}', String(hiddenFriends.length))}
+              </summary>
+              <ul style={hiddenList}>
+                {hiddenFriends.map((f) => (
+                  <li key={f.friendshipId} style={hiddenItem}>
+                    <AvatarCircle src={f.avatarPath} size={20} />
+                    <span style={hiddenName}>{f.username}</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleCompare(f.friendshipId, false)}
+                      style={btnSecondary}
+                      aria-label={compareText.showAria.replace('{name}', f.username)}
+                    >
+                      {compareText.show}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+            {/* «i» рядом, а не в <summary>: кнопка внутри кнопки раскрытия — вложенный интерактив. */}
+            <InfoButton>{compareText.hint}</InfoButton>
+          </div>
         ) : null}
       </section>
 
@@ -2068,8 +2071,10 @@ const btnSecondary: React.CSSProperties = {
   color: '#0f172a',
 };
 
+const hiddenRow: React.CSSProperties = { marginTop: 12, display: 'flex', alignItems: 'flex-start', gap: 6 };
 const hiddenBox: React.CSSProperties = {
-  marginTop: 12,
+  flex: 1,
+  minWidth: 0,
   padding: '10px 12px',
   borderRadius: 16,
   border: '1px solid rgba(148, 163, 184, 0.24)',

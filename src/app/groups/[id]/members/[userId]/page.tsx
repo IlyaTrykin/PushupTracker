@@ -1282,7 +1282,7 @@ export default function GroupMemberDetailPage() {
               <div key={program.id} style={rowCard}>
                 <div style={{ display: 'grid', gap: 4 }}>
                   <strong>{programLabel(program, locale)}</strong>
-                  <span style={metaLine}>{tt('Статус')}: {tt(program.status)} · {tt('Прогресс')}: {program.stats?.completionPercent ?? 0}%</span>
+                  <span style={metaLine}>{tt('Статус')}: {programText.status[program.status] ?? program.status} · {tt('Прогресс')}: {program.stats?.completionPercent ?? 0}%</span>
                 </div>
                 <button type="button" style={btnSecondary} onClick={() => void deactivateProgram(program.id)}>{tt('Прервать')}</button>
               </div>
@@ -1321,33 +1321,30 @@ export default function GroupMemberDetailPage() {
         )}
       </Sheet>
 
-      {ownerExitOpen ? (
-        <div style={modalBackdrop} role="dialog" aria-modal="true">
-          <div style={modalCard}>
-            <h2 style={sectionTitle}>{tt('Выход владельца из группы')}</h2>
-            <p style={heroText}>
-              {tt('Перед выходом нужно либо передать права другому участнику, либо удалить группу целиком.')}
-            </p>
-            <select value={ownershipUserId} onChange={(event) => setOwnershipUserId(event.target.value)} style={input}>
-              <option value="">{tt('Выберите участника')}</option>
-              {group.members.filter((candidate) => !candidate.isOwner).map((candidate) => (
-                <option key={candidate.userId} value={candidate.userId}>{candidate.user.username}</option>
-              ))}
-            </select>
-            <div style={actionRow}>
-              <button type="button" style={btnPrimary} disabled={!ownershipUserId} onClick={() => void confirmOwnerTransferAndLeave()}>
-                {tt('Передать права и выйти')}
-              </button>
-              <button type="button" style={btnDanger} onClick={() => void deleteGroup()}>
-                {tt('Удалить группу')}
-              </button>
-              <button type="button" style={btnSecondary} onClick={() => setOwnerExitOpen(false)}>
-                {tt('Отмена')}
-              </button>
-            </div>
+      <Sheet open={ownerExitOpen} onClose={() => setOwnerExitOpen(false)} title={tt('Выход владельца из группы')}>
+        <div style={{ display: 'grid', gap: 14 }}>
+          <p style={heroText}>
+            {tt('Перед выходом нужно либо передать права другому участнику, либо удалить группу целиком.')}
+          </p>
+          <select value={ownershipUserId} onChange={(event) => setOwnershipUserId(event.target.value)} style={input}>
+            <option value="">{tt('Выберите участника')}</option>
+            {group.members.filter((candidate) => !candidate.isOwner).map((candidate) => (
+              <option key={candidate.userId} value={candidate.userId}>{candidate.user.username}</option>
+            ))}
+          </select>
+          <div style={actionRow}>
+            <button type="button" style={btnPrimary} disabled={!ownershipUserId} onClick={() => void confirmOwnerTransferAndLeave()}>
+              {tt('Передать права и выйти')}
+            </button>
+            <button type="button" style={btnDanger} onClick={() => void deleteGroup()}>
+              {tt('Удалить группу')}
+            </button>
+            <button type="button" style={btnSecondary} onClick={() => setOwnerExitOpen(false)}>
+              {tt('Отмена')}
+            </button>
           </div>
         </div>
-      ) : null}
+      </Sheet>
     </div>
   );
 }
@@ -1610,27 +1607,6 @@ const rowCard: CSSProperties = {
   borderRadius: 18,
   border: '1px solid rgba(226, 232, 240, 0.9)',
   background: 'rgba(255,255,255,0.9)',
-};
-
-const modalBackdrop: CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(15, 23, 42, 0.54)',
-  display: 'grid',
-  placeItems: 'center',
-  padding: 20,
-  zIndex: 80,
-};
-
-const modalCard: CSSProperties = {
-  width: 'min(100%, 460px)',
-  display: 'grid',
-  gap: 14,
-  padding: 22,
-  borderRadius: 24,
-  border: '1px solid rgba(226, 232, 240, 0.95)',
-  background: '#fff',
-  boxShadow: '0 28px 70px rgba(15, 23, 42, 0.18)',
 };
 
 const analyticsGrid: CSSProperties = {

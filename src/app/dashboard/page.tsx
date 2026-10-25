@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
+import { programSessionHref } from '@/lib/app-routes';
 import { mediaUrl } from '@/lib/platform';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuth } from '@/auth/provider';
@@ -512,7 +513,8 @@ export default function DashboardPage() {
   const activeProgramExercises = user?.activeProgramExercises;
   const showRecommendation = Array.isArray(activeProgramExercises) && !activeProgramExercises.includes(exerciseType);
   // При активной программе по упражнению — строка программы вместо рекомендации (R10.2).
-  const programExercise = Array.isArray(activeProgramExercises) && activeProgramExercises.includes(exerciseType);
+  // Строка программы — только когда по этому упражнению сегодня есть занятие (иначе ничего, R10.2).
+  const programSessionToday = user?.programSessionToday?.[exerciseType] ?? null;
   const todayRecommendation = useMemo(
     () => (showRecommendation ? recommendToday(countedWorkouts, exerciseType, userDayKey) : null),
     [countedWorkouts, exerciseType, showRecommendation, userDayKey],
@@ -1370,11 +1372,11 @@ export default function DashboardPage() {
             locale={locale}
           />
         ) : null}
-        {initialLoadReady && programExercise ? (
-          <div className={styles.programLine}>
+        {initialLoadReady && programSessionToday ? (
+          <div className={styles.programLine} data-testid="dashboard-program-today">
             <span aria-hidden="true">📋</span>
             <span className={styles.programLineText}>{lite.programLine}</span>
-            <Link href="/program" prefetch={false} className={styles.inlineLink}>{lite.programLink}</Link>
+            <Link href={programSessionHref(programSessionToday)} prefetch={false} className={styles.inlineLink}>{lite.programLink}</Link>
           </div>
         ) : null}
 

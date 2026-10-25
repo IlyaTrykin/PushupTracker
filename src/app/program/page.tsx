@@ -1046,7 +1046,7 @@ export default function ProgramPage() {
                     {programLabel(row, locale)} · {tt('цель')}: {formatExerciseValue(row.targetReps, row.exerciseType, true, locale)}
                   </div>
                   <div style={{ fontSize: 13, color: '#374151', marginTop: 2 }}>
-                    {new Date(row.createdAt).toLocaleDateString(localeTag)} · {tt('статус')}: {tt(row.status)}
+                    {new Date(row.createdAt).toLocaleDateString(localeTag)} · {tt('статус')}: {text.status[row.status] ?? row.status}
                   </div>
                   <div style={{ fontSize: 13, color: '#374151', marginTop: 2 }}>
                     {tt('Начато')}: {new Date(row.startedAt).toLocaleDateString(localeTag)}

@@ -24,6 +24,11 @@ export type WorkoutPlayerProps = {
    * ошибка (`throw`) показывается под кнопкой, шаг остаётся.
    */
   onStepDone(step: PlayerStep, result: StepResult): Promise<void>;
+  /**
+   * «Пропустить станцию»: упражнение не записывается, занятие идёт дальше. Без обработчика кнопки
+   * нет (подходы программы записываются все — от них считается план).
+   */
+  onStepSkip?(step: PlayerStep): void;
   /** Последний шаг пройден. */
   onComplete(): void;
   /** Кнопка «i» рядом с прогрессом (безопасность у круговых). */
@@ -60,7 +65,7 @@ function digitsOnly(raw: string, max = 99999): string {
  * отдыха между подходами/станциями/кругами (пауза, пропуск, голос, сигнал, вибрация, экран не
  * гаснет), следующий шаг виден заранее. Про API ничего не знает — запись делает страница.
  */
-export default function WorkoutPlayer({ steps, done, resumeKey, onStepDone, onComplete, info }: WorkoutPlayerProps) {
+export default function WorkoutPlayer({ steps, done, resumeKey, onStepDone, onStepSkip, onComplete, info }: WorkoutPlayerProps) {
   const { locale, messages } = useI18n();
   const text = circuitsMessages[locale].player;
   const sound = useTimerSound(locale, {
@@ -172,6 +177,13 @@ export default function WorkoutPlayer({ steps, done, resumeKey, onStepDone, onCo
       busyRef.current = false;
       setSaving(false);
     }
+  };
+
+  const skip = async () => {
+    if (!step || index == null || !onStepSkip || busyRef.current) return;
+    await sound.prime();
+    onStepSkip(step);
+    goTo(index + 1);
   };
 
   if (!ready) return null;
@@ -294,6 +306,19 @@ export default function WorkoutPlayer({ steps, done, resumeKey, onStepDone, onCo
           voice={sound.voice}
           prime={sound.prime}
         />
+      ) : null}
+
+      {step.kind === 'exercise' && onStepSkip ? (
+        <button
+          type="button"
+          className={`${styles.secondary} ${styles.skipStation}`}
+          onClick={() => void skip()}
+          disabled={saving}
+          title={text.skipStationHint}
+          data-testid="player-skip-station"
+        >
+          {text.skipStation}
+        </button>
       ) : null}
 
       {error ? (
