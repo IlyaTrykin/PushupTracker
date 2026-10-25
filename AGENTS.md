@@ -35,6 +35,9 @@ npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик
 - Приложение: `src/lib/platform.ts` (isNativeApp, apiBase, hardNavigate), `src/lib/app-routes.ts` (ссылки/`toAppRoute`), `src/lib/native-fetch.ts` + `native-auth.ts` (Bearer-мост, токен в Keychain/EncryptedSharedPreferences), `src/lib/cors.ts`, `src/lib/offline/` (очередь тренировок, фоновая отправка), `src/lib/health/` + `src/app/api/health/` (Apple Health / Health Connect), `src/lib/rep-counter.ts` (счёт повторений), `src/lib/native-push.ts` + `native-push-client.ts` + `src/app/api/push/devices` (APNs/FCM)
 - Нативные плагины: iOS `ios/App/App/Plugins/*.swift` (регистрация в `MainViewController.swift`), Android `android/app/src/main/java/app/pushuptracker/mobile/plugins/*.kt` (регистрация в `MainActivity.java`): SecureToken, BackgroundUpload, HealthBridge, RepCounter, PushConfig (только Android)
 - Строки UI приложения — `src/i18n/messages/features/native-app.ts`
+- Калории: `src/lib/health/energy.ts` (MET, `estimateActiveEnergy`, темп из паспорта упражнения в `exercises.ts`) + `src/lib/workout-energy.ts` (хранится в `Workout.activeKcal`, считается один раз, чужим не отдаётся); данные тела — `src/lib/body-metrics.ts` (Health заменяет профиль только более свежим замером); досчёт — `scripts/backfill-energy.ts` (без `--apply` — пробный)
+- Программы всех видов — `src/lib/program-plan.ts` (reps/timed/loaded/distance, `programLabel`); круговые — `src/lib/circuits.ts` (правила сочетаемости, 10 шаблонов, ротации A/B/C; любой новый шаблон обязан пройти `validateCircuit` без предупреждений — тест); пошаговое занятие — `src/lib/workout-player.ts` + `src/components/workout-player/`
+- Общий UI — `src/components/ui/` (`Sheet` над шапкой, `InfoButton` «i», уровни `?section=` с «назад», стек слоёв для Android-«назад»); новые окна/листы делать только на `Sheet`, иначе шапка их закроет и «назад» не закроет
 - `docs/architecture.md` — поток данных (в т.ч. раздел «Приложения iOS/Android»), границы модулей, соглашения; `docs/adr/` — решения. Папка `docs/` ЛОКАЛЬНАЯ, в git не попадает (`.git/info/exclude`)
 - APK для тестеров — прямая ссылка `/downloads/<имя>.apk` (`src/app/downloads/[file]/route.ts`, `src/lib/downloads.ts`), файлы в томе `pushup_downloads_data` (`/app/downloads`, не в бэкапе); новую версию класть `docker cp` во временное `.имя.tmp` и `mv` под тем же именем; на сайте ссылки нет
 - Деплой — `./deploy.sh` с локальным `.deploy.env` (образец `.deploy.env.example`); без прямой просьбы не запускать
@@ -64,6 +67,8 @@ npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик
 - `npx tsx scripts/seed-demo.ts` падает FK-ошибкой, если demo уже есть — вход demo / demo123 при этом работает
 - Коммиты: `git add <пути>` явно, не `-A`; репозиторий публичный — ни IP, хостов, ключей, email, содержимого `.autopilot/`, `docs/`, `backups/`
 - Откат релиза с миграцией сессий = образ + восстановление БД, одного образа мало
+- Досчёт калорий на проде: в рабочем образе нет `src/`/`scripts/` — запускать разовым контейнером из образа с примонтированными `scripts`, `src`, `tsconfig.json` и `--env-file .env` в сети `pushup_internal`
+- Тренировку со временем в будущем Health Connect отклоняет — сверка Health откладывает такие записи до их времени (`isHealthRecordDue`)
 
 ## Окружение
 
