@@ -8,9 +8,13 @@
  *
  * Формат записи 2 (R17i): fingerprint включает версию формата, вес гири, стороны и активные
  * калории записи, поэтому записи версии 1 (без калорий) при первом полном проходе переписываются.
+ *
+ * Тренировка «из будущего» (записали заранее на вечер — сервер это принимает) в Health не пишется,
+ * пока её время не наступило (`isHealthRecordDue`): Health Connect отклоняет такие записи. Она не
+ * считается ошибкой и не мешает полному проходу; её запишет первая сверка после её времени.
  */
 import { getExercise } from '../exercises';
-import { estimateActiveEnergy, type BodyMetrics } from './energy';
+import { estimateActiveEnergy, MIN_WORKOUT_SECONDS, type BodyMetrics } from './energy';
 
 export type ServerWorkoutForHealth = {
   id: string;
@@ -65,6 +69,11 @@ export type HealthReconcileWindow = {
   claimLegacy?: boolean;
   /** Калории записей (как их пишет `toHealthWorkout`); без него — только серверные. */
   energy?: HealthEnergyContext;
+  /**
+   * ISO, «сейчас» на телефоне: тренировки позже него (`isHealthRecordDue`) ждут своего времени —
+   * не пишутся и не переписываются, их записи не удаляются. Без него ждущих нет.
+   */
+  now?: string;
 };
 
 /** The regular pass looks this far back; the first one after switching on — the whole history. */
@@ -153,6 +162,25 @@ export function healthOwnerTag(userId: string): string {
   return fnv1a32(`owner:${userId}`);
 }
 
+/**
+ * Запас для конца записи позже «сейчас», мс: подход программы кончается через `setNumber` секунд
+ * после завершения, часы сервера и телефона расходятся. Не больше самой короткой записи
+ * (`MIN_WORKOUT_SECONDS`): начало записи (конец − длительность) никогда не позже «сейчас».
+ */
+export const HEALTH_FUTURE_GRACE_MS = MIN_WORKOUT_SECONDS * 1000;
+
+/**
+ * Тренировку можно писать в Health: её конец (`time`) не позже `now` + `HEALTH_FUTURE_GRACE_MS`.
+ * Позже — Health Connect отклонит запись («Record start time must not be in the future»); на обеих
+ * платформах такая тренировка ждёт своего времени. Непонятное время — пишется (ошибку покажет Health).
+ */
+export function isHealthRecordDue(w: Pick<ServerWorkoutForHealth, 'time'>, now: Date): boolean {
+  const endMs = new Date(w.time).getTime();
+  const nowMs = now.getTime();
+  if (!Number.isFinite(endMs) || !Number.isFinite(nowMs)) return true;
+  return endMs <= nowMs + HEALTH_FUTURE_GRACE_MS;
+}
+
 export function reconcileSince(now: Date, days: number = HEALTH_RECONCILE_DAYS): string {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 }
@@ -162,6 +190,7 @@ export function reconcileSince(now: Date, days: number = HEALTH_RECONCILE_DAYS):
  * - `toRewrite`: server workouts (any time) whose record has another fingerprint, or several records,
  *   or a record without an owner that this account takes over (it gets the owner tag);
  * - `toDelete`: records (they come from the window) of no server workout and of no queued entry.
+ * With `now`, a workout later than it (`isHealthRecordDue`) is in none of them: it waits for its time.
  * With `owner`, only this account's records (and, with `claimLegacy`, ones without an owner) are
  * looked at: another account's records on the same phone are never deleted or rewritten.
  */
@@ -171,6 +200,7 @@ export function planHealthReconcile(
   window: HealthReconcileWindow,
 ): HealthReconcilePlan {
   const sinceMs = new Date(window.since).getTime();
+  const now = window.now ? new Date(window.now) : null;
   const pending = new Set(window.pendingIds ?? []);
   const owner = window.owner;
   const mine = owner === undefined ? own : own.filter((r) => (r.owner ? r.owner === owner : Boolean(window.claimLegacy)));
@@ -189,6 +219,7 @@ export function planHealthReconcile(
     const externalId = healthExternalId(w);
     if (serverIds.has(externalId)) continue;
     serverIds.add(externalId);
+    if (now && !isHealthRecordDue(w, now)) continue; // ждёт своего времени; его запись не удаляется
     const records = recordsById.get(externalId);
     if (!records) {
       if (new Date(w.time).getTime() >= sinceMs) toSave.push(w);

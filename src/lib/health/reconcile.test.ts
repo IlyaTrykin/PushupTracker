@@ -7,6 +7,7 @@ import {
   healthOwnerTag,
   healthRecordEnergy,
   healthRecordFingerprint,
+  isHealthRecordDue,
   planHealthReconcile,
   reconcileSince,
   workoutFingerprint,
@@ -226,4 +227,51 @@ test('calories of a record: the workout\'s own, else estimated from the profile 
   assert.equal(healthRecordEnergy(unknown, { enabled: true, body: { weightKg: null } }), 0);
   // Переключатель выключен — записи без энергии: другой fingerprint, сверка перепишет их.
   assert.notEqual(healthRecordFingerprint(known, { enabled: false, body }), healthRecordFingerprint(known, { enabled: true, body }));
+});
+
+// Слепая приёмка F2: Health Connect отклоняет запись «Record start time must not be in the future».
+// Тренировку, записанную заранее на вечер, сервер принимает — в Health она ждёт своего времени.
+const NOW = '2026-10-16T12:00:00.000Z';
+const EVENING = '2026-10-16T19:00:00.000Z';
+
+test('a workout later than now is not due for Health; one that just ended (or ends within half a minute) is', () => {
+  assert.equal(isHealthRecordDue({ time: EVENING }, new Date(NOW)), false);
+  assert.equal(isHealthRecordDue({ time: '2026-10-16T12:01:00.000Z' }, new Date(NOW)), false);
+  assert.equal(isHealthRecordDue({ time: NOW }, new Date(NOW)), true);
+  assert.equal(isHealthRecordDue({ time: '2026-10-16T11:00:00.000Z' }, new Date(NOW)), true);
+  // Подход программы: время = завершение + номер подхода в секундах — пишется сразу.
+  assert.equal(isHealthRecordDue({ time: '2026-10-16T12:00:05.000Z' }, new Date(NOW)), true);
+  assert.equal(isHealthRecordDue({ time: '2026-10-16T12:00:30.000Z' }, new Date(NOW)), true);
+  assert.equal(isHealthRecordDue({ time: '2026-10-16T12:00:31.000Z' }, new Date(NOW)), false);
+});
+
+test('a workout recorded ahead for the evening is neither saved nor rewritten nor deleted until its time', () => {
+  const evening = workout('evening', { time: EVENING });
+  const morning = workout('morning', { time: '2026-10-16T08:00:00.000Z' });
+  const plan = planHealthReconcile([evening, morning], [], { since: SINCE, now: NOW });
+  assert.deepEqual(plan, { toSave: [morning], toDelete: [], toRewrite: [] });
+
+  // Запись есть (тренировку перенесли на вечер): старая остаётся до вечера, не удаляется.
+  const moved = planHealthReconcile([evening], [own(workout('evening'))], { since: SINCE, now: NOW });
+  assert.deepEqual(moved, { toSave: [], toDelete: [], toRewrite: [] });
+});
+
+test('once its time has come, the next reconcile writes the evening workout as usual', () => {
+  const evening = workout('evening', { time: EVENING });
+  const before = planHealthReconcile([evening], [], { since: SINCE, now: NOW });
+  const records = apply([], before);
+  assert.deepEqual(planHealthReconcile([evening], records, { since: SINCE, now: NOW }), { toSave: [], toDelete: [], toRewrite: [] });
+  const later = planHealthReconcile([evening], records, { since: SINCE, now: '2026-10-16T19:00:00.000Z' });
+  assert.deepEqual(later.toSave, [evening]);
+  const moved = planHealthReconcile([evening], [own(workout('evening'))], { since: SINCE, now: '2026-10-16T19:05:00.000Z' });
+  assert.deepEqual(moved.toRewrite, [evening]);
+});
+
+test('the full pass over the history has nothing to fail on because of a workout ahead of time', () => {
+  const tag = healthOwnerTag('user-a');
+  const window = { since: '1970-01-01T00:00:00.000Z', owner: tag, now: NOW };
+  const history = [workout('old', { time: '2025-03-01T08:00:00.000Z' }), workout('evening', { time: EVENING })];
+  const plan = planHealthReconcile(history, [], window);
+  assert.deepEqual(plan.toSave.map((w) => w.id), ['old'], 'only what can be written now');
+  assert.deepEqual([...plan.toRewrite, ...plan.toDelete], []);
 });

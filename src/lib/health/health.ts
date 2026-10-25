@@ -7,6 +7,8 @@
  * - `reconcileHealth` — brings the app's records in Health in line with the server (workouts made
  *   on the site or in Telegram, deleted, changed): the whole history the first time after switching
  *   on (batches of 100, `healthReconcileProgress {done,total}`), afterwards the last 30 days.
+ *   Тренировки позже текущего момента (записали заранее на вечер) ждут своего времени и ошибкой не
+ *   считаются (Health Connect отклонил бы запись): их пишет первая сверка после их времени.
  *   `installHealthSync` runs it at start, on resume and after the outbox went out (`outboxFlushed`).
  * - Калории (R01, R03.1): записи несут активные ккал (`healthRecordEnergy`) — с сервера, иначе по
  *   профилю из кэша; переключатель `isHealthEnergyEnabled` (по умолчанию включён) выключает их.
@@ -47,6 +49,7 @@ import {
 import {
   healthExternalId,
   healthOwnerTag,
+  isHealthRecordDue,
   isImportedFromHealth,
   planHealthReconcile,
   reconcileSince,
@@ -337,11 +340,13 @@ function toInput(w: HealthWorkoutSource, owner: string, energy: HealthEnergyCont
 /**
  * Writes (or, when it changed, rewrites) one workout of `userId` (else the signed-in user);
  * `clientRequestId` is its Health key — `healthExternalId` for a server record. Workouts imported
- * from Health are not written back.
+ * from Health are not written back. Тренировка позже текущего момента (`isHealthRecordDue`) ждёт:
+ * её запишет первая сверка после её времени.
  */
 export async function syncWorkoutToHealth(w: HealthWorkoutSource, userId?: string | null): Promise<void> {
   const user = healthUserId(userId);
   if (!user || !isHealthWriteEnabled(user) || isImportedFromHealth(w.clientRequestId)) return;
+  if (!isHealthRecordDue(w, new Date())) return;
   const input = toInput(w, healthOwnerTag(user), energyContext(user));
   if (!input) return;
   try {
@@ -423,7 +428,9 @@ async function runReconcile(options: ReconcileOptions): Promise<HealthReconcileR
   // Another account signed in meanwhile: its workouts must not be matched against these records.
   if (anotherUserSignedIn(userId)) return null;
   const energy = energyContext(userId);
-  const plan = planHealthReconcile(server, own, { since, pendingIds, owner, claimLegacy, energy });
+  // Тренировки позже «сейчас» ждут своего времени: не шаги, не ошибки, полный проход не держат.
+  const now = new Date().toISOString();
+  const plan = planHealthReconcile(server, own, { since, pendingIds, owner, claimLegacy, energy, now });
   // Newest first: the recent days appear in Health before the old history.
   const byNewest = (a: ServerWorkoutForHealth, b: ServerWorkoutForHealth) => b.time.localeCompare(a.time);
   type Step = { kind: 'delete'; externalId: string } | { kind: 'rewrite' | 'save'; workout: ServerWorkoutForHealth };
