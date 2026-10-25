@@ -47,7 +47,8 @@ function readHealthBody(body: Record<string, unknown>): HealthBodyMetrics {
 // Данные тела из Apple Health / Health Connect (только свой профиль):
 // { weightKg?, weightMeasuredAt?, heightCm?, heightMeasuredAt?, birthDate? ('YYYY-MM-DD'), sex? }.
 // Вес/рост заменяют профиль, только если замер свежее последнего изменения (`*UpdatedAt`, иначе
-// последняя запись истории профиля с этим полем, иначе User.updatedAt) или поле пустое —
+// последняя запись истории профиля с этим полем, иначе User.updatedAt) или поле пустое и не очищено
+// вручную (очищенное — `*UpdatedAt`/история — заполняет только замер новее очистки) —
 // источник становится 'health'; дата рождения и пол пишутся только в пустые поля
 // (правило — `pickBodyMetricUpdates`). Ответ: { ok, changed: string[], user: профиль }.
 export async function POST(request: Request) {
@@ -74,10 +75,9 @@ export async function POST(request: Request) {
       if (!current || current.deletedAt) return null;
 
       // Вес/рост из профилей до появления `*UpdatedAt`: дата сравнения — история, иначе updatedAt.
-      const weightLastChangedAt =
-        current.weightKg !== null && !current.weightUpdatedAt ? await lastHistoryChange(tx, me.id, 'weightKg') : null;
-      const heightLastChangedAt =
-        current.heightCm !== null && !current.heightUpdatedAt ? await lastHistoryChange(tx, me.id, 'heightCm') : null;
+      // У пустого поля запись в истории значит «очищено вручную»: заполнит только замер новее (R04.1).
+      const weightLastChangedAt = !current.weightUpdatedAt ? await lastHistoryChange(tx, me.id, 'weightKg') : null;
+      const heightLastChangedAt = !current.heightUpdatedAt ? await lastHistoryChange(tx, me.id, 'heightCm') : null;
       const updates = pickBodyMetricUpdates(
         { ...current, weightLastChangedAt, heightLastChangedAt, profileUpdatedAt: current.updatedAt },
         fromHealth,

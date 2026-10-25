@@ -6,6 +6,7 @@ import {
   PROGRAM_EXERCISE_TYPES,
   ProgramError,
   buildDistancePlan,
+  distanceTargetLimit,
   buildProgramDraft,
   buildCircuitProgramDraft,
   parseCircuitProgramCreateBody,
@@ -411,6 +412,37 @@ test('R08.6: distance plan — 3 sessions a week (easy, interval, long), weekly 
   assert.equal(final?.isFinalTest, true);
   assert.deepEqual(final?.sets.map((s) => s.targetReps), [5000]);
   for (const s of draft.sessions) assert.equal(localHHMM(s.scheduledAt, MOSCOW), '19:00');
+});
+
+test('R08.6/safety: a distance target is never further than the plan grows to; further is a 400 with the limit', () => {
+  // максимум недель тренировок 23 → рост длинной 1,1^22 ≈ 8,14; длинная доходит до 90% цели
+  const naive = (base: number) => (base * 1.1 ** 22) / 0.9;
+  for (const base of [200, 1000, 3000, 5000]) {
+    const limit = distanceTargetLimit(base);
+    assert.ok(limit <= naive(base), `${base}: limit ${limit} > ${naive(base)}`);
+    assert.ok(limit >= naive(base) * 0.8, `${base}: limit ${limit} far below ${naive(base)}`); // округление длинной до 10 м
+    // на пределе план и правда дорастает: последняя длинная — не меньше 90% цели (до 10 м)
+    const plan = buildDistancePlan({ baselineMeters: base, targetMeters: limit, frequencyPerWeek: 3 });
+    const lastLong = plan.weeks.at(-1)!.longMeters;
+    assert.ok(lastLong >= Math.floor((limit * 0.9) / 10) * 10, `${base}→${limit}: last long ${lastLong}`);
+    let prev: number | null = null;
+    for (const week of plan.weeks) {
+      if (prev != null) assert.ok(week.volumeMeters <= prev * 1.1, `${base}: week ${week.weekNumber} volume`);
+      prev = week.volumeMeters;
+    }
+  }
+  assert.equal(distanceTargetLimit(200000), 300000);
+
+  // 1 км сейчас → 15 км без остановки: столько план не вырастит — 400 с пределом, а не тихий недобор
+  assert.throws(
+    () => buildProgramDraft({ ...baseInput, exerciseType: 'run', baselineMaxReps: 1000, targetReps: 15000, startDate: '2026-10-12' }, clockOct),
+    (e: unknown) => e instanceof ProgramError && e.status === 400 && e.code === 'PROGRAM_DISTANCE_TOO_FAR'
+      && e.details?.maxTargetMeters === distanceTargetLimit(1000) && /км/.test(e.message),
+  );
+  const ok = buildProgramDraft({ ...baseInput, exerciseType: 'run', baselineMaxReps: 1000, targetReps: 8000, startDate: '2026-10-12' }, clockOct);
+  assert.deepEqual(ok.sessions.at(-1)?.sets.map((s) => s.targetReps), [8000]);
+  const longs = ok.sessions.filter((s) => s.sessionKind === 'long').map((s) => s.sets[0].targetReps);
+  assert.ok(longs.at(-1)! >= 7200, `last long ${longs.at(-1)}`);
 });
 
 test('R08.2: muscle-ups with a max of 0 do not start and suggest pull-ups and dips', () => {

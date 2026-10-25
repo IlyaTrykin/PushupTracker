@@ -297,9 +297,17 @@ test('«Telegram отключён» is its own in-app type, not tied to any noti
     type: 'telegram_unlinked',
     title: 'Telegram отключён',
     body: 'Чат Telegram подключён к другому аккаунту. Подключить снова можно в профиле.',
-    link: '/profile',
+    link: '/profile?section=notifications',
   });
   assert.equal(telegramUnlinkedNotification('u1', 'en').title, 'Telegram disconnected');
+});
+
+test('R14.1: bot links to the profile open its «Notifications» section (Telegram lives there)', async () => {
+  const { bot } = fakeBot({ users: [user('alice', null)] });
+  const notLinked = await bot.handleTelegramUpdate(update('300', '30 отжиманий'), NOW);
+  assert.match(notLinked!.text, /http:\/\/localhost:3100\/profile\?section=notifications(\s|$)/);
+  const stale = await bot.handleTelegramUpdate(update('300', '/start NOPE'), NOW);
+  assert.match(stale!.text, /http:\/\/localhost:3100\/profile\?section=notifications(\s|$)/);
 });
 
 test('every example in the «did not get that» reply is understood by the parser', () => {

@@ -167,7 +167,8 @@ export default function HealthImportScreen() {
   return (
     <div className="app-page" style={wrap} data-testid="health-import">
       <section style={card}>
-        <BackButton fallbackHref="/profile" />
+        {/* Импорт открывают из раздела «Здоровье» профиля — туда и возвращаемся без истории (R14.1). */}
+        <BackButton fallbackHref="/profile?section=health" />
         <h1 style={title}>
           {text.importTitle}{' '}
           <InfoButton title={text.importTitle}>{text.importIntro}</InfoButton>

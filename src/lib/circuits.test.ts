@@ -241,22 +241,48 @@ test('R09.4: the test is one round without rest; start targets are 70% of each s
   assert.equal(testSpec.restRoundSec, 0);
   assert.deepEqual(testSpec.stations.map((s) => s.exerciseType), a.stations.map((s) => s.exerciseType));
 
-  // приседания 40, отжимания 20, мост 30, австралийские 10, супермен 20, боковая планка 40 с
-  const results = [40, 20, 30, 10, 20, 40].map((actual, i) => ({ exerciseType: a.stations[i].exerciseType, target: a.stations[i].target, actual }));
+  // приседания 30, отжимания 20, мост 30, австралийские 10, супермен 20, боковая планка 40 с (всё ≤ 2× ориентира)
+  const results = [30, 20, 30, 10, 20, 40].map((actual, i) => ({ exerciseType: a.stations[i].exerciseType, target: a.stations[i].target, actual }));
   const start = circuitStartSpec(a, results);
-  assert.deepEqual(start.stations.map((s) => s.target), [28, 14, 21, 7, 14, 28]);
+  assert.deepEqual(start.stations.map((s) => s.target), [21, 14, 21, 7, 14, 28]);
   assert.equal(start.rounds, 3);
 
-  // день B: приседания — из теста (40 → 28), остальное — цель шаблона × средняя доля теста
+  // день B: приседания — из теста (30 → 21), остальное — цель шаблона × средняя доля теста
   const b = getCircuitTemplate('home_cardio')!;
   const startB = circuitStartSpec(b, results);
   assert.equal(startB.stations[1].exerciseType, 'squats');
-  assert.equal(startB.stations[1].target, 28);
-  // средняя доля: (40/15 + 20/10 + 30/15 + 10/8 + 20/12 + 40/20) / 6 ≈ 1.93 → бёрпи 8 × 1.93 × 0.7 ≈ 11
-  assert.equal(startB.stations[0].target, 11);
+  assert.equal(startB.stations[1].target, 21);
+  // средняя доля: (30/15 + 20/10 + 30/15 + 10/8 + 20/12 + 40/20) / 6 ≈ 1.82 → бёрпи 8 × 1.82 × 0.7 ≈ 10
+  assert.equal(startB.stations[0].target, 10);
 
   // без теста — 70% целей шаблона
   assert.deepEqual(circuitStartSpec(a).stations.map((s) => s.target), [11, 7, 11, 6, 8, 14]);
+});
+
+test('G04/R09.4: a typo in the test round («1000 squats», «4000 m» instead of 400) never becomes a harmful start target', async () => {
+  const { circuitStartSpec, circuitTargetCeiling, getCircuitTemplate, planCircuitSession } = await import('./circuits');
+  const a = getCircuitTemplate('home_full_body')!;
+  // приседания: ориентир 15, опечатка 1000 → результат не больше 2 × 15 = 30 → старт 70% = 21
+  const typo = [1000, 20, 30, 10, 20, 40].map((actual, i) => ({ exerciseType: a.stations[i].exerciseType, target: a.stations[i].target, actual }));
+  const start = circuitStartSpec(a, typo);
+  assert.equal(start.stations[0].target, 21);
+  assert.equal(start.stations[1].target, 14);
+
+  // бег: ориентир 400 м, опечатка 4000 м → не больше 2 × 400 = 800 м (и потолка 800) → старт 560 м
+  const run = getCircuitTemplate('run_and_strength')!;
+  const runTypo = [4000, 20, 400, 30, 30].map((actual, i) => ({ exerciseType: run.stations[i].exerciseType, target: run.stations[i].target, actual }));
+  const runStart = circuitStartSpec(run, runTypo);
+  assert.equal(runStart.stations[0].target, 560);
+  assert.equal(runStart.stations[2].target, 560);
+
+  // на любом дне ротации стартовая цель станции не выше потолка, даже при абсурдном тесте
+  const absurd = CIRCUIT_TEMPLATES.flatMap((t) => t.stations).map((s) => ({ exerciseType: s.exerciseType, target: s.target, actual: 100000 }));
+  for (const template of CIRCUIT_TEMPLATES) {
+    const sets = planCircuitSession(template.id, 1, absurd)!;
+    for (const set of sets) {
+      assert.ok(set.targetReps <= circuitTargetCeiling(set.exerciseType), `${template.id}/${set.exerciseType}: ${set.targetReps}`);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

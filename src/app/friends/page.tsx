@@ -9,7 +9,7 @@ import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/Achie
 import InviteFriendCard from '@/components/InviteFriendCard';
 import WeeklyLeague from '@/components/WeeklyLeague';
 import ModerationActions, { ReportSheet } from '@/components/ModerationActions';
-import { InfoButton } from '@/components/ui';
+import { InfoButton, Sheet } from '@/components/ui';
 import { fillModeration, moderationText } from '@/i18n/messages/features/moderation';
 import { useI18n } from '@/i18n/provider';
 import { formatDayPointsTotal } from '@/i18n/messages/features/points';
@@ -861,6 +861,12 @@ export default function FriendsPage() {
     }
   }, [selectedFriendWorkouts]);
 
+  const closeFriendDetails = useCallback(() => {
+    setFriendDetailsOpen(false);
+    setFriendDetailDay(null);
+    setModalReactionPickerWorkoutId(null);
+  }, []);
+
   useEffect(() => {
     setFriendDetailsOpen(false);
     setFriendDetailDay(null);
@@ -1484,128 +1490,95 @@ export default function FriendsPage() {
         )}
       </section>
 
-      {friendDetailsOpen ? (
-        <div
-          style={modalBackdrop}
-          onClick={() => {
-            setFriendDetailsOpen(false);
-            setFriendDetailDay(null);
-            setModalReactionPickerWorkoutId(null);
-          }}
-        >
-          <section
-            style={{
-              ...modalCard,
-              border: `1px solid ${hexToRgba(accentColor, 0.4)}`,
-              background: `linear-gradient(180deg, ${hexToRgba(accentColor, 0.14)} 0%, #f9fafb 78%)`,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={modalTop}>
-              <h2 style={{ margin: 0 }}>{tt('Подходы друга за день')}</h2>
-              <button
-                type="button"
-                style={btnSecondary}
-                onClick={() => {
-                  setFriendDetailsOpen(false);
-                  setFriendDetailDay(null);
-                  setModalReactionPickerWorkoutId(null);
-                }}
-              >
-                {tt('Закрыть')}
-              </button>
+      <Sheet open={friendDetailsOpen} onClose={closeFriendDetails} title={tt('Подходы друга за день')} wide testId="friend-day-sheet">
+        {!friendDetailDay || !selectedFriendDayData ? (
+          <div style={{ color: '#6b7280' }}>{tt('Нет записей на выбранный день.')}</div>
+        ) : (
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div style={{ color: '#111827', fontWeight: 800 }}>
+              {formatDateWithWeekday(friendDetailDay, localeTag)} · {formatDayPointsTotal(selectedFriendDayData.totalPoints, locale)}
             </div>
 
-            {!friendDetailDay || !selectedFriendDayData ? (
-              <div style={{ color: '#6b7280' }}>{tt('Нет записей на выбранный день.')}</div>
-            ) : (
-              <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ color: '#111827', fontWeight: 800 }}>
-                  {formatDateWithWeekday(friendDetailDay, localeTag)} · {formatDayPointsTotal(selectedFriendDayData.totalPoints, locale)}
-                </div>
-
-                {selectedFriendDayData.items.map((w) => {
-                  const reaction = friendWorkoutReactions[w.id];
-                  const pickerOpen = modalReactionPickerWorkoutId === w.id;
-                  const workoutType = toExerciseType(w.exerciseType);
-                  const rowColor = exerciseNumberColor(workoutType);
-                  return (
-                    <div
-                      key={w.id}
-                      style={{
-                        ...friendRowCard,
-                        cursor: 'pointer',
-                        borderColor: pickerOpen ? '#2563eb' : hexToRgba(rowColor, 0.45),
-                        background: `linear-gradient(135deg, ${hexToRgba(rowColor, 0.14)} 0%, #ffffff 70%)`,
-                      }}
-                      onClick={() => setModalReactionPickerWorkoutId((prev) => (prev === w.id ? null : w.id))}
-                    >
-                      <div style={friendRowMain}>
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <Image src={exerciseFeedIcon(workoutType)} alt={tt(exerciseLabel(workoutType))} width={16} height={16} style={friendWorkoutTypeIcon} unoptimized />
-                        </div>
-                        <div>{formatTimeHHMM(w.time || w.date)}</div>
-                        <div style={{ fontWeight: 900 }}>
-                          <AchievementBadge mark={achievementMarks[w.id]} locale={locale === 'en' ? 'en' : 'ru'} />
-                          {formatWorkoutValue(w, locale)}
-                        </div>
-                      </div>
-
-                      {reaction?.summary?.length ? (
-                        <div style={reactionSummaryRow}>
-                          {REACTION_OPTIONS.map((emoji) => {
-                            const item = buildReactionSummaryItem(reaction, emoji);
-                            if (!item) return null;
-                            return (
-                              <span key={`${w.id}-sum-${emoji}`} style={reactionSummaryChip}>
-                                <span>{emoji}</span>
-                                <span style={reactionCount}>{item.count}</span>
-                                <span style={reactionAvatarsRow}>
-                                  {item.avatars.map((r) => (
-                                    <span key={`${w.id}-sum-av-${emoji}-${r.id}`} style={reactionAvatarWrap} title={r.username}>
-                                      <AvatarMini src={r.avatarPath} />
-                                    </span>
-                                  ))}
-                                  {item.hasMore ? <span style={reactionMoreMark}>+</span> : null}
-                                </span>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-
-                      {pickerOpen ? (
-                        <div style={reactionPickerRow} onClick={(e) => e.stopPropagation()}>
-                          {REACTION_OPTIONS.map((emoji) => {
-                            const active = reaction?.myEmoji === emoji;
-                            return (
-                              <button
-                                key={`${w.id}-pick-${emoji}`}
-                                type="button"
-                                disabled={reactingWorkoutId === w.id}
-                                onClick={() => handleFriendWorkoutReaction(w.id, emoji)}
-                                style={{
-                                  ...reactionButton,
-                                  borderColor: active ? '#2563eb' : '#d1d5db',
-                                  background: active ? '#dbeafe' : '#fff',
-                                  opacity: reactingWorkoutId === w.id ? 0.6 : 1,
-                                }}
-                                aria-label={tt(`Реакция ${emoji}`)}
-                              >
-                                <span>{emoji}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : null}
+            {selectedFriendDayData.items.map((w) => {
+              const reaction = friendWorkoutReactions[w.id];
+              const pickerOpen = modalReactionPickerWorkoutId === w.id;
+              const workoutType = toExerciseType(w.exerciseType);
+              const rowColor = exerciseNumberColor(workoutType);
+              return (
+                <div
+                  key={w.id}
+                  style={{
+                    ...friendRowCard,
+                    cursor: 'pointer',
+                    borderColor: pickerOpen ? '#2563eb' : hexToRgba(rowColor, 0.45),
+                    background: `linear-gradient(135deg, ${hexToRgba(rowColor, 0.14)} 0%, #ffffff 70%)`,
+                  }}
+                  onClick={() => setModalReactionPickerWorkoutId((prev) => (prev === w.id ? null : w.id))}
+                >
+                  <div style={friendRowMain}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Image src={exerciseFeedIcon(workoutType)} alt={tt(exerciseLabel(workoutType))} width={16} height={16} style={friendWorkoutTypeIcon} unoptimized />
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </div>
-      ) : null}
+                    <div>{formatTimeHHMM(w.time || w.date)}</div>
+                    <div style={{ fontWeight: 900 }}>
+                      <AchievementBadge mark={achievementMarks[w.id]} locale={locale === 'en' ? 'en' : 'ru'} />
+                      {formatWorkoutValue(w, locale)}
+                    </div>
+                  </div>
+
+                  {reaction?.summary?.length ? (
+                    <div style={reactionSummaryRow}>
+                      {REACTION_OPTIONS.map((emoji) => {
+                        const item = buildReactionSummaryItem(reaction, emoji);
+                        if (!item) return null;
+                        return (
+                          <span key={`${w.id}-sum-${emoji}`} style={reactionSummaryChip}>
+                            <span>{emoji}</span>
+                            <span style={reactionCount}>{item.count}</span>
+                            <span style={reactionAvatarsRow}>
+                              {item.avatars.map((r) => (
+                                <span key={`${w.id}-sum-av-${emoji}-${r.id}`} style={reactionAvatarWrap} title={r.username}>
+                                  <AvatarMini src={r.avatarPath} />
+                                </span>
+                              ))}
+                              {item.hasMore ? <span style={reactionMoreMark}>+</span> : null}
+                            </span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+
+                  {pickerOpen ? (
+                    <div style={reactionPickerRow} onClick={(e) => e.stopPropagation()}>
+                      {REACTION_OPTIONS.map((emoji) => {
+                        const active = reaction?.myEmoji === emoji;
+                        return (
+                          <button
+                            key={`${w.id}-pick-${emoji}`}
+                            type="button"
+                            disabled={reactingWorkoutId === w.id}
+                            onClick={() => handleFriendWorkoutReaction(w.id, emoji)}
+                            style={{
+                              ...reactionButton,
+                              borderColor: active ? '#2563eb' : '#d1d5db',
+                              background: active ? '#dbeafe' : '#fff',
+                              opacity: reactingWorkoutId === w.id ? 0.6 : 1,
+                            }}
+                            aria-label={tt(`Реакция ${emoji}`)}
+                          >
+                            <span>{emoji}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Sheet>
 
       {reactionReport ? (
         <ReportSheet
@@ -1945,37 +1918,6 @@ const feedPopupPanel: React.CSSProperties = {
   padding: '8px 10px',
   display: 'inline-flex',
   gap: 8,
-};
-
-const modalBackdrop: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(17, 24, 39, 0.45)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 14,
-  zIndex: 50,
-};
-
-const modalCard: React.CSSProperties = {
-  width: 'min(560px, 100%)',
-  maxHeight: '88vh',
-  overflowY: 'auto',
-  border: '1px solid rgba(255, 255, 255, 0.82)',
-  borderRadius: 28,
-  background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.88) 100%)',
-  padding: 18,
-  boxShadow: '0 28px 64px rgba(15, 23, 42, 0.18)',
-};
-
-const modalTop: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: 8,
-  marginBottom: 10,
-  flexWrap: 'wrap',
 };
 
 const friendRowCard: React.CSSProperties = {

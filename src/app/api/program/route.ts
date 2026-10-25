@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { AuthError, requireUser } from '@/lib/auth';
+import { AuthError, requestLocale, requireUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
   ProgramError,
@@ -11,11 +11,21 @@ import {
   parseCircuitProgramCreateBody,
   parseProgramCreateBody,
 } from '@/lib/program';
+import { distanceTooFarMessage } from '@/lib/program-plan';
 
 export const dynamic = 'force-dynamic';
 
-function jsonError(message: string, status = 400, code?: string) {
-  return NextResponse.json(code ? { error: message, code } : { error: message }, { status });
+function jsonError(message: string, status = 400, code?: string, details?: Record<string, unknown>) {
+  return NextResponse.json(code ? { error: message, code, ...(details ? { details } : {}) } : { error: message }, { status });
+}
+
+/** Ошибка программы; «цель дистанции дальше плана» — на языке запроса и с пределом в `details`. */
+function programErrorResponse(e: ProgramError, request: Request) {
+  const maxTargetMeters = e.details?.maxTargetMeters;
+  if (e.code === 'PROGRAM_DISTANCE_TOO_FAR' && maxTargetMeters != null) {
+    return jsonError(distanceTooFarMessage(maxTargetMeters, requestLocale(request)), e.status, e.code, { maxTargetMeters });
+  }
+  return jsonError(e.message, e.status, e.code);
 }
 
 export async function GET(request: Request) {
@@ -57,7 +67,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, program });
   } catch (e) {
     if (e instanceof AuthError) return jsonError('Не авторизован', e.status);
-    if (e instanceof ProgramError) return jsonError(e.message, e.status, e.code);
+    if (e instanceof ProgramError) return programErrorResponse(e, request);
     console.error('PROGRAM POST ERROR:', e);
     return jsonError('Внутренняя ошибка сервера', 500);
   }

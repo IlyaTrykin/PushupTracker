@@ -7,7 +7,7 @@ import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, use
 import { PERIOD_OPTIONS } from '@/lib/analytics/constants';
 import { buildProgressAnalytics, getExerciseAccent } from '@/lib/analytics/selectors';
 import type { ExerciseFilter, HeatmapCell, PeriodKey, WorkoutRecord } from '@/lib/analytics/types';
-import { formatCalendarDayValue, formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts } from '@/lib/exercise-metrics';
+import { formatCalendarDayValue, formatDistance, formatExerciseValue, formatWorkoutValue, formatWorkoutValueParts } from '@/lib/exercise-metrics';
 import { dayPointsTotal, workoutDayKey } from '@/lib/day-stats';
 import { clientRequestFor, pendingAfterFailure, type PendingClientRequest } from '@/lib/client-request-id';
 import { useI18n } from '@/i18n/provider';
@@ -20,7 +20,13 @@ import { useAuth } from '@/auth/provider';
 import ModerationActions from '@/components/ModerationActions';
 import { InfoButton, Sheet } from '@/components/ui';
 import { EXERCISES, EXERCISE_ORDER, exerciseIcon, exerciseLabel as catalogExerciseLabel, isExerciseType, isLoadedExercise, isUnilateralExercise, programKind, toExerciseType as catalogToExerciseType, type ExerciseType } from '@/lib/exercises';
-import { PROGRAM_EXERCISE_TYPES, programLabel, programStartAlternatives } from '@/lib/program-plan';
+import {
+  PROGRAM_EXERCISE_TYPES,
+  distanceTargetLimit,
+  distanceTooFarMessage,
+  programLabel,
+  programStartAlternatives,
+} from '@/lib/program-plan';
 import { programsMessages } from '@/i18n/messages/features/programs';
 
 type MemberItem = {
@@ -399,6 +405,10 @@ export default function GroupMemberDetailPage() {
   const programLoadPresets = isExerciseType(programExercise) ? EXERCISES[programExercise].load?.presetsKg ?? [] : [];
   const programNeedsAlternatives = programStartAlternatives(programExercise, Number(programBaseline.replace(',', '.')) || 0).length > 0
     && programBaseline.trim() !== '';
+  // Дистанция (км в полях): цель не дальше, чем план дорастает от базы за 10% в неделю (иначе 400).
+  const programKmToMeters = (raw: string) => Math.round((Number(raw.trim().replace(',', '.')) || 0) * 1000);
+  const programDistanceLimit = programIsDistance ? distanceTargetLimit(programKmToMeters(programBaseline)) : null;
+  const programDistanceTooFar = programDistanceLimit != null && programKmToMeters(programTarget) > programDistanceLimit;
   const [feedPeriod, setFeedPeriod] = useState<PeriodKey>('30d');
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => monthStart(new Date()));
   const [calendarMonthInitialized, setCalendarMonthInitialized] = useState(false);
@@ -1232,7 +1242,20 @@ export default function GroupMemberDetailPage() {
               <div style={{ ...fieldHint, color: '#92400e' }} role="status">{programText.group.muscleUpsZero}</div>
             ) : null}
             {programIsDistance ? (
-              <div style={fieldHint}>{programText.group.distanceInfo}</div>
+              <>
+                <div style={fieldHint}>{programText.group.distanceInfo}</div>
+                {programDistanceLimit != null ? (
+                  <div
+                    style={programDistanceTooFar ? { ...fieldHint, color: '#92400e' } : fieldHint}
+                    role="status"
+                    data-testid="member-program-distance-limit"
+                  >
+                    {programDistanceTooFar
+                      ? distanceTooFarMessage(programDistanceLimit, locale)
+                      : programText.wizard.distanceLimit(formatDistance(programDistanceLimit, locale))}
+                  </div>
+                ) : null}
+              </>
             ) : (
               <div style={gridCompact}>
                 <div style={fieldGroup}>
@@ -1251,7 +1274,7 @@ export default function GroupMemberDetailPage() {
                 </div>
               </div>
             )}
-            <button type="submit" style={btnPrimary} disabled={programNeedsAlternatives}>{tt('Назначить программу')}</button>
+            <button type="submit" style={btnPrimary} disabled={programNeedsAlternatives || programDistanceTooFar}>{tt('Назначить программу')}</button>
           </form>
 
           <div style={stack}>

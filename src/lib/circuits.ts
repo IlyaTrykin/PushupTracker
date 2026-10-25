@@ -341,15 +341,28 @@ export type CircuitTestResult = { exerciseType: string; target: number; actual: 
 const TEST_RATIO_RANGE = { min: 0.5, max: 2 } as const;
 
 /**
+ * Результат станции теста, которому можно верить: не больше 2× ориентира и не больше потолка
+ * упражнения — опечатка («1000 приседаний», «4000 м» вместо 400) не превращается в нагрузку.
+ */
+function trustedTestResult(r: CircuitTestResult & { exerciseType: ExerciseType }): number {
+  const actual = Math.max(0, Number(r.actual));
+  const byTarget = r.target > 0 ? r.target * TEST_RATIO_RANGE.max : Infinity;
+  return Math.min(actual, byTarget, circuitTargetCeiling(r.exerciseType));
+}
+
+/**
  * База дня программы после теста: у упражнения из теста — его результат (лучший, если оно было
- * дважды), у остальных — цель шаблона × средняя доля «сделано / ориентир» по тесту (0,5–2).
- * Старт = 70% базы. Без теста база — цели шаблона.
+ * дважды; не больше 2× ориентира и потолка), у остальных — цель шаблона × средняя доля
+ * «сделано / ориентир» по тесту (0,5–2). Старт = 70% базы, не выше потолка. Без теста база — цели шаблона.
  */
 export function circuitStartSpec(template: CircuitSpec, test?: CircuitTestResult[] | null): CircuitSpec {
-  const done = (test ?? []).filter((r) => r.actual != null && Number.isFinite(r.actual) && isExerciseType(r.exerciseType));
+  const done = (test ?? [])
+    .filter((r): r is CircuitTestResult & { exerciseType: ExerciseType } =>
+      r.actual != null && Number.isFinite(r.actual) && isExerciseType(r.exerciseType))
+    .map((r) => ({ ...r, actual: trustedTestResult(r) }));
   const best = new Map<string, number>();
-  for (const r of done) best.set(r.exerciseType, Math.max(best.get(r.exerciseType) ?? 0, Number(r.actual)));
-  const ratios = done.filter((r) => r.target > 0).map((r) => Number(r.actual) / r.target);
+  for (const r of done) best.set(r.exerciseType, Math.max(best.get(r.exerciseType) ?? 0, r.actual));
+  const ratios = done.filter((r) => r.target > 0).map((r) => r.actual / r.target);
   const ratio = ratios.length
     ? Math.min(TEST_RATIO_RANGE.max, Math.max(TEST_RATIO_RANGE.min, ratios.reduce((a, b) => a + b, 0) / ratios.length))
     : 1;
@@ -360,7 +373,8 @@ export function circuitStartSpec(template: CircuitSpec, test?: CircuitTestResult
     restRoundSec: template.restRoundSec,
     stations: template.stations.map((s) => {
       const base = best.get(s.exerciseType) ?? s.target * ratio;
-      return { ...s, target: roundCircuitTarget(s.exerciseType, base * CIRCUIT_START_RATIO) };
+      const ceiling = circuitTargetCeiling(s.exerciseType);
+      return { ...s, target: Math.min(ceiling, roundCircuitTarget(s.exerciseType, base * CIRCUIT_START_RATIO)) };
     }),
   };
 }

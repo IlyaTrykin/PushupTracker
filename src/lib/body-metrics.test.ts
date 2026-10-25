@@ -36,8 +36,8 @@ test('pickBodyMetricUpdates: older Health weight does not replace a newer manual
   assert.deepEqual(updates, {});
 });
 
-test('pickBodyMetricUpdates: an empty weight/height is filled even by an old measurement', () => {
-  const current = profile({ weightUpdatedAt: new Date('2026-10-18T09:00:00Z') });
+test('pickBodyMetricUpdates: an empty weight/height (never set) is filled even by an old measurement', () => {
+  const current = profile({ profileUpdatedAt: new Date('2026-10-18T09:00:00Z') });
   const updates = pickBodyMetricUpdates(
     current,
     { weightKg: 70.6, weightMeasuredAt: '2025-01-01T00:00:00Z', heightCm: 181.4, heightMeasuredAt: '2024-05-05T00:00:00Z' },
@@ -48,6 +48,38 @@ test('pickBodyMetricUpdates: an empty weight/height is filled even by an old mea
   assert.equal(updates.heightCm, 181);
   assert.equal(updates.heightSource, 'health');
   assert.equal(updates.heightUpdatedAt?.toISOString(), '2024-05-05T00:00:00.000Z');
+});
+
+test('R04.1: a weight/height cleared by hand (empty, *UpdatedAt set) is filled only by a measurement newer than the clearing', () => {
+  const clearedAt = new Date('2026-10-18T09:00:00Z');
+  const cleared = profile({ weightUpdatedAt: clearedAt, heightUpdatedAt: clearedAt });
+  // старый замер из Health не возвращает вес и рост, которые человек стёр
+  assert.deepEqual(
+    pickBodyMetricUpdates(cleared, { weightKg: 82, weightMeasuredAt: '2026-09-01T00:00:00Z', heightCm: 180, heightMeasuredAt: '2026-09-01T00:00:00Z' }, NOW),
+    {},
+  );
+  // замер ровно в момент очистки — тоже нет; без даты замера — нет
+  assert.deepEqual(pickBodyMetricUpdates(cleared, { weightKg: 82, weightMeasuredAt: clearedAt.toISOString() }, NOW), {});
+  assert.deepEqual(pickBodyMetricUpdates(cleared, { weightKg: 82, heightCm: 180 }, NOW), {});
+  // новый замер после очистки — заполняет, источник health
+  const fresh = pickBodyMetricUpdates(
+    cleared,
+    { weightKg: 79.6, weightMeasuredAt: '2026-10-19T07:00:00Z', heightCm: 181.2, heightMeasuredAt: '2026-10-19T07:00:00Z' },
+    NOW,
+  );
+  assert.equal(fresh.weightKg, 80);
+  assert.equal(fresh.weightSource, 'health');
+  assert.equal(fresh.heightCm, 181);
+  assert.equal(fresh.heightSource, 'health');
+});
+
+test('R04.1: cleared before *UpdatedAt existed — the history change is the clearing date (weight and height)', () => {
+  const clearedAt = new Date('2026-08-01T00:00:00Z');
+  const legacy = profile({ weightLastChangedAt: clearedAt, heightLastChangedAt: clearedAt, profileUpdatedAt: new Date('2026-10-01T00:00:00Z') });
+  assert.deepEqual(pickBodyMetricUpdates(legacy, { weightKg: 82, weightMeasuredAt: '2026-07-01T00:00:00Z', heightCm: 180, heightMeasuredAt: '2026-07-01T00:00:00Z' }, NOW), {});
+  const fresh = pickBodyMetricUpdates(legacy, { weightKg: 82, weightMeasuredAt: '2026-09-01T00:00:00Z', heightCm: 180, heightMeasuredAt: '2026-09-01T00:00:00Z' }, NOW);
+  assert.equal(fresh.weightKg, 82);
+  assert.equal(fresh.heightCm, 180);
 });
 
 test('pickBodyMetricUpdates: fresher Health height replaces, older does not', () => {

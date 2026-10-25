@@ -8,11 +8,13 @@ import { useI18n } from '@/i18n/provider';
 import { circuitsHref, programHref, programSessionHref } from '@/lib/app-routes';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
-import { formatExerciseValue } from '@/lib/exercise-metrics';
+import { formatDistance, formatExerciseValue } from '@/lib/exercise-metrics';
 import {
   CIRCUIT_PROGRAM_FREQUENCY,
   CIRCUIT_PROGRAM_WEEKS,
   PROGRAM_EXERCISE_TYPES,
+  distanceTargetLimit,
+  distanceTooFarMessage,
   programLabel,
   programStartAlternatives,
   suggestDurationWeeks,
@@ -490,6 +492,9 @@ export default function ProgramPage() {
   const isDistanceForm = formKind === 'distance';
   // Выходы силой с максимумом 0: программа не стартует, вместо неё — подтягивания и брусья.
   const startAlternatives = step >= 2 ? programStartAlternatives(form.exerciseType, resolvedForm.baselineMaxReps) : [];
+  // Дистанция: цель не дальше, чем план дорастает от базы за 10% в неделю (сервер иначе вернёт 400).
+  const distanceLimit = isDistanceForm ? distanceTargetLimit(resolvedForm.baselineMaxReps) : null;
+  const distanceTooFar = distanceLimit != null && resolvedForm.targetReps > distanceLimit;
 
   const canNextStep = useMemo(() => {
     if (step === 1) return Boolean(form.exerciseType);
@@ -502,7 +507,8 @@ export default function ProgramPage() {
       return (
         Number.isFinite(resolvedForm.targetReps) &&
         resolvedForm.targetReps > 0 &&
-        resolvedForm.targetReps >= resolvedForm.baselineMaxReps
+        resolvedForm.targetReps >= resolvedForm.baselineMaxReps &&
+        !(programKind(form.exerciseType) === 'distance' && resolvedForm.targetReps > distanceTargetLimit(resolvedForm.baselineMaxReps))
       );
     }
     if (step === 4) {
@@ -1237,6 +1243,7 @@ export default function ProgramPage() {
                   setForm((f) => ({ ...f, targetReps: kmTextToMeters(raw) }));
                 }}
                 style={inputStyle}
+                aria-describedby="program-distance-limit"
               />
             ) : (
               <input
@@ -1249,6 +1256,18 @@ export default function ProgramPage() {
                 style={inputStyle}
               />
             )}
+            {distanceLimit != null ? (
+              <div
+                id="program-distance-limit"
+                role="status"
+                data-testid="program-distance-limit"
+                style={distanceTooFar ? blockNote : hint}
+              >
+                {distanceTooFar
+                  ? distanceTooFarMessage(distanceLimit, locale)
+                  : text.wizard.distanceLimit(formatDistance(distanceLimit, locale))}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

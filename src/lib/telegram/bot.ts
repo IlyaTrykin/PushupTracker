@@ -105,10 +105,13 @@ function botText(locale: NotifyLocale) {
   return telegramMessages[locale].bot;
 }
 
+/** Раздел профиля, где подключают Telegram («Уведомления», R14.1). */
+const TELEGRAM_PROFILE_PATH = '/profile?section=notifications';
+
 /** The in-app row «Telegram отключён» for the account a chat was moved away from (own type, no settings). */
 export function telegramUnlinkedNotification(userId: string, locale: NotifyLocale) {
   const text = botText(locale);
-  return { userId, type: 'telegram_unlinked', title: text.unlinkedNoticeTitle, body: text.unlinkedNoticeBody, link: '/profile' };
+  return { userId, type: 'telegram_unlinked', title: text.unlinkedNoticeTitle, body: text.unlinkedNoticeBody, link: TELEGRAM_PROFILE_PATH };
 }
 
 /** `/start <code>` or `/start <code> confirm`. */
@@ -118,7 +121,7 @@ function readStartArg(arg: string): { code: string; confirmed: boolean } {
 }
 
 export function createTelegramBot(deps: TelegramBotDeps) {
-  const profileUrl = () => `${deps.appUrl().replace(/\/+$/, '')}/profile`;
+  const profileUrl = () => `${deps.appUrl().replace(/\/+$/, '')}${TELEGRAM_PROFILE_PATH}`;
 
   function today(user: LinkedUser, now: Date): DayKey {
     return dayKeyInZone(now, normalizeTimeZone(user.timeZone));

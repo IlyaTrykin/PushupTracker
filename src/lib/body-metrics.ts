@@ -100,10 +100,12 @@ function parseBirthDate(value: string | null | undefined, now: Date): string | n
  * Одно измерение (вес или рост): заполняет пустое поле; заполненное заменяет,
  * только если замер строго новее даты сравнения (`*UpdatedAt`, иначе дата из истории,
  * иначе `User.updatedAt`). Замер без даты только заполняет пустое поле.
+ * Пустое поле с `*UpdatedAt` или записью в истории (очищено вручную, R04.1) заполняет только замер новее очистки.
  */
 function pickMeasurement(
   currentValue: number | null,
   comparedAt: Date | null,
+  clearedAt: Date | null,
   value: number | null | undefined,
   measuredAt: string | Date | null | undefined,
   range: NumberRange,
@@ -113,7 +115,10 @@ function pickMeasurement(
   if (next === null) return null;
   const measured = toDate(measuredAt);
   const stamp = measured && measured.getTime() < now.getTime() ? measured : now;
-  if (currentValue === null) return { value: next, updatedAt: stamp };
+  if (currentValue === null && !clearedAt) return { value: next, updatedAt: stamp };
+  if (currentValue === null) {
+    return measured && stamp.getTime() > clearedAt!.getTime() ? { value: next, updatedAt: stamp } : null;
+  }
   if (!measured) return null;
   if (comparedAt && stamp.getTime() <= comparedAt.getTime()) return null;
   return { value: next, updatedAt: stamp };
@@ -121,7 +126,7 @@ function pickMeasurement(
 
 /**
  * Правило R04.1/R05: вес и рост из Health заменяют профиль, если замер свежее
- * (или поле пустое), источник становится `health`; дата рождения и пол
+ * (или поле пустое и не очищено вручную позже замера), источник становится `health`; дата рождения и пол
  * пишутся только в пустые поля и ручные значения не перезаписывают.
  */
 export function pickBodyMetricUpdates(
@@ -134,6 +139,7 @@ export function pickBodyMetricUpdates(
   const weight = pickMeasurement(
     current.weightKg,
     current.weightUpdatedAt ?? current.weightLastChangedAt ?? current.profileUpdatedAt ?? null,
+    current.weightUpdatedAt ?? current.weightLastChangedAt ?? null,
     fromHealth.weightKg,
     fromHealth.weightMeasuredAt,
     WEIGHT_RANGE_KG,
@@ -148,6 +154,7 @@ export function pickBodyMetricUpdates(
   const height = pickMeasurement(
     current.heightCm,
     current.heightUpdatedAt ?? current.heightLastChangedAt ?? current.profileUpdatedAt ?? null,
+    current.heightUpdatedAt ?? current.heightLastChangedAt ?? null,
     fromHealth.heightCm,
     fromHealth.heightMeasuredAt,
     HEIGHT_RANGE_CM,

@@ -28,6 +28,7 @@ import {
   type DayKey,
 } from './calendar-day';
 import { MAX_DISTANCE_METERS, MAX_DURATION_SECONDS, normalizeLoadKg } from './workout-input';
+import { programsMessages } from '../i18n/messages/features/programs';
 // Только чистые модули: файл импортирует и клиент (мастер программ), БД сюда не тянется.
 import { estimateActiveEnergy, type BodyMetrics } from './health/energy';
 import {
@@ -168,14 +169,21 @@ export type ProgramProfileHints = {
   sex: string | null;
 };
 
+export type ProgramErrorDetails = {
+  /** PROGRAM_DISTANCE_TOO_FAR: самая дальняя цель, до которой дорастает план от этой базы, м. */
+  maxTargetMeters?: number;
+};
+
 export class ProgramError extends Error {
   status: number;
   code?: string;
+  details?: ProgramErrorDetails;
 
-  constructor(message: string, status = 400, code?: string) {
+  constructor(message: string, status = 400, code?: string, details?: ProgramErrorDetails) {
     super(message);
     this.status = status;
     this.code = code;
+    if (details) this.details = details;
   }
 }
 
@@ -463,6 +471,17 @@ function normalizeCreateInput(raw: ProgramCreateInput): NormalizedCreateInput {
   const range = programValueRange(exerciseType);
   const baselineMaxReps = clampInt(raw.baselineMaxReps, range.min, kind === 'distance' ? range.max : 500);
   const targetReps = clampInt(raw.targetReps, baselineMaxReps, range.max);
+  if (kind === 'distance') {
+    const maxTargetMeters = distanceTargetLimit(baselineMaxReps);
+    if (targetReps > maxTargetMeters) {
+      throw new ProgramError(
+        programsMessages.ru.errors.distanceTooFar(formatKm(maxTargetMeters, 'ru')),
+        400,
+        'PROGRAM_DISTANCE_TOO_FAR',
+        { maxTargetMeters },
+      );
+    }
+  }
 
   let loadKg: number | null = null;
   if (kind === 'loaded') {
@@ -652,19 +671,22 @@ export function buildDistancePlan(args: {
   const kinds = DISTANCE_KINDS[freq];
 
   const peak = Math.max(base, Math.floor((target * 0.9) / 10) * 10);
-  const stepsNeeded = peak > base ? Math.ceil(Math.log(peak / base) / Math.log(DISTANCE_WEEKLY_GROWTH)) : 0;
+  let stepsNeeded = 0;
+  for (let long = base; long < peak && stepsNeeded < DISTANCE_MAX_TRAINING_WEEKS - 1; stepsNeeded += 1) {
+    long = maxDistanceLongStep(long);
+  }
   const weekCount = Math.min(DISTANCE_MAX_TRAINING_WEEKS, Math.max(4, stepsNeeded + 1));
-  const growth = weekCount > 1 && peak > base
-    ? Math.min(DISTANCE_WEEKLY_GROWTH, (peak / base) ** (1 / (weekCount - 1)))
-    : 1;
 
   const weeks: DistancePlanWeek[] = [];
   let prevLong = base;
   let prevVolume: number | null = null;
   for (let w = 1; w <= weekCount; w += 1) {
+    // Рост под оставшиеся недели пересчитывается каждую неделю: округление до 10 м не копит недобор,
+    // и длинная к последней неделе доходит до 90% цели (если это вообще достижимо за 10% в неделю).
+    const growth = peak > prevLong ? (peak / prevLong) ** (1 / (weekCount - w + 1)) : 1;
     const longMeters = w === 1
       ? base
-      : Math.max(prevLong, Math.min(peak, Math.floor((prevLong * growth) / 10) * 10, Math.floor(prevLong * DISTANCE_WEEKLY_GROWTH)));
+      : Math.max(prevLong, Math.min(peak, maxDistanceLongStep(prevLong), Math.ceil((prevLong * growth) / 10) * 10));
     const sessions = kinds.map((kind) => distanceSession(kind, longMeters));
     let volume = sessions.reduce((sum, s) => sum + sessionVolume(s), 0);
 
@@ -685,6 +707,36 @@ export function buildDistancePlan(args: {
     prevVolume = volume;
   }
   return { weeks };
+}
+
+/** Длинная тренировка следующей недели при максимальном росте: +10%, вниз до 10 м, не меньше текущей. */
+function maxDistanceLongStep(longMeters: number): number {
+  return Math.max(longMeters, Math.floor((longMeters * DISTANCE_WEEKLY_GROWTH) / 10) * 10);
+}
+
+/**
+ * Самая дальняя цель «без остановки», до которой дорастает план от базы `baselineMeters`:
+ * длинная за максимум недель (≈ база × 1,1^(недели − 1)) — это 90% цели. Дальше — 400
+ * `PROGRAM_DISTANCE_TOO_FAR`: план не обещает недостижимое.
+ */
+export function distanceTargetLimit(baselineMeters: number): number {
+  const range = programValueRange('run');
+  const base = clampInt(baselineMeters, range.min, range.max);
+  let long = base;
+  for (let w = 2; w <= DISTANCE_MAX_TRAINING_WEEKS; w += 1) long = maxDistanceLongStep(long);
+  return Math.max(base, Math.min(MAX_DISTANCE_METERS, Math.floor(long / 0.9 / 10) * 10));
+}
+
+/** Метры → «8,8 км» / «8.8 km» (до 10 м, как `formatDistance`). */
+function formatKm(meters: number, locale: 'ru' | 'en'): string {
+  const km = String(Math.round(meters / 10) / 100);
+  return `${locale === 'en' ? km : km.replace('.', ',')} ${locale === 'en' ? 'km' : 'км'}`;
+}
+
+/** Текст ошибки «цель дальше, чем дорастает план» на языке запроса (API) или интерфейса. */
+export function distanceTooFarMessage(maxTargetMeters: number, locale: string): string {
+  const lang = locale === 'en' ? 'en' : 'ru';
+  return programsMessages[lang].errors.distanceTooFar(formatKm(maxTargetMeters, lang));
 }
 
 function distanceDraftSessions(args: {

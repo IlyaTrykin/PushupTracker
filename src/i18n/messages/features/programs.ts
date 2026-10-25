@@ -33,6 +33,10 @@ export const programsMessages = {
       distanceWeeks: (weeks: number) => `План на ${weeks} нед. (с финальным тестом)`,
       planInfo: 'Темп и длительность посчитаны по базе, цели, возрасту и весу. Их можно поменять вручную.',
       profileInfo: 'Возраст и вес подставлены из профиля; поменять их можно в профиле.',
+      distanceLimit: (km: string) => `От этой базы план дорастёт до цели не дальше ${km}: объём растёт не больше чем на 10% в неделю, не дольше 23 недель.`,
+    },
+    errors: {
+      distanceTooFar: (km: string) => `Цель слишком далека: от текущей дистанции план дорастёт без остановки не дальше ${km}. Укажите цель до ${km} — потом можно взять следующую программу.`,
     },
     sessionKind: { easy: 'лёгкое', interval: 'интервалы', long: 'длинное' },
     muscleUps: {
@@ -93,6 +97,10 @@ export const programsMessages = {
       distanceWeeks: (weeks: number) => `A ${weeks}-week plan (with the final test)`,
       planInfo: 'Frequency and duration are based on your baseline, goal, age and weight. You can change them.',
       profileInfo: 'Age and weight come from your profile; change them there.',
+      distanceLimit: (km: string) => `From this baseline the plan reaches a goal of at most ${km}: volume grows by no more than 10% a week, for up to 23 weeks.`,
+    },
+    errors: {
+      distanceTooFar: (km: string) => `The goal is too far: from your current distance the plan reaches at most ${km} without stopping. Set a goal up to ${km} — you can take the next program afterwards.`,
     },
     sessionKind: { easy: 'easy', interval: 'intervals', long: 'long' },
     muscleUps: {
