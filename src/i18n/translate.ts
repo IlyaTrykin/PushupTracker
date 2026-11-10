@@ -192,7 +192,6 @@ const exactTextMap: Record<string, string> = {
   'Осталось': 'Remaining',
   'Период': 'Period',
   'Изменить дату и время': 'Change date and time',
-  'по умолчанию — сейчас': 'defaults to now',
   'Открыть профиль': 'Open profile',
   'Закрыть профиль': 'Close profile',
   'Календарь тренировок': 'Workout calendar',
