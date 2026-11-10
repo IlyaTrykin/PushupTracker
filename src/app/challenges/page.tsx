@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/auth/provider';
 import { useI18n } from '@/i18n/provider';
 import { challengeHref } from '@/lib/app-routes';
 import { getIntlLocale, t } from '@/i18n/translate';
 import { challengesMessages } from '@/i18n/messages/features/challenges';
+import WeeklyLeague from '@/components/WeeklyLeague';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import {
   challengeDailyMinLabel,
@@ -134,6 +136,7 @@ function badge(text: string, tone: 'gray' | 'green' | 'amber' | 'red') {
 }
 
 export default function ChallengesPage() {
+  const router = useRouter();
   const { user } = useAuth();
   const { locale } = useI18n();
   const localeTag = getIntlLocale(locale);
@@ -378,6 +381,8 @@ export default function ChallengesPage() {
           </button>
         </div>
       </section>
+
+      <WeeklyLeague onAddFriend={() => router.push('/friends')} />
 
       {showCreate ? (
         <section style={card}>

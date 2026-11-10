@@ -1105,53 +1105,52 @@ export default function DashboardPage() {
               ) : null}
             </div>
 
-            <div
-              style={{
-                width: '100%',
-                maxWidth: 520,
-                marginInline: 'auto',
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 10,
-              }}
-            >
-              <input
-                type="date"
-                value={dateTouched ? date : todayKey}
-                onChange={(e) => {
-                  if (!e.target.value) {
-                    resetEntryDateTimeToNow();
-                    return;
-                  }
-                  setDate(e.target.value);
-                  setDateTouched(true);
-                }}
-                style={smallInput}
-                aria-label={tt('Дата')}
-              />
-              <input
-                type="time"
-                value={time}
-                onChange={(e) => {
-                  if (!e.target.value) {
-                    resetEntryDateTimeToNow();
-                    return;
-                  }
-                  setTime(e.target.value);
-                  setTimeTouched(true);
-                }}
-                style={smallInput}
-                aria-label={tt('Время')}
-              />
-
-              {/* Сброс внутри системного пикера перехватить нельзя, поэтому,
-                  когда ввод уехал с сегодняшнего дня, даём собственный возврат. */}
-              {dateTouched && date !== todayKey ? (
-                <button type="button" onClick={resetEntryDateTimeToNow} style={resetDateButton}>
-                  ↺ {tt('Сегодня')}
-                </button>
-              ) : null}
-            </div>
+            <details style={{ width: '100%', maxWidth: 520, marginInline: 'auto' }}>
+              <summary style={{ cursor: 'pointer', color: '#475569', fontSize: 13, fontWeight: 750, padding: '4px 2px' }}>
+                🗓️ {tt('Изменить дату и время')} <span style={{ fontWeight: 500, color: '#64748b' }}>· {tt('по умолчанию — сейчас')}</span>
+              </summary>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                <label style={{ display: 'grid', gap: 4, fontSize: 12, color: '#475569' }}>
+                  {tt('Дата')}
+                  <input
+                    type="date"
+                    value={dateTouched ? date : todayKey}
+                    onChange={(e) => {
+                      if (!e.target.value) {
+                        resetEntryDateTimeToNow();
+                        return;
+                      }
+                      setDate(e.target.value);
+                      setDateTouched(true);
+                    }}
+                    style={smallInput}
+                    aria-label={tt('Дата')}
+                  />
+                </label>
+                <label style={{ display: 'grid', gap: 4, fontSize: 12, color: '#475569' }}>
+                  {tt('Время')}
+                  <input
+                    type="time"
+                    value={time}
+                    onChange={(e) => {
+                      if (!e.target.value) {
+                        resetEntryDateTimeToNow();
+                        return;
+                      }
+                      setTime(e.target.value);
+                      setTimeTouched(true);
+                    }}
+                    style={smallInput}
+                    aria-label={tt('Время')}
+                  />
+                </label>
+                {dateTouched && date !== todayKey ? (
+                  <button type="button" onClick={resetEntryDateTimeToNow} style={resetDateButton}>
+                    ↺ {tt('Сегодня')}
+                  </button>
+                ) : null}
+              </div>
+            </details>
 
             {activeExercise.unilateral ? (
               // Упражнения на одну руку: вес снаряда и повторы отдельно для каждой руки.

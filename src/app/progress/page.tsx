@@ -28,7 +28,7 @@ import type {
 } from '@/lib/analytics/types';
 import { fillTemplate, toExerciseType } from '@/lib/analytics/utils';
 import { useI18n } from '@/i18n/provider';
-import { getIntlLocale } from '@/i18n/translate';
+import { getIntlLocale, t } from '@/i18n/translate';
 import { getUserScopedCacheKey, readCachedValue, writeCachedValue } from '@/lib/client-cache';
 import { localTodayKey, streakFreezeMessages } from '@/lib/day-stats';
 import { InfoButton } from '@/components/ui';
@@ -229,33 +229,17 @@ function EmptyState({ title, body }: { title: string; body: string }) {
   );
 }
 
-function FilterPill({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        borderRadius: 999,
-        border: active ? '1px solid var(--analytics-accent)' : '1px solid #cbd5e1',
-        background: active ? 'var(--analytics-accent-soft)' : '#fff',
-        color: '#0f172a',
-        fontWeight: 800,
-        padding: '10px 14px',
-        cursor: 'pointer',
-      }}
-    >
-      {label}
-    </button>
-  );
-}
+const filterSelectStyle: CSSProperties = {
+  width: '100%',
+  minHeight: 44,
+  border: '1px solid #cbd5e1',
+  borderRadius: 12,
+  background: '#fff',
+  color: '#0f172a',
+  fontSize: 14,
+  fontWeight: 750,
+  padding: '9px 12px',
+};
 
 /** Подписи с цифрами (среднее подходов, база сравнения) остаются на виду; пояснения — под «i». */
 const KPI_NOTES_ON_VIEW = new Set<KpiCard['id']>(['totalSets', 'periodProgress']);
@@ -836,6 +820,7 @@ export default function ProgressPage() {
   const { locale, messages } = useI18n();
   const localeTag = getIntlLocale(locale);
   const progress = messages.progress;
+  const tt = (input: string) => t(locale, input);
   const cacheKey = useMemo(() => getUserScopedCacheKey('progress-workouts', user?.id, user?.username), [user?.id, user?.username]);
   const [workouts, setWorkouts] = useState<WorkoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -933,36 +918,33 @@ export default function ProgressPage() {
       }}
     >
       <Section title={progress.filters}>
-        <div style={{ display: 'grid', gap: 12 }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {PERIOD_OPTIONS.map((option) => (
-              <FilterPill
-                key={option.key}
-                active={period === option.key}
-                label={
-                  option.key === '7d'
-                    ? progress.periods.d7
-                    : option.key === '90d'
-                      ? progress.periods.d90
-                      : option.key === 'all'
-                        ? progress.periods.all
-                        : progress.periods.d30
-                }
-                onClick={() => startTransition(() => setPeriod(option.key))}
-              />
-            ))}
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {exerciseFilterOptions.map((option) => (
-              <FilterPill
-                key={option}
-                active={exercise === option}
-                label={filterLabel(option, progress)}
-                onClick={() => startTransition(() => setExercise(option))}
-              />
-            ))}
-          </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 10 }}>
+          <label style={{ display: 'grid', gap: 5, color: '#475569', fontSize: 12, fontWeight: 800 }}>
+            {tt('Период')}
+            <select
+              value={period}
+              onChange={(event) => startTransition(() => setPeriod(event.target.value as PeriodKey))}
+              style={filterSelectStyle}
+              aria-label={tt('Период')}
+            >
+              {PERIOD_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.key === '7d' ? progress.periods.d7 : option.key === '90d' ? progress.periods.d90 : option.key === 'all' ? progress.periods.all : progress.periods.d30}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'grid', gap: 5, color: '#475569', fontSize: 12, fontWeight: 800 }}>
+            {tt('Упражнение')}
+            <select
+              value={exercise}
+              onChange={(event) => startTransition(() => setExercise(event.target.value as ExerciseFilter))}
+              style={filterSelectStyle}
+              aria-label={tt('Упражнение')}
+            >
+              {exerciseFilterOptions.map((option) => <option key={option} value={option}>{filterLabel(option, progress)}</option>)}
+            </select>
+          </label>
         </div>
       </Section>
 

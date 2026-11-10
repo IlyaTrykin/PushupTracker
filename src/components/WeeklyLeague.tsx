@@ -18,7 +18,7 @@ type LeagueResponse = {
   nextPlace: number | null;
 };
 
-/** «Лига недели» (F2) on the friends page: me and my friends by points of the week. */
+/** «Лига недели»: me and my friends by points of the week, shown in the competitions section. */
 export default function WeeklyLeague({ onAddFriend }: { onAddFriend?: () => void }) {
   const { locale } = useI18n();
   const text = leagueMessages[locale];

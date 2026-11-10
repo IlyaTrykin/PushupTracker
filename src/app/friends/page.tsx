@@ -7,7 +7,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/provider';
 import AchievementBadge, { useWorkoutAchievementMarks } from '@/components/AchievementBadge';
 import InviteFriendCard from '@/components/InviteFriendCard';
-import WeeklyLeague from '@/components/WeeklyLeague';
 import ModerationActions, { ReportSheet } from '@/components/ModerationActions';
 import { InfoButton, Sheet } from '@/components/ui';
 import { fillModeration, moderationText } from '@/i18n/messages/features/moderation';
@@ -318,6 +317,7 @@ export default function FriendsPage() {
   const [selectedFriend, setSelectedFriend] = useState<string>(''); // username
   const selectedFriendObj = useMemo(() => friends.find((f) => f.username === selectedFriend) || null, [friends, selectedFriend]);
   const [friendCalendarMonth, setFriendCalendarMonth] = useState<Date>(() => monthStart(new Date()));
+  const [friendProfileOpen, setFriendProfileOpen] = useState(false);
   const [friendDetailsOpen, setFriendDetailsOpen] = useState(false);
   const [friendDetailDay, setFriendDetailDay] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -861,6 +861,14 @@ export default function FriendsPage() {
     }
   }, [selectedFriendWorkouts]);
 
+  useEffect(() => {
+    if (!friendProfileOpen || !selectedFriendObj) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById('friend-profile')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [friendProfileOpen, selectedFriendObj]);
+
   const closeFriendDetails = useCallback(() => {
     setFriendDetailsOpen(false);
     setFriendDetailDay(null);
@@ -917,13 +925,6 @@ export default function FriendsPage() {
       </section>
 
       <InviteFriendCard />
-
-      <WeeklyLeague
-        onAddFriend={() => {
-          setShowAddFriendForm(true);
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-      />
 
       <section style={accentCard}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'nowrap', overflowX: 'auto' }}>
@@ -999,9 +1000,21 @@ export default function FriendsPage() {
                       <td style={{ ...tdCompact, ...stickyNameCell }} className="table-sticky-first">
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                           <AvatarCircle src={isMe ? me?.avatarPath : row.friend.avatarPath} size={20} />
-                          <div style={{ fontWeight: 900, fontSize: 12, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {uname}
-                          </div>
+                          {isMe ? (
+                            <div style={{ fontWeight: 900, fontSize: 12, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{uname}</div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedFriend(row.friend.username);
+                                setFriendProfileOpen(true);
+                              }}
+                              style={{ border: 0, padding: 0, background: 'transparent', color: '#1d4ed8', font: 'inherit', fontWeight: 900, fontSize: 12, lineHeight: 1.1, whiteSpace: 'nowrap', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}
+                              aria-label={`${tt('Открыть профиль')}: ${row.friend.username}`}
+                            >
+                              {uname}
+                            </button>
+                          )}
                         </div>
                       </td>
 
@@ -1365,52 +1378,29 @@ export default function FriendsPage() {
         )}
       </section>
 
-      <section style={accentCard}>
-        <h2 style={{ marginTop: 0 }}>{tt('Тренировки друга')}</h2>
-
-        {friends.length === 0 ? (
-          <p>{tt('Пока друзей нет.')}</p>
-        ) : (
-          <>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'end', marginBottom: 12 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label>{tt('Выбери друга')}</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <AvatarCircle src={selectedFriendObj?.avatarPath} size={34} />
-                  <select
-                    value={selectedFriend}
-                    onChange={(e) => setSelectedFriend(e.target.value)}
-                    style={{
-                      ...fieldInput,
-                      border: `1px solid ${hexToRgba(accentColor, 0.28)}`,
-                      width: 220,
-                    }}
-                  >
-                    {friends
-                      .map((f) => f.username)
-                      .sort((a, b) => a.localeCompare(b, 'ru'))
-                      .map((u) => (
-                        <option key={u} value={u}>{u}</option>
-                      ))}
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ color: '#000', fontSize: 13, marginBottom: 2 }}>
-                {tt('В календаре показаны все виды тренировок.')}
-              </div>
-              {selectedFriendObj ? (
-                <ModerationActions
-                  targetUserId={selectedFriendObj.userId}
-                  targetUsername={selectedFriendObj.username}
-                  context="profile"
-                  onMessage={showModerationMessage}
-                  onBlocked={() => void loadAll()}
-                />
-              ) : null}
+      {friendProfileOpen && selectedFriendObj ? (
+        <section id="friend-profile" style={{ ...accentCard, scrollMarginTop: 'calc(var(--app-header-h, 64px) + var(--safe-top, 0px) + 12px)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <AvatarCircle src={selectedFriendObj.avatarPath} size={38} />
+              <h2 style={{ margin: 0 }}>{selectedFriendObj.username}</h2>
             </div>
-
-            {selectedFriendDayMap.size === 0 ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <ModerationActions
+                targetUserId={selectedFriendObj.userId}
+                targetUsername={selectedFriendObj.username}
+                context="profile"
+                onMessage={showModerationMessage}
+                onBlocked={() => {
+                  setFriendProfileOpen(false);
+                  void loadAll();
+                }}
+              />
+              <button type="button" style={btnSecondary} onClick={() => setFriendProfileOpen(false)}>{tt('Закрыть профиль')}</button>
+            </div>
+          </div>
+          <p style={{ margin: '0 0 8px', color: '#475569', fontSize: 13 }}>{tt('Календарь тренировок')}</p>
+          {selectedFriendDayMap.size === 0 ? (
               <p>{tt('Нет записей для выбранного друга по этому упражнению.')}</p>
             ) : (
               <>
@@ -1489,9 +1479,8 @@ export default function FriendsPage() {
                 </div>
               </>
             )}
-          </>
-        )}
-      </section>
+        </section>
+      ) : null}
 
       <Sheet open={friendDetailsOpen} onClose={closeFriendDetails} title={tt('Подходы друга за день')} wide testId="friend-day-sheet">
         {!friendDetailDay || !selectedFriendDayData ? (
