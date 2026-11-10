@@ -204,6 +204,17 @@
   overscroll-behavior: contain;
 }
 
+.versionLabel {
+  align-self: flex-end;
+  margin-top: 8px;
+  padding: 2px 4px 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.62;
+  font-variant-numeric: tabular-nums;
+}
+
 .drawerLevelHead {
   display: flex;
   align-items: center;

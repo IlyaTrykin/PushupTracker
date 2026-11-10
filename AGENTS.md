@@ -23,6 +23,13 @@ $ANDROID_HOME/emulator/emulator -avd pushup-api36 -no-window -no-audio &   # AND
 npx tsx scripts/scheduler-tick.ts --now=2026-10-10T16:00:00Z   # один тик планировщика, только против локальной БД
 ```
 
+## Версии
+
+- Источник версии продукта — `package.json` (`MAJOR.MINOR.PATCH`, например `0.7.0`); в интерфейсе сайта и приложения показываем `MAJOR.MINOR` (`v0.7`).
+- Пока приложение не выпущено в магазинах, повышаем минорную версию при следующем релизе (`0.7.0` → `0.8.0`). Первый релиз приложения — `1.0.0`, если пользователь не решит иначе.
+- Android берёт `versionName` и `versionCode` из версии `package.json` в `android/app/build.gradle`. В iOS `MARKETING_VERSION` и `CURRENT_PROJECT_VERSION` в Debug и Release должны совпадать с `APP_VERSION` и `APP_BUILD` из `src/lib/app-version.ts`.
+- `npm test` проверяет совпадение package-lock, Android и iOS настроек версии.
+
 ## Где что
 
 - `src/lib/*.ts` + рядом `*.test.ts` — вся логика чистыми функциями; `npm test` берёт только `src/lib/*.test.ts`, `src/lib/analytics/*.test.ts`, `src/lib/offline/*.test.ts`, `src/lib/health/*.test.ts`, `src/i18n/*.test.ts` (тест в другой папке не запустится)

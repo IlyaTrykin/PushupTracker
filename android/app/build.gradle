@@ -1,6 +1,14 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
+def packageJson = new groovy.json.JsonSlurper().parse(file('../../package.json'))
+def versionParts = packageJson.version.tokenize('.')
+def appMajor = versionParts[0].toInteger()
+def appMinor = versionParts[1].toInteger()
+def appPatch = versionParts[2].toInteger()
+def appBuild = appMajor * 10000 + appMinor * 100 + appPatch
+def appVersionName = "${appMajor}.${appMinor}"
+
 android {
     namespace = "app.pushuptracker.mobile"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -9,8 +17,8 @@ android {
         // Health Connect (connect-client) работает с Android 8.0 (API 26); общий minSdk проекта — 24.
         minSdkVersion Math.max(rootProject.ext.minSdkVersion as int, 26)
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode appBuild
+        versionName appVersionName
         // App Links: схема и хост intent-filter — из того же env, что и сборка интерфейса (NATIVE_API_BASE).
         // Не задан — заглушка .invalid, ссылки не перехватываются.
         def apiMatch = (System.getenv('NATIVE_API_BASE') ?: '').trim() =~ /^(https?):\/\/([^\/:?#]+)/

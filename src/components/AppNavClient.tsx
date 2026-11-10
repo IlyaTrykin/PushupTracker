@@ -13,6 +13,7 @@ import { useOutboxLogoutGuard } from '@/lib/offline/logout-guard';
 import { useOutboxSync } from '@/lib/offline/use-outbox';
 import { hardNavigate, isNativeApp, mediaUrl, openExternal, publicLink } from '@/lib/platform';
 import { SUPPORT_URL } from '@/lib/support';
+import { APP_VERSION } from '@/lib/app-version';
 import FeedbackSheet from '@/components/FeedbackSheet';
 import LanguageSelect from '@/components/LanguageSelect';
 import { pushLayer } from '@/components/ui/layers';
@@ -212,9 +213,22 @@ export default function AppNavClient() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [pageTitleOverride, setPageTitleOverride] = useState<string | null>(null);
   const [pageHeaderActionLabel, setPageHeaderActionLabel] = useState<string | null>(null);
+  const [displayVersion, setDisplayVersion] = useState(APP_VERSION);
   const navIconVersion = '20260225';
   const menuText = profileSectionsMessages[locale].menu;
   const kitText = uiKitMessages[locale];
+
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    let cancelled = false;
+    void import('@capacitor/app')
+      .then(({ App }) => App.getInfo())
+      .then((info) => {
+        if (!cancelled && info.version) setDisplayVersion(info.version);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   // The workout queue goes out from any screen (the navigation is on all of them).
   useOutboxSync();
   const logout = useLogout();
@@ -512,6 +526,7 @@ export default function AppNavClient() {
                 )}
               </div>
             )}
+            <div className={styles.versionLabel}>v{displayVersion}</div>
           </div>
         </div>
       ) : null}
